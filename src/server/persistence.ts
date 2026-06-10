@@ -28,7 +28,9 @@ import type {
 } from "./systems/state";
 
 /** Bump when the persisted shape changes incompatibly (wipes world+characters). */
-export const SCHEMA_VERSION = 1;
+export // v2: military compound changed worldgen — persisted world/character
+// positions from v1 are invalid (leaderboard survives the wipe).
+const SCHEMA_VERSION = 2;
 
 /** The serializable core of a character, stored as `characters.state_json`. */
 export interface CharacterState {

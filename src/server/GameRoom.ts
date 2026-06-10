@@ -619,6 +619,7 @@ export class GameRoom extends DurableObject<Env> {
         z: round2(zombie.z),
         yaw: round3(zombie.yaw),
         state: zombie.state,
+        mil: zombie.mil,
       });
     }
 

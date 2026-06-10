@@ -63,6 +63,7 @@ const LEG_GEO = new THREE.BoxGeometry(0.16, 0.85, 0.16);
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
 
 const AXE_HANDLE_COLOR = "#6b4a2f";
+const GUN_METAL_COLOR = "#2e2e32";
 
 // Held-item materials are identical across rigs — cache by color.
 const heldMaterialCache = new Map<string, THREE.MeshLambertMaterial>();
@@ -87,6 +88,32 @@ function buildHeldItem(type: ItemType): THREE.Object3D {
     grip.scale.set(0.045, 0.14, 0.06);
     grip.position.set(0, -0.06, 0.02);
     g.add(slide, grip);
+    return g;
+  }
+  if (type === "rifle") {
+    // Long thin bolt-action silhouette (~0.9m): metal barrel forward, wooden
+    // stock (item color) at the shoulder end.
+    const g = new THREE.Group();
+    const barrel = new THREE.Mesh(UNIT_BOX, heldMaterial(GUN_METAL_COLOR));
+    barrel.scale.set(0.05, 0.06, 0.56);
+    barrel.position.set(0, 0.03, -0.4);
+    const stock = new THREE.Mesh(UNIT_BOX, heldMaterial(def.color));
+    stock.scale.set(0.06, 0.09, 0.34);
+    stock.position.set(0, 0, 0.05);
+    g.add(barrel, stock);
+    return g;
+  }
+  if (type === "shotgun") {
+    // Slightly shorter (~0.7m), twin-tone: stubby metal barrels + wooden
+    // stock/forend in the item color.
+    const g = new THREE.Group();
+    const barrels = new THREE.Mesh(UNIT_BOX, heldMaterial(GUN_METAL_COLOR));
+    barrels.scale.set(0.08, 0.05, 0.42);
+    barrels.position.set(0, 0.03, -0.27);
+    const stock = new THREE.Mesh(UNIT_BOX, heldMaterial(def.color));
+    stock.scale.set(0.07, 0.1, 0.28);
+    stock.position.set(0, 0, 0.08);
+    g.add(barrels, stock);
     return g;
   }
   if (type === "axe") {

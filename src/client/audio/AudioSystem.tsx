@@ -24,8 +24,47 @@ const FLAT_POOL_SIZE = 8;
 const DEFAULT_REF_DISTANCE = 8;
 const ROLLOFF_FACTOR = 1.4;
 
-const SHOT_FAR_DISTANCE = 120;
-const SHOT_FAR_REF_DISTANCE = 30;
+/** Weapon firing a "shot" event — mirrors the protocol's shot.w union. */
+type ShotWeapon = Extract<GameEvent, { e: "shot" }>["w"];
+
+interface ShotProfile {
+  near: SfxName;
+  far: SfxName;
+  /** Beyond this listener distance the far (echo) sample plays instead. */
+  farDistance: number;
+  nearRefDistance: number;
+  farRefDistance: number;
+}
+
+const SHOT_PROFILES: Record<ShotWeapon, ShotProfile> = {
+  pistol: {
+    near: "shot",
+    far: "shot_far",
+    farDistance: 120,
+    nearRefDistance: DEFAULT_REF_DISTANCE,
+    farRefDistance: 30,
+  },
+  rifle: {
+    near: "rifle_shot",
+    far: "rifle_far",
+    farDistance: 200,
+    nearRefDistance: 14, // louder up close, carries further
+    farRefDistance: 40,
+  },
+  shotgun: {
+    near: "shotgun_shot",
+    far: "shotgun_far",
+    farDistance: 100,
+    nearRefDistance: 10,
+    farRefDistance: 30,
+  },
+};
+
+// One shotgun trigger pull arrives as one "shot" event per pellet (same
+// origin, same snapshot) — collapse them to a single sound.
+const SHOT_DEDUPE_WINDOW_S = 0.1;
+const SHOT_DEDUPE_RADIUS = 2;
+
 const HIT_FLESH_RADIUS = 1.5;
 
 const STEP_STRIDE_M = 2.3;
@@ -100,6 +139,7 @@ interface Engine {
   vocalNextAt: number;
   zombiePrevState: Map<number, ZombieState>;
   zombieAttackLastAt: Map<number, number>;
+  shotLastPlayed: Map<ShotWeapon, { t: number; x: number; y: number; z: number }>;
   lcg: number;
 }
 
@@ -154,6 +194,7 @@ function createEngine(): Engine {
     vocalNextAt: 0,
     zombiePrevState: new Map(),
     zombieAttackLastAt: new Map(),
+    shotLastPlayed: new Map(),
     lcg: 0x2f6e2b1,
   };
 }
@@ -274,15 +315,30 @@ function fleshNear(x: number, y: number, z: number): boolean {
   return false;
 }
 
-function processEvents(engine: Engine, events: GameEvent[], cam: THREE.Vector3): void {
+function isDuplicateShot(engine: Engine, ev: Extract<GameEvent, { e: "shot" }>, now: number): boolean {
+  const last = engine.shotLastPlayed.get(ev.w);
+  if (!last || now - last.t >= SHOT_DEDUPE_WINDOW_S) return false;
+  const dx = ev.sx - last.x;
+  const dy = ev.sy - last.y;
+  const dz = ev.sz - last.z;
+  return dx * dx + dy * dy + dz * dz <= SHOT_DEDUPE_RADIUS * SHOT_DEDUPE_RADIUS;
+}
+
+function processEvents(engine: Engine, events: GameEvent[], cam: THREE.Vector3, now: number): void {
   for (const ev of events) {
     switch (ev.e) {
       case "shot": {
+        // Shotgun pellets each emit a "shot" event from the same origin —
+        // play only one sound per weapon+origin per dedupe window.
+        if (isDuplicateShot(engine, ev, now)) break;
+        engine.shotLastPlayed.set(ev.w, { t: now, x: ev.sx, y: ev.sy, z: ev.sz });
+
+        const profile = SHOT_PROFILES[ev.w];
         const dist = Math.hypot(ev.sx - cam.x, ev.sy - cam.y, ev.sz - cam.z);
-        if (dist > SHOT_FAR_DISTANCE) {
-          playPositional(engine, "shot_far", ev.sx, ev.sy, ev.sz, 0.85, SHOT_FAR_REF_DISTANCE);
+        if (dist > profile.farDistance) {
+          playPositional(engine, profile.far, ev.sx, ev.sy, ev.sz, 0.85, profile.farRefDistance);
         } else {
-          playPositional(engine, "shot", ev.sx, ev.sy, ev.sz, 0.9);
+          playPositional(engine, profile.near, ev.sx, ev.sy, ev.sz, 0.9, profile.nearRefDistance);
         }
         break;
       }
@@ -521,6 +577,7 @@ function silenceEngine(engine: Engine): void {
   engine.vocalNextAt = 0;
   engine.zombiePrevState.clear();
   engine.zombieAttackLastAt.clear();
+  engine.shotLastPlayed.clear();
 }
 
 // --- Component ---
@@ -616,7 +673,7 @@ export function AudioSystem(): null {
 
     // Always drain (even while the context is locked) so the queue never grows;
     // playback primitives no-op until unlocked.
-    processEvents(engine, drainAudioEvents(), tmpCamPos);
+    processEvents(engine, drainAudioEvents(), tmpCamPos, now);
     updateFootsteps(engine);
     updateZombieStates(engine, now);
     updateVocalizations(engine, now, tmpCamPos);

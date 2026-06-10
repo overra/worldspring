@@ -131,7 +131,7 @@ function interpolateZombies(a: BufferedSnap, b: BufferedSnap, t: number): void {
     const za = a.zombieById.get(zb.id) ?? zb;
     let view: ZombieView | undefined = views.get(zb.id);
     if (view === undefined) {
-      view = { id: zb.id, x: zb.x, y: zb.y, z: zb.z, yaw: zb.yaw, state: zb.state };
+      view = { id: zb.id, x: zb.x, y: zb.y, z: zb.z, yaw: zb.yaw, state: zb.state, mil: zb.mil };
       views.set(zb.id, view);
     }
     view.x = lerp(za.x, zb.x, t);
@@ -139,6 +139,7 @@ function interpolateZombies(a: BufferedSnap, b: BufferedSnap, t: number): void {
     view.z = lerp(za.z, zb.z, t);
     view.yaw = angleLerp(za.yaw, zb.yaw, t);
     view.state = zb.state;
+    view.mil = zb.mil;
   }
   for (const id of views.keys()) {
     if (!b.zombieById.has(id)) views.delete(id);

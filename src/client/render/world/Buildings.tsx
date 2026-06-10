@@ -13,16 +13,20 @@ const WALL_COLORS: Record<BuildingKind, string> = {
   house: "#8a7f6a",
   shed: "#6e6a5e",
   barn: "#7a4a3a",
+  barracks: "#5c6152",
+  hangar: "#565b54",
 };
 const ROOF_COLOR = "#4a4440";
 const FLOOR_COLOR = "#5b5248";
+// Military perimeter walls + corner towers: concrete grey-green.
+const MILWALL_COLOR = "#6a6d62";
 const FLOOR_THICKNESS = 0.2;
 // Pull the floor slab inside the wall faces (wall thickness is 0.35 in world
 // gen). The walls now extend below floor level as foundation skirts, so a
 // full-footprint slab would share planes with them and z-fight.
 const FLOOR_INSET = 0.36;
 
-type MaterialKey = BuildingKind | "roof" | "floor";
+type MaterialKey = BuildingKind | "roof" | "floor" | "milwall";
 
 interface BoxSpec {
   key: string;
@@ -54,6 +58,11 @@ function buildBoxes(world: World): BoxSpec[] {
       scale: [b.halfW * 2 - FLOOR_INSET * 2, FLOOR_THICKNESS, b.halfD * 2 - FLOOR_INSET * 2],
     });
   }
+  // Military compound perimeter (walls + corner towers). Already colliders in
+  // world gen — this is rendering only. Plain boxes in the same static group.
+  world.militaryWalls.forEach((wall, i) => {
+    boxes.push(aabbToBox(`mw${i}`, "milwall", wall));
+  });
   return boxes;
 }
 
@@ -67,6 +76,9 @@ export function Buildings(): ReactElement | null {
       house: new THREE.MeshStandardMaterial({ color: WALL_COLORS.house, flatShading: true }),
       shed: new THREE.MeshStandardMaterial({ color: WALL_COLORS.shed, flatShading: true }),
       barn: new THREE.MeshStandardMaterial({ color: WALL_COLORS.barn, flatShading: true }),
+      barracks: new THREE.MeshStandardMaterial({ color: WALL_COLORS.barracks, flatShading: true }),
+      hangar: new THREE.MeshStandardMaterial({ color: WALL_COLORS.hangar, flatShading: true }),
+      milwall: new THREE.MeshStandardMaterial({ color: MILWALL_COLOR, flatShading: true }),
       roof: new THREE.MeshStandardMaterial({ color: ROOF_COLOR, flatShading: true }),
       floor: new THREE.MeshStandardMaterial({ color: FLOOR_COLOR, flatShading: true }),
     };

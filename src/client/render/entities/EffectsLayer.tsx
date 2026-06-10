@@ -12,9 +12,15 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { drainEvents } from "@/client/runtime";
 
-const SHOT_POOL = 12;
-const SHOT_DURATION_S = 0.12;
+// 18 slots: a shotgun blast lands 6 shot events in one frame — round-robin
+// must absorb a full blast (plus overlap from other shooters) without
+// stomping live tracers.
+const SHOT_POOL = 18;
+const SHOT_DURATION_S = 0.12; // pistol + each shotgun pellet
+const RIFLE_SHOT_DURATION_S = 0.2; // rifle tracers linger
 const FLASH_DURATION_S = 0.06;
+const TRACER_COLOR = "#ffd27a";
+const RIFLE_TRACER_COLOR = "#fff3b8"; // brighter, near-white
 const HIT_POOL = 12;
 const HIT_DURATION_S = 0.15;
 const ZDIE_POOL = 8;
@@ -33,6 +39,7 @@ interface ShotSlot {
   flash: THREE.Mesh;
   flashMat: THREE.MeshBasicMaterial;
   start: number; // seconds; -1 when inactive
+  duration: number; // per-weapon tracer lifetime, seconds
 }
 
 interface PointFxSlot {
@@ -62,14 +69,14 @@ function createPool(): FxPool {
 
   const shots: ShotSlot[] = [];
   for (let i = 0; i < SHOT_POOL; i++) {
-    const tracerMat = fadeMaterial("#ffd27a");
+    const tracerMat = fadeMaterial(TRACER_COLOR);
     const tracer = new THREE.Mesh(TRACER_GEO, tracerMat);
     tracer.visible = false;
     const flashMat = fadeMaterial("#ffe9b0");
     const flash = new THREE.Mesh(FLASH_GEO, flashMat);
     flash.visible = false;
     root.add(tracer, flash);
-    shots.push({ tracer, tracerMat, flash, flashMat, start: -1 });
+    shots.push({ tracer, tracerMat, flash, flashMat, start: -1, duration: SHOT_DURATION_S });
   }
 
   const hits: PointFxSlot[] = [];
@@ -107,6 +114,11 @@ export function EffectsLayer(): ReactElement {
         const slot = pool.shots[cursors.shot];
         cursors.shot = (cursors.shot + 1) % SHOT_POOL;
         slot.start = t;
+        // Rifle: longer-lived, brighter tracer. Pistol and shotgun pellets
+        // (6 events per blast) use the standard short flash.
+        const rifle = ev.w === "rifle";
+        slot.duration = rifle ? RIFLE_SHOT_DURATION_S : SHOT_DURATION_S;
+        slot.tracerMat.color.set(rifle ? RIFLE_TRACER_COLOR : TRACER_COLOR);
         const dx = ev.tx - ev.sx;
         const dy = ev.ty - ev.sy;
         const dz = ev.tz - ev.sz;
@@ -144,13 +156,13 @@ export function EffectsLayer(): ReactElement {
     for (const slot of pool.shots) {
       if (slot.start < 0) continue;
       const age = t - slot.start;
-      if (age >= SHOT_DURATION_S) {
+      if (age >= slot.duration) {
         slot.start = -1;
         slot.tracer.visible = false;
         slot.flash.visible = false;
         continue;
       }
-      slot.tracerMat.opacity = 1 - age / SHOT_DURATION_S;
+      slot.tracerMat.opacity = 1 - age / slot.duration;
       if (age >= FLASH_DURATION_S) {
         slot.flash.visible = false;
       } else {

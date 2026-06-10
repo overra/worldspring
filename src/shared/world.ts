@@ -10,14 +10,20 @@ import {
   TREE_COUNT,
   WORLD_SIZE,
 } from "./constants";
-import { clamp, rayAabb, type Aabb, type Vec3 } from "./math";
+import { clamp, distSq2D, rayAabb, type Aabb, type Vec3 } from "./math";
 import { createRng, type Rng } from "./rng";
 
-export type BuildingKind = "house" | "shed" | "barn";
+export type BuildingKind = "house" | "shed" | "barn" | "barracks" | "hangar";
+
+/** Which zone a building belongs to — drives its loot table tier. */
+export type BuildingArea = "town" | "wild" | "military";
 
 export interface Building {
   id: number;
   kind: BuildingKind;
+  area: BuildingArea;
+  /** Loot spawn points generated inside this building. */
+  lootPoints: number;
   cx: number;
   cz: number;
   halfW: number; // x extent
@@ -46,11 +52,21 @@ export interface Town {
   name: string;
 }
 
+import type { LootTier } from "./items";
+
 export interface LootSpawn {
   id: number;
   x: number;
   y: number;
   z: number;
+  /** Zone tier — picks the loot table when (re)stocking. */
+  tier: LootTier;
+}
+
+export interface MilitaryZone {
+  cx: number;
+  cz: number;
+  radius: number;
 }
 
 export interface StaticsQuery {
@@ -65,6 +81,10 @@ export interface World {
   groundHeight(x: number, z: number): number;
   towns: Town[];
   buildings: Building[];
+  /** The walled compound: zone bounds + its perimeter/tower collision boxes
+   * (already inserted into the static grid; exposed for rendering). */
+  military: MilitaryZone;
+  militaryWalls: Aabb[];
   trees: Tree[];
   lootSpawns: LootSpawn[];
   spawnPoints: Array<{ x: number; z: number }>;
@@ -104,6 +124,19 @@ const BUILDING_SPECS: BuildingSpec[] = [
   { kind: "shed", halfW: 2.2, halfD: 2.2, lootPoints: 1 },
   { kind: "barn", halfW: 5, halfD: 7, lootPoints: 3 },
 ];
+
+const MILITARY_SPECS: BuildingSpec[] = [
+  { kind: "barracks", halfW: 2.8, halfD: 5.5, lootPoints: 3 },
+  { kind: "hangar", halfW: 4.5, halfD: 6.5, lootPoints: 4 },
+  { kind: "shed", halfW: 2.2, halfD: 2.2, lootPoints: 2 },
+];
+
+const MIL_HALF = 40; // compound wall half-extent
+const MIL_WALL_HEIGHT = 3.2;
+const MIL_WALL_THICKNESS = 0.45;
+const MIL_GATE_WIDTH = 4.5;
+const MIL_TOWER_HALF = 2;
+const MIL_TOWER_HEIGHT = 7.5;
 
 function makeHeightFn(noise: NoiseFunction2D): (x: number, z: number) => number {
   return (x: number, z: number): number => {
@@ -196,6 +229,29 @@ export function createWorld(seed: number): World {
   const noise = createNoise2D(createRng((seed ^ 0x9e3779b9) >>> 0).next);
   const heightAt = makeHeightFn(noise);
 
+  // --- Military compound site (chosen first: everything else avoids it) ---
+  // Highest acceptable ground near the island center: the compound should be
+  // visible from a distance and force an uphill approach.
+  const milRng = createRng((seed ^ 0x3f1c7) >>> 0);
+  const military: MilitaryZone = { cx: 0, cz: 0, radius: MIL_HALF + 14 };
+  {
+    let bestH = -Infinity;
+    // Fixed iteration count: every candidate consumes rng regardless of
+    // acceptance, so client and server walk identical streams.
+    for (let i = 0; i < 600; i++) {
+      const ang = milRng.range(0, Math.PI * 2);
+      const dist = milRng.range(0, 130);
+      const x = Math.cos(ang) * dist;
+      const z = Math.sin(ang) * dist;
+      const h = heightAt(x, z);
+      if (slopeAt(heightAt, x, z, MIL_HALF) > 4.5) continue;
+      if (h <= bestH) continue;
+      bestH = h;
+      military.cx = x;
+      military.cz = z;
+    }
+  }
+
   // --- Towns ---
   const towns: Town[] = [];
   const townRng = createRng((seed ^ 0x7041) >>> 0);
@@ -204,6 +260,7 @@ export function createWorld(seed: number): World {
     const dist = townRng.range(70, 270);
     const cx = Math.cos(ang) * dist;
     const cz = Math.sin(ang) * dist;
+    if (distSq2D(cx, cz, military.cx, military.cz) < (military.radius + 70) ** 2) continue;
     const h = heightAt(cx, cz);
     if (h < 2.5 || h > 9.5) continue;
     if (slopeAt(heightAt, cx, cz, 14) > 3) continue;
@@ -216,7 +273,7 @@ export function createWorld(seed: number): World {
   const bRng = createRng((seed ^ 0xb17d) >>> 0);
   let buildingId = 0;
 
-  const tryPlace = (px: number, pz: number, spec: BuildingSpec): boolean => {
+  const tryPlace = (px: number, pz: number, spec: BuildingSpec, area: BuildingArea): boolean => {
     const margin = 2.5;
     if (slopeAt(heightAt, px, pz, Math.max(spec.halfW, spec.halfD)) > 1.6) return false;
     const h = heightAt(px, pz);
@@ -268,6 +325,8 @@ export function createWorld(seed: number): World {
     buildings.push({
       id: buildingId++,
       kind: spec.kind,
+      area,
+      lootPoints: spec.lootPoints,
       ...base,
       wallHeight: WALL_HEIGHT,
       walls,
@@ -276,6 +335,15 @@ export function createWorld(seed: number): World {
     return true;
   };
 
+  // --- Military interior: 2 barracks, 1 hangar, 1 supply shed ---
+  for (const spec of [MILITARY_SPECS[0], MILITARY_SPECS[0], MILITARY_SPECS[1], MILITARY_SPECS[2]]) {
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const px = military.cx + milRng.range(-(MIL_HALF - 12), MIL_HALF - 12);
+      const pz = military.cz + milRng.range(-(MIL_HALF - 12), MIL_HALF - 12);
+      if (tryPlace(px, pz, spec, "military")) break;
+    }
+  }
+
   for (const town of towns) {
     const target = bRng.int(5, 8);
     let placed = 0;
@@ -283,7 +351,9 @@ export function createWorld(seed: number): World {
       const ang = bRng.range(0, Math.PI * 2);
       const dist = bRng.range(4, town.radius);
       const spec = bRng.pick(BUILDING_SPECS);
-      if (tryPlace(town.cx + Math.cos(ang) * dist, town.cz + Math.sin(ang) * dist, spec)) placed++;
+      if (tryPlace(town.cx + Math.cos(ang) * dist, town.cz + Math.sin(ang) * dist, spec, "town")) {
+        placed++;
+      }
     }
   }
   // Lone cabins in the wilderness.
@@ -291,7 +361,8 @@ export function createWorld(seed: number): World {
     const x = bRng.range(-WORLD_SIZE * 0.42, WORLD_SIZE * 0.42);
     const z = bRng.range(-WORLD_SIZE * 0.42, WORLD_SIZE * 0.42);
     if (towns.some((t) => (t.cx - x) ** 2 + (t.cz - z) ** 2 < (t.radius + 30) ** 2)) continue;
-    if (tryPlace(x, z, BUILDING_SPECS[0])) placed++;
+    if (distSq2D(x, z, military.cx, military.cz) < (military.radius + 30) ** 2) continue;
+    if (tryPlace(x, z, BUILDING_SPECS[0], "wild")) placed++;
   }
 
   // --- Loot spawn points (inside buildings) ---
@@ -299,13 +370,14 @@ export function createWorld(seed: number): World {
   const lRng = createRng((seed ^ 0x100c) >>> 0);
   let lootId = 0;
   for (const b of buildings) {
-    const spec = BUILDING_SPECS.find((s) => s.kind === b.kind) ?? BUILDING_SPECS[0];
-    for (let i = 0; i < spec.lootPoints; i++) {
+    const tier = b.area === "military" ? "military" : b.area === "town" ? "coastal" : "inland";
+    for (let i = 0; i < b.lootPoints; i++) {
       lootSpawns.push({
         id: lootId++,
         x: b.cx + lRng.range(-(b.halfW - 1.2), b.halfW - 1.2),
         y: b.floorY,
         z: b.cz + lRng.range(-(b.halfD - 1.2), b.halfD - 1.2),
+        tier,
       });
     }
   }
@@ -319,6 +391,7 @@ export function createWorld(seed: number): World {
     const h = heightAt(x, z);
     if (h < 1.2) continue;
     if (towns.some((t) => (t.cx - x) ** 2 + (t.cz - z) ** 2 < (t.radius + 4) ** 2)) continue;
+    if (distSq2D(x, z, military.cx, military.cz) < (military.radius + 6) ** 2) continue;
     if (buildings.some((b) => Math.abs(b.cx - x) < b.halfW + 2 && Math.abs(b.cz - z) < b.halfD + 2)) continue;
     trees.push({
       x,
@@ -348,6 +421,62 @@ export function createWorld(seed: number): World {
   // Safety net: should never trigger with a sane seed.
   if (spawnPoints.length === 0) spawnPoints.push({ x: 0, z: 0 });
 
+  // --- Military perimeter: four walls with N/S gates + corner towers ---
+  const militaryWalls: Aabb[] = [];
+  {
+    const { cx, cz } = military;
+    const t = MIL_WALL_THICKNESS;
+    const groundAt = (x: number, z: number): number => heightAt(x, z);
+    // Wall vertical extent follows the terrain along each side: skirt below
+    // the lowest point, top above the highest (the y-aware collision in
+    // movement.ts ignores below-ground portions).
+    const sideBox = (minX: number, minZ: number, maxX: number, maxZ: number): Aabb => {
+      const samples = [
+        groundAt(minX, minZ),
+        groundAt(maxX, maxZ),
+        groundAt((minX + maxX) / 2, (minZ + maxZ) / 2),
+      ];
+      return {
+        minX,
+        minZ,
+        maxX,
+        maxZ,
+        y0: Math.min(...samples) - 2,
+        y1: Math.max(...samples) + MIL_WALL_HEIGHT,
+      };
+    };
+    const gateHalf = MIL_GATE_WIDTH / 2;
+    // +Z and -Z sides carry centered gates (two segments each).
+    militaryWalls.push(
+      sideBox(cx - MIL_HALF, cz + MIL_HALF - t, cx - gateHalf, cz + MIL_HALF),
+      sideBox(cx + gateHalf, cz + MIL_HALF - t, cx + MIL_HALF, cz + MIL_HALF),
+      sideBox(cx - MIL_HALF, cz - MIL_HALF, cx - gateHalf, cz - MIL_HALF + t),
+      sideBox(cx + gateHalf, cz - MIL_HALF, cx + MIL_HALF, cz - MIL_HALF + t),
+      // Solid +X / -X sides.
+      sideBox(cx + MIL_HALF - t, cz - MIL_HALF, cx + MIL_HALF, cz + MIL_HALF),
+      sideBox(cx - MIL_HALF, cz - MIL_HALF, cx - MIL_HALF + t, cz + MIL_HALF),
+    );
+    // Corner towers: solid blocks rising above the wall line.
+    for (const [sx, sz] of [
+      [1, 1],
+      [1, -1],
+      [-1, 1],
+      [-1, -1],
+    ] as const) {
+      const tx = cx + sx * MIL_HALF;
+      const tz = cz + sz * MIL_HALF;
+      const g = groundAt(tx, tz);
+      militaryWalls.push({
+        minX: tx - MIL_TOWER_HALF,
+        minZ: tz - MIL_TOWER_HALF,
+        maxX: tx + MIL_TOWER_HALF,
+        maxZ: tz + MIL_TOWER_HALF,
+        y0: g - 2,
+        y1: g + MIL_TOWER_HEIGHT,
+      });
+    }
+  }
+
   // --- Spatial grid for static colliders ---
   const grid = new Map<number, StaticsQuery>();
   const cellKey = (ix: number, iz: number): number => (ix + 512) * 4096 + (iz + 512);
@@ -367,6 +496,13 @@ export function createWorld(seed: number): World {
         for (let iz = cellOf(w.minZ); iz <= cellOf(w.maxZ); iz++) {
           cellAt(ix, iz).walls.push(w);
         }
+      }
+    }
+  }
+  for (const w of militaryWalls) {
+    for (let ix = cellOf(w.minX); ix <= cellOf(w.maxX); ix++) {
+      for (let iz = cellOf(w.minZ); iz <= cellOf(w.maxZ); iz++) {
+        cellAt(ix, iz).walls.push(w);
       }
     }
   }
@@ -468,6 +604,8 @@ export function createWorld(seed: number): World {
     groundHeight,
     towns,
     buildings,
+    military,
+    militaryWalls,
     trees,
     lootSpawns,
     spawnPoints,

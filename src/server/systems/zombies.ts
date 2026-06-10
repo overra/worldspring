@@ -3,6 +3,11 @@
 // the same statics and water rules as players.
 
 import {
+  MILITARY_RESPAWN_MIN_PLAYER_DIST,
+  MILITARY_ZOMBIE_DMG,
+  MILITARY_ZOMBIE_HP,
+  MILITARY_ZOMBIE_SPEED,
+  MILITARY_ZOMBIES,
   WORLD_SIZE,
   ZOMBIE_AGGRO_RADIUS,
   ZOMBIE_ATTACK_COOLDOWN_S,
@@ -37,8 +42,11 @@ const SPAWN_MIN_TERRAIN_H = 0.3;
 const ROAMER_MIN_TERRAIN_H = 2.5;
 /** Close enough to the wander target to stand idle. */
 const WANDER_ARRIVE_DIST = 0.5;
+/** Contract gap (spec says "± ~30"): military zombies spawn within this
+ * radius of the compound center — inside the walls (half-extent 40). */
+const MILITARY_SPAWN_RADIUS = 30;
 
-function spawnZombie(state: GameState, x: number, z: number): void {
+function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void {
   const id = state.nextEntityId++;
   state.zombies.set(id, {
     id,
@@ -46,7 +54,8 @@ function spawnZombie(state: GameState, x: number, z: number): void {
     y: state.world.groundHeight(x, z),
     z,
     yaw: Math.random() * Math.PI * 2,
-    hp: ZOMBIE_HP,
+    hp: mil ? MILITARY_ZOMBIE_HP : ZOMBIE_HP,
+    mil,
     state: "idle",
     homeX: x,
     homeZ: z,
@@ -76,12 +85,22 @@ function findLandNear(
   return null;
 }
 
-/** ZOMBIES_PER_TOWN around each town plus ZOMBIE_ROAMERS scattered inland. */
+/**
+ * MILITARY_ZOMBIES inside the compound walls, ZOMBIES_PER_TOWN around each
+ * town, ZOMBIE_ROAMERS scattered inland. Military spawn FIRST so the
+ * compound's garrison is never starved by the ZOMBIE_MAX cap; home = spawn
+ * point, so the wander loop keeps them inside the walls.
+ */
 export function spawnInitialZombies(state: GameState): void {
+  const { cx, cz } = state.world.military;
+  for (let i = 0; i < MILITARY_ZOMBIES && state.zombies.size < ZOMBIE_MAX; i++) {
+    const pos = findLandNear(state.world, cx, cz, MILITARY_SPAWN_RADIUS, 20);
+    if (pos) spawnZombie(state, pos.x, pos.z, true);
+  }
   for (const town of state.world.towns) {
     for (let i = 0; i < ZOMBIES_PER_TOWN && state.zombies.size < ZOMBIE_MAX; i++) {
       const pos = findLandNear(state.world, town.cx, town.cz, town.radius, 20);
-      if (pos) spawnZombie(state, pos.x, pos.z);
+      if (pos) spawnZombie(state, pos.x, pos.z, false);
     }
   }
   for (let i = 0; i < ZOMBIE_ROAMERS && state.zombies.size < ZOMBIE_MAX; i++) {
@@ -89,7 +108,7 @@ export function spawnInitialZombies(state: GameState): void {
       const x = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
       const z = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
       if (state.world.heightAt(x, z) < ROAMER_MIN_TERRAIN_H) continue;
-      spawnZombie(state, x, z);
+      spawnZombie(state, x, z, false);
       break;
     }
   }
@@ -100,7 +119,9 @@ export function killZombie(state: GameState, zombie: Zombie): void {
   state.zombies.delete(zombie.id);
   spawnZombieCorpse(state, zombie);
   queueEvent(state, { e: "zdie", x: zombie.x, y: zombie.y, z: zombie.z }, zombie.x, zombie.z);
-  state.zombieRespawns.push(ZOMBIE_RESPAWN_S);
+  // The respawn preserves the variant: a dead military zombie comes back
+  // military, inside the compound.
+  state.zombieRespawns.push({ t: ZOMBIE_RESPAWN_S, mil: zombie.mil });
 }
 
 function acquireTarget(state: GameState, zombie: Zombie): ServerPlayer | null {
@@ -166,11 +187,12 @@ export function tickZombies(state: GameState, dt: number): void {
         zombie.y = state.world.groundHeight(zombie.x, zombie.z);
         if (zombie.attackCooldown <= 0 && !attackBlocked(state, zombie, target)) {
           zombie.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_S;
-          damagePlayer(state, target, ZOMBIE_DMG, "a zombie", true);
+          damagePlayer(state, target, zombie.mil ? MILITARY_ZOMBIE_DMG : ZOMBIE_DMG, "a zombie", true);
         }
       } else {
         zombie.state = "chase";
-        stepZombie(zombie, tx, tz, ZOMBIE_CHASE_SPEED, dt, state.world);
+        const speed = zombie.mil ? MILITARY_ZOMBIE_SPEED : ZOMBIE_CHASE_SPEED;
+        stepZombie(zombie, tx, tz, speed, dt, state.world);
       }
       continue;
     }
@@ -198,22 +220,34 @@ export function tickZombies(state: GameState, dt: number): void {
   }
 }
 
+/** True when any player (online or lingering) is within `dist` of (x, z). */
+function playerWithin(state: GameState, x: number, z: number, dist: number): boolean {
+  const dSq = dist * dist;
+  for (const player of state.players.values()) {
+    if (distSq2D(x, z, player.core.x, player.core.z) < dSq) return true;
+  }
+  return false;
+}
+
 function pickRespawnPos(state: GameState): { x: number; z: number } | null {
   const towns = state.world.towns;
   if (towns.length === 0) return null;
-  const minSq = ZOMBIE_SPAWN_MIN_PLAYER_DIST * ZOMBIE_SPAWN_MIN_PLAYER_DIST;
   for (let attempt = 0; attempt < 12; attempt++) {
     const town = towns[Math.floor(Math.random() * towns.length)];
     const pos = findLandNear(state.world, town.cx, town.cz, town.radius, 4);
     if (!pos) continue;
-    let blocked = false;
-    for (const player of state.players.values()) {
-      if (distSq2D(pos.x, pos.z, player.core.x, player.core.z) < minSq) {
-        blocked = true;
-        break;
-      }
-    }
-    if (!blocked) return pos;
+    if (!playerWithin(state, pos.x, pos.z, ZOMBIE_SPAWN_MIN_PLAYER_DIST)) return pos;
+  }
+  return null;
+}
+
+/** Inside the compound, gated on no player within MILITARY_RESPAWN_MIN_PLAYER_DIST. */
+function pickMilitaryRespawnPos(state: GameState): { x: number; z: number } | null {
+  const { cx, cz } = state.world.military;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const pos = findLandNear(state.world, cx, cz, MILITARY_SPAWN_RADIUS, 4);
+    if (!pos) continue;
+    if (!playerWithin(state, pos.x, pos.z, MILITARY_RESPAWN_MIN_PLAYER_DIST)) return pos;
   }
   return null;
 }
@@ -221,18 +255,19 @@ function pickRespawnPos(state: GameState): { x: number; z: number } | null {
 /** Count down pending respawns; blocked ones are held and retried next tick. */
 export function tickZombieRespawns(state: GameState, dt: number): void {
   for (let i = state.zombieRespawns.length - 1; i >= 0; i--) {
-    state.zombieRespawns[i] -= dt;
-    if (state.zombieRespawns[i] > 0) continue;
+    const pending = state.zombieRespawns[i];
+    pending.t -= dt;
+    if (pending.t > 0) continue;
     if (state.zombies.size >= ZOMBIE_MAX) {
-      state.zombieRespawns[i] = 0;
+      pending.t = 0;
       continue;
     }
-    const pos = pickRespawnPos(state);
+    const pos = pending.mil ? pickMilitaryRespawnPos(state) : pickRespawnPos(state);
     if (!pos) {
-      state.zombieRespawns[i] = 0;
+      pending.t = 0;
       continue;
     }
-    spawnZombie(state, pos.x, pos.z);
+    spawnZombie(state, pos.x, pos.z, pending.mil);
     state.zombieRespawns.splice(i, 1);
   }
 }

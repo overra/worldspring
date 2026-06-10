@@ -115,6 +115,8 @@ export interface ZombieView {
   z: number;
   yaw: number;
   state: ZombieState;
+  /** Military variant (WireZombie.mil) — renders darker/wider. */
+  mil: boolean;
 }
 
 export interface ClientWorldState {

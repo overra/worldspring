@@ -12,6 +12,10 @@ import { clientWorld } from "@/client/runtime";
 import { createHumanoid, type HumanoidRig } from "./Humanoid";
 
 const ZOMBIE_COLORS = { shirt: "#4a4f42", pants: "#3b3f36", skin: "#6a8a5a" };
+// Military variant: darker uniform + a slightly wider torso (1.1x).
+const MIL_ZOMBIE_SHIRT = "#3a4138";
+const MIL_ZOMBIE_PANTS = "#2e332c";
+const MIL_TORSO_SCALE_X = 1.1;
 const HUNCH_X = 0.25; // torso forward tilt
 const ARMS_RAISED_X = 1.35; // arms held out toward the target
 const LUNGE_AMPLITUDE = 0.35;
@@ -66,7 +70,12 @@ export function Zombies(): ReactElement {
         idx = pool.free.pop();
         if (idx === undefined) continue;
         pool.byId.set(z.id, idx);
-        pool.rigs[idx].group.visible = true;
+        const fresh = pool.rigs[idx];
+        fresh.group.visible = true;
+        // Variant styling on assignment (slots are reused — always set both ways).
+        fresh.shirtMaterial.color.set(z.mil ? MIL_ZOMBIE_SHIRT : ZOMBIE_COLORS.shirt);
+        fresh.pantsMaterial.color.set(z.mil ? MIL_ZOMBIE_PANTS : ZOMBIE_COLORS.pants);
+        fresh.torso.scale.x = z.mil ? MIL_TORSO_SCALE_X : 1;
       }
       const rig = pool.rigs[idx];
       rig.group.position.set(z.x, z.y, z.z);

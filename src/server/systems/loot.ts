@@ -11,7 +11,7 @@ import {
   ZOMBIE_CORPSE_TTL_S,
   ZOMBIE_LOOT_CHANCE,
 } from "@/shared/constants";
-import { LOOT_TABLE, ZOMBIE_LOOT_TABLE, type ItemStack } from "@/shared/items";
+import { LOOT_TABLES, ZOMBIE_LOOT_TABLE, type ItemStack, type LootTier } from "@/shared/items";
 import { distSq2D } from "@/shared/math";
 import type { LootSpawn } from "@/shared/world";
 import type { GameState, ServerPlayer, Zombie } from "./state";
@@ -36,12 +36,13 @@ function rollFromTable(table: WeightedTable): ItemStack {
   return { type: last.type, count: last.min };
 }
 
-export function rollLootStack(): ItemStack {
-  return rollFromTable(LOOT_TABLE);
+/** Roll one stack from the zone tier's table (coastal/inland/military). */
+export function rollLootStack(tier: LootTier): ItemStack {
+  return rollFromTable(LOOT_TABLES[tier]);
 }
 
 function spawnLootAt(state: GameState, spawn: LootSpawn): void {
-  const stack = rollLootStack();
+  const stack = rollLootStack(spawn.tier);
   const id = state.nextEntityId++;
   state.loot.set(id, {
     id,

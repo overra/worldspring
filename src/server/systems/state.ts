@@ -76,6 +76,8 @@ export interface Zombie {
   z: number;
   yaw: number;
   hp: number;
+  /** Tougher military-compound variant (more hp/dmg/speed, darker render). */
+  mil: boolean;
   state: ZombieState;
   homeX: number;
   homeZ: number;
@@ -130,6 +132,14 @@ export interface LootRespawnTimer {
   t: number;
 }
 
+/** A pending zombie respawn — military zombies respawn inside the compound. */
+export interface ZombieRespawn {
+  /** Seconds remaining; held at <= 0 while the spawn area is blocked. */
+  t: number;
+  /** Respawn as the military variant (dead zombie's kind is preserved). */
+  mil: boolean;
+}
+
 export interface QueuedEvent {
   ev: GameEvent;
   /** World position used for per-recipient interest filtering. */
@@ -155,8 +165,8 @@ export interface GameState {
   corpses: Map<number, Corpse>;
   fires: Campfire[];
   lootRespawns: LootRespawnTimer[];
-  /** Countdown (seconds) per pending zombie respawn. */
-  zombieRespawns: number[];
+  /** Pending zombie respawns (countdown + variant). */
+  zombieRespawns: ZombieRespawn[];
   events: QueuedEvent[];
   outbox: OutboundMsg[];
   /** Shared id counter for zombies, loot entities and campfires. */

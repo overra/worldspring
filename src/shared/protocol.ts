@@ -75,6 +75,8 @@ export interface WireZombie {
   z: number;
   yaw: number;
   state: ZombieState;
+  /** True for the tougher military variant (renders darker/armored). */
+  mil: boolean;
 }
 
 export interface WireLoot {
@@ -144,7 +146,17 @@ export interface YouState extends Vitals {
 }
 
 export type GameEvent =
-  | { e: "shot"; sx: number; sy: number; sz: number; tx: number; ty: number; tz: number }
+  | {
+      e: "shot";
+      /** Which weapon fired — picks the sound and tracer style. */
+      w: "pistol" | "rifle" | "shotgun";
+      sx: number;
+      sy: number;
+      sz: number;
+      tx: number;
+      ty: number;
+      tz: number;
+    }
   | { e: "swing"; id: string } // player id swung a melee weapon
   | { e: "hit"; x: number; y: number; z: number } // impact effect
   | { e: "zdie"; x: number; y: number; z: number }

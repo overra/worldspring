@@ -1,6 +1,7 @@
-// Attack resolution: fists/melee cone vs zombies and players, or pistol
-// hitscan with static occlusion. The server decides melee vs ranged from the
-// attacker's equipped slot.
+// Attack resolution: fists/melee cone vs zombies and players, or ranged
+// hitscan (pistol/rifle/shotgun, driven by each ItemDef's RangedConfig) with
+// static occlusion. The server decides melee vs ranged from the attacker's
+// equipped slot.
 
 import {
   ATTACK_COOLDOWN_S,
@@ -8,8 +9,6 @@ import {
   HIT_CAPSULE_RADIUS,
   MELEE_HALF_ANGLE_RAD,
   MELEE_RANGE,
-  PISTOL_COOLDOWN_S,
-  PISTOL_RANGE,
   PLAYER_EYE_HEIGHT,
   PLAYER_HEIGHT,
 } from "@/shared/constants";
@@ -65,7 +64,7 @@ export function performAttack(state: GameState, player: ServerPlayer): void {
   const stack = player.inventory[player.selectedSlot];
   const def: ItemDef | null = stack ? ITEM_DEFS[stack.type] : null;
   if (def && def.kind === "ranged") {
-    firePistol(state, player, def);
+    fireRanged(state, player, def);
     return;
   }
   meleeAttack(state, player, def);
@@ -142,14 +141,23 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
   }
 }
 
-function firePistol(state: GameState, player: ServerPlayer, def: ItemDef): void {
-  // Needs a round anywhere in the inventory.
+/**
+ * Hitscan fire driven by the equipped weapon's RangedConfig: consumes one
+ * round of `ranged.ammo` per trigger pull, then casts `ranged.pellets` rays
+ * (each perturbed by up to `spreadRad`) — `def.power` damage per pellet hit.
+ * One "shot" event per pellet: the tracer fan IS the shotgun visual.
+ */
+function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void {
+  const ranged = def.ranged;
+  if (!ranged) return; // guaranteed present for kind "ranged"; belt-and-braces
+
+  // Needs a round anywhere in the inventory — one per pull, however many pellets.
   const ammoSlot = player.inventory.findIndex(
-    (stack) => stack !== null && stack.type === "ammo_9mm",
+    (stack) => stack !== null && stack.type === ranged.ammo,
   );
   if (ammoSlot === -1) return;
 
-  player.attackCooldown = PISTOL_COOLDOWN_S;
+  player.attackCooldown = ranged.cooldownS;
   player.attackAnimT = ATTACK_ANIM_S;
   consumeFromSlot(player.inventory, ammoSlot);
   sendInventory(state, player);
@@ -159,74 +167,86 @@ function firePistol(state: GameState, player: ServerPlayer, def: ItemDef): void 
     y: player.core.y + PLAYER_EYE_HEIGHT,
     z: player.core.z,
   };
-  const dir = lookDir(player.core.yaw, player.core.pitch);
 
-  // Walls/roofs/terrain occlude; nothing beyond the closest static hit counts.
-  const staticT = state.world.raycastStatics(origin, dir, PISTOL_RANGE);
-  const maxT = staticT ?? PISTOL_RANGE;
+  for (let pellet = 0; pellet < ranged.pellets; pellet++) {
+    // Per-pellet random cone: offsets vanish exactly when spreadRad is 0.
+    // Non-seeded randomness is fine server-side — pellets never need to
+    // match anything client-side.
+    const yaw = player.core.yaw + (Math.random() * 2 - 1) * ranged.spreadRad;
+    const pitch = player.core.pitch + (Math.random() * 2 - 1) * ranged.spreadRad;
+    const dir = lookDir(yaw, pitch);
 
-  let hitT = Infinity;
-  let hitZombie: Zombie | null = null;
-  let hitPlayer: ServerPlayer | null = null;
-  for (const zombie of state.zombies.values()) {
-    const t = rayVerticalCylinder(
-      origin,
-      dir,
-      zombie.x,
-      zombie.z,
-      zombie.y,
-      zombie.y + PLAYER_HEIGHT,
-      HIT_CAPSULE_RADIUS,
-      maxT,
+    // Walls/roofs/terrain occlude; nothing beyond the closest static hit counts.
+    const staticT = state.world.raycastStatics(origin, dir, ranged.range);
+    const maxT = staticT ?? ranged.range;
+
+    let hitT = Infinity;
+    let hitZombie: Zombie | null = null;
+    let hitPlayer: ServerPlayer | null = null;
+    for (const zombie of state.zombies.values()) {
+      const t = rayVerticalCylinder(
+        origin,
+        dir,
+        zombie.x,
+        zombie.z,
+        zombie.y,
+        zombie.y + PLAYER_HEIGHT,
+        HIT_CAPSULE_RADIUS,
+        maxT,
+      );
+      if (t !== null && t < hitT) {
+        hitT = t;
+        hitZombie = zombie;
+        hitPlayer = null;
+      }
+    }
+    for (const other of state.players.values()) {
+      if (other.id === player.id || !other.alive) continue;
+      const t = rayVerticalCylinder(
+        origin,
+        dir,
+        other.core.x,
+        other.core.z,
+        other.core.y,
+        other.core.y + PLAYER_HEIGHT,
+        HIT_CAPSULE_RADIUS,
+        maxT,
+      );
+      if (t !== null && t < hitT) {
+        hitT = t;
+        hitZombie = null;
+        hitPlayer = other;
+      }
+    }
+
+    const endT = hitT < Infinity ? hitT : maxT;
+    const tx = origin.x + dir.x * endT;
+    const ty = origin.y + dir.y * endT;
+    const tz = origin.z + dir.z * endT;
+    queueEvent(
+      state,
+      { e: "shot", w: ranged.sound, sx: origin.x, sy: origin.y, sz: origin.z, tx, ty, tz },
+      player.core.x,
+      player.core.z,
     );
-    if (t !== null && t < hitT) {
-      hitT = t;
-      hitZombie = zombie;
-      hitPlayer = null;
+    if (hitT < Infinity || staticT !== null) {
+      queueEvent(state, { e: "hit", x: tx, y: ty, z: tz }, tx, tz);
     }
-  }
-  for (const other of state.players.values()) {
-    if (other.id === player.id || !other.alive) continue;
-    const t = rayVerticalCylinder(
-      origin,
-      dir,
-      other.core.x,
-      other.core.z,
-      other.core.y,
-      other.core.y + PLAYER_HEIGHT,
-      HIT_CAPSULE_RADIUS,
-      maxT,
-    );
-    if (t !== null && t < hitT) {
-      hitT = t;
-      hitZombie = null;
-      hitPlayer = other;
-    }
-  }
 
-  const endT = hitT < Infinity ? hitT : maxT;
-  const tx = origin.x + dir.x * endT;
-  const ty = origin.y + dir.y * endT;
-  const tz = origin.z + dir.z * endT;
-  queueEvent(
-    state,
-    { e: "shot", sx: origin.x, sy: origin.y, sz: origin.z, tx, ty, tz },
-    player.core.x,
-    player.core.z,
-  );
-  if (hitT < Infinity || staticT !== null) {
-    queueEvent(state, { e: "hit", x: tx, y: ty, z: tz }, tx, tz);
-  }
-
-  if (hitZombie) {
-    hitZombie.hp -= def.power;
-    if (hitZombie.hp <= 0) {
-      killZombie(state, hitZombie);
-      player.stats.zombieKills++;
+    // Kill credit lands at most once per victim per trigger pull: killZombie
+    // removes the zombie (later pellets can't re-hit it) and damagePlayer
+    // returns true only on the living->dead transition (dead players are
+    // skipped above).
+    if (hitZombie) {
+      hitZombie.hp -= def.power;
+      if (hitZombie.hp <= 0) {
+        killZombie(state, hitZombie);
+        player.stats.zombieKills++;
+      }
+      continue;
     }
-    return;
-  }
-  if (hitPlayer && damagePlayer(state, hitPlayer, def.power, player.name, true)) {
-    player.stats.kills++;
+    if (hitPlayer && damagePlayer(state, hitPlayer, def.power, player.name, true)) {
+      player.stats.kills++;
+    }
   }
 }

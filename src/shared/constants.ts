@@ -85,6 +85,13 @@ export const ZOMBIE_RADIUS = 0.45;
 export const ZOMBIE_RESPAWN_S = 30;
 export const ZOMBIE_SPAWN_MIN_PLAYER_DIST = 45;
 
+// --- Military zone ---
+export const MILITARY_ZOMBIES = 14; // inside the compound at boot
+export const MILITARY_ZOMBIE_HP = 120;
+export const MILITARY_ZOMBIE_DMG = 20;
+export const MILITARY_ZOMBIE_SPEED = 5.6; // chase, vs 5.4 normal
+export const MILITARY_RESPAWN_MIN_PLAYER_DIST = 60;
+
 // --- Combat ---
 export const MELEE_RANGE = 2.3;
 export const MELEE_HALF_ANGLE_RAD = Math.PI / 3.2; // generous cone

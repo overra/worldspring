@@ -5,6 +5,10 @@
 export type SfxName =
   | "shot"
   | "shot_far"
+  | "rifle_shot"
+  | "rifle_far"
+  | "shotgun_shot"
+  | "shotgun_far"
   | "swing"
   | "hit_flesh"
   | "hit_thud"
@@ -32,6 +36,10 @@ export type SfxName =
 export const SFX_FILES: Record<SfxName, string> = {
   shot: "/sfx/shot.mp3",
   shot_far: "/sfx/shot_far.mp3",
+  rifle_shot: "/sfx/rifle_shot.mp3",
+  rifle_far: "/sfx/rifle_far.mp3",
+  shotgun_shot: "/sfx/shotgun_shot.mp3",
+  shotgun_far: "/sfx/shotgun_far.mp3",
   swing: "/sfx/swing.mp3",
   hit_flesh: "/sfx/hit_flesh.mp3",
   hit_thud: "/sfx/hit_thud.mp3",
