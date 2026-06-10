@@ -90,6 +90,8 @@ export function Buildings(): ReactElement | null {
           material={shared.materials[box.material]}
           position={box.position}
           scale={box.scale}
+          castShadow
+          receiveShadow
         />
       ))}
     </group>

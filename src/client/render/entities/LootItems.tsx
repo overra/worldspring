@@ -40,6 +40,7 @@ function createPool(): LootPool {
   const applied: Array<ItemType | null> = [];
   for (let i = 0; i < POOL_SIZE; i++) {
     const mesh = new THREE.Mesh(BOX_GEO, lootMaterial("beans"));
+    mesh.castShadow = true;
     mesh.visible = false;
     root.add(mesh);
     meshes.push(mesh);

@@ -4,10 +4,12 @@
 // the UI store happens here at message rate.
 
 import { DAY_DURATION_S, MAX_NAME_LENGTH, START_HOUR } from "@/shared/constants";
+import { ITEM_DEFS } from "@/shared/items";
 import { gameHours } from "@/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@/shared/protocol";
 import { createWorld } from "@/shared/world";
 import { clientWorld, resetClientWorld } from "@/client/runtime";
+import { cueSound } from "@/client/audio/cues";
 import { useUIStore } from "@/client/state/store";
 import { clearPending, reconcile, resetPrediction } from "./prediction";
 import { pushSnap, resetInterpolation, setTimeBase } from "./interpolation";
@@ -80,6 +82,14 @@ export function doAttack(): void {
 
 export function doUse(slot: number): void {
   sendMsg({ t: "use", slot });
+  // Optimistic local feedback; the server confirms via the next inv message.
+  const stack = useUIStore.getState().inventory[slot];
+  if (!stack) return;
+  const kind = ITEM_DEFS[stack.type].kind;
+  if (kind === "food") cueSound("eat");
+  else if (kind === "drink") cueSound("drink");
+  else if (kind === "heal") cueSound("bandage");
+  else if (kind === "placeable") cueSound("campfire_place");
 }
 
 export function doEquip(slot: number): void {
@@ -88,6 +98,7 @@ export function doEquip(slot: number): void {
 
 export function doPickup(id: number): void {
   sendMsg({ t: "pickup", id });
+  cueSound("pickup");
 }
 
 export function doDrop(slot: number): void {
@@ -220,5 +231,8 @@ function onSnap(msg: SnapMsg): void {
   ui.setVitals(vitalsOf(msg.you));
   ui.setPlayerCount(msg.count);
   ui.setClockHours(gameHours(msg.time, DAY_DURATION_S, START_HOUR));
-  if (msg.events.length > 0) clientWorld.events.push(...msg.events);
+  if (msg.events.length > 0) {
+    clientWorld.events.push(...msg.events);
+    clientWorld.audioEvents.push(...msg.events);
+  }
 }

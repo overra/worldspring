@@ -39,6 +39,7 @@ function createPool(): FirePool {
     // Three crossed logs leaning into the center.
     for (let k = 0; k < 3; k++) {
       const log = new THREE.Mesh(LOG_GEO, LOG_MAT);
+      log.castShadow = true;
       log.rotation.order = "YXZ";
       log.rotation.y = (k * Math.PI * 2) / 3;
       log.rotation.x = 1.2;

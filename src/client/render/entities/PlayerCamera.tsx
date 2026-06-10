@@ -2,8 +2,8 @@
 // predicted local player (clientWorld.me) + mouse-look (inputState.yaw/pitch).
 // Runs at renderPriority 1 so it executes AFTER NetSystem's default-priority
 // prediction step. NOTE: registering a positive-priority useFrame disables
-// R3F's automatic render, so this component calls gl.render itself — it is
-// the scene's renderer.
+// R3F's automatic render; the actual render is owned by <PostFX/>'s
+// EffectComposer (renderPriority 2), which runs after this camera update.
 //
 // Also owns the LOCAL player's body (visible in third person only).
 
@@ -94,9 +94,6 @@ export function PlayerCamera(): null {
       const stack = ui.inventory[ui.selectedSlot] ?? null;
       rig.setHeldItem(stack ? stack.type : null);
     }
-
-    // Positive-priority subscriber => R3F auto-render is off; render here.
-    state.gl.render(state.scene, state.camera);
   }, 1);
 
   return null;

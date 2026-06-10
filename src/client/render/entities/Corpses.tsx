@@ -40,6 +40,7 @@ function box(
   rotY = 0,
 ): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  mesh.castShadow = true;
   mesh.position.set(x, y, z);
   mesh.rotation.y = rotY;
   return mesh;

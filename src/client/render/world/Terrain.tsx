@@ -77,7 +77,7 @@ export function Terrain(): ReactElement | null {
 
   if (!geometry) return null;
   return (
-    <mesh geometry={geometry} frustumCulled={false}>
+    <mesh geometry={geometry} frustumCulled={false} receiveShadow>
       <meshStandardMaterial vertexColors flatShading />
     </mesh>
   );

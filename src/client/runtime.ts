@@ -88,6 +88,8 @@ export interface ClientWorldState {
   promptLootId: number | null;
   /** VFX queue: net layer pushes, render effects drain via drainEvents(). */
   events: GameEvent[];
+  /** Same events, separate queue for the audio engine (drainAudioEvents). */
+  audioEvents: GameEvent[];
   /** Deterministic world geometry, built from the seed in `welcome`. */
   world: World | null;
 }
@@ -104,6 +106,7 @@ export const clientWorld: ClientWorldState = {
   fires: [],
   promptLootId: null,
   events: [],
+  audioEvents: [],
   world: null,
 };
 
@@ -126,6 +129,14 @@ export function drainEvents(): GameEvent[] {
   return out;
 }
 
+/** Drain pending audio events (called once per frame by the audio engine). */
+export function drainAudioEvents(): GameEvent[] {
+  if (clientWorld.audioEvents.length === 0) return clientWorld.audioEvents;
+  const out = clientWorld.audioEvents;
+  clientWorld.audioEvents = [];
+  return out;
+}
+
 /** Reset everything on disconnect/death-respawn-menu transitions. */
 export function resetClientWorld(): void {
   clientWorld.ready = false;
@@ -137,4 +148,5 @@ export function resetClientWorld(): void {
   clientWorld.fires = [];
   clientWorld.promptLootId = null;
   clientWorld.events = [];
+  clientWorld.audioEvents = [];
 }

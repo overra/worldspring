@@ -124,10 +124,12 @@ export function createHumanoid(colors: HumanoidColors): HumanoidRig {
   group.add(upper);
 
   const torso = new THREE.Mesh(TORSO_GEO, shirtMaterial);
+  torso.castShadow = true;
   torso.position.y = TORSO_LOCAL_Y;
   upper.add(torso);
 
   const head = new THREE.Mesh(HEAD_GEO, skinMaterial);
+  head.castShadow = true;
   head.position.y = HEAD_LOCAL_Y;
   upper.add(head);
 
@@ -135,6 +137,7 @@ export function createHumanoid(colors: HumanoidColors): HumanoidRig {
     const pivot = new THREE.Group();
     pivot.position.set(side * SHOULDER_X, SHOULDER_LOCAL_Y, 0);
     const mesh = new THREE.Mesh(ARM_GEO, skinMaterial);
+    mesh.castShadow = true;
     mesh.position.y = ARM_MESH_Y;
     pivot.add(mesh);
     upper.add(pivot);
@@ -151,6 +154,7 @@ export function createHumanoid(colors: HumanoidColors): HumanoidRig {
     const pivot = new THREE.Group();
     pivot.position.set(side * LEG_X, HIP_Y, 0);
     const mesh = new THREE.Mesh(LEG_GEO, pantsMaterial);
+    mesh.castShadow = true;
     mesh.position.y = LEG_MESH_Y;
     pivot.add(mesh);
     group.add(pivot);

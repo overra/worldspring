@@ -124,16 +124,20 @@ export function Trees(): ReactElement | null {
         ref={trunksRef}
         args={[assets.trunkGeo, assets.trunkMat, split.all.length]}
         frustumCulled={false}
+        castShadow
+        receiveShadow
       />
       <instancedMesh
         ref={coneRef}
         args={[assets.coneGeo, assets.coniferMat, split.conifers.length * 2]}
         frustumCulled={false}
+        castShadow
       />
       <instancedMesh
         ref={blobRef}
         args={[assets.blobGeo, assets.oakMat, split.oaks.length]}
         frustumCulled={false}
+        castShadow
       />
     </group>
   );
