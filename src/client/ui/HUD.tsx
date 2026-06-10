@@ -208,12 +208,20 @@ function InventoryPanel(): ReactElement | null {
   const inventory = useUIStore((s) => s.inventory);
   if (!invOpen) return null;
   return (
-    <div className="hud-inv">
-      <div className="inv-title">INVENTORY</div>
-      {Array.from({ length: INVENTORY_SLOTS }, (_, i) => (
-        <InventoryRow key={i} slot={i} stack={inventory[i] ?? null} />
-      ))}
-      <div className="inv-hint">Tab to close</div>
+    <div
+      className="hud-inv-backdrop"
+      onClick={(e) => {
+        // Backdrop only — clicks inside the panel land on a child.
+        if (e.target === e.currentTarget) useUIStore.getState().setInvOpen(false);
+      }}
+    >
+      <div className="hud-inv">
+        <div className="inv-title">INVENTORY</div>
+        {Array.from({ length: INVENTORY_SLOTS }, (_, i) => (
+          <InventoryRow key={i} slot={i} stack={inventory[i] ?? null} />
+        ))}
+        <div className="inv-hint">Tab to close</div>
+      </div>
     </div>
   );
 }

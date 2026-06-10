@@ -57,7 +57,13 @@ export function EscapeMenu(): React.ReactElement | null {
   };
 
   return (
-    <div className="esc-root">
+    <div
+      className="esc-root"
+      onClick={(e) => {
+        // Backdrop only — clicks inside the panel land on a child.
+        if (e.target === e.currentTarget) setMenuOpen(false);
+      }}
+    >
       <div className="esc-panel">
         <h1 className="esc-title">PAUSED</h1>
         <p className="esc-subtitle">the world keeps moving</p>

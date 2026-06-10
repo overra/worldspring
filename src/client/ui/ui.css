@@ -865,3 +865,11 @@
     top: calc(10px + env(safe-area-inset-top, 0px));
   }
 }
+
+/* Full-screen catcher behind the inventory: tap/click outside the panel
+   closes it (the panel's own clicks land on children, not the backdrop). */
+.hud-inv-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
