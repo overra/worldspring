@@ -1,6 +1,6 @@
-// Zombie rendering: pooled humanoid rigs with a hunched posture, greenish
-// skin, raised arms while chasing/attacking, and a lunge pulse on attack.
-// Same imperative pooling pattern as RemotePlayers — no React per snapshot.
+// Zombie rendering: pooled rigged skeleton characters driven by the wire
+// state — shamble while wandering, run while chasing, punch overlays on the
+// server's swing cadence. Same imperative pooling pattern as RemotePlayers.
 
 import { useMemo } from "react";
 import type { ReactElement } from "react";
@@ -9,60 +9,77 @@ import * as THREE from "three";
 import { ZOMBIE_MAX } from "@/shared/constants";
 import type { ZombieState } from "@/shared/protocol";
 import { clientWorld } from "@/client/runtime";
-import { createHumanoid, type HumanoidRig } from "./Humanoid";
+import {
+  createCharacterRig,
+  useCharacterModel,
+  type CharacterRig,
+  type LocomotionState,
+} from "./CharacterRig";
 
-const ZOMBIE_COLORS = { shirt: "#4a4f42", pants: "#3b3f36", skin: "#6a8a5a" };
-// Military variant: darker uniform + a slightly wider torso (1.1x).
-const MIL_ZOMBIE_SHIRT = "#3a4138";
-const MIL_ZOMBIE_PANTS = "#2e332c";
-const MIL_TORSO_SCALE_X = 1.1;
-const HUNCH_X = 0.25; // torso forward tilt
-const ARMS_RAISED_X = 1.35; // arms held out toward the target
-const LUNGE_AMPLITUDE = 0.35;
+// Very subtle green cast over the authored skeleton palette.
+const NORMAL_TINT = new THREE.Color("#d4ddc9");
+// Military variant: dark olive + slightly bigger.
+const MIL_TINT = new THREE.Color("#5a6148");
+const MIL_SCALE = 1.06;
+/** Matches the server swing cadence while a zombie stays in `attack`. */
+const ATTACK_SWING_INTERVAL_S = 1.2;
+// Rigs beyond this only step their mixer every Nth frame (accumulated dt).
+const FAR_DIST_SQ = 80 * 80;
+const FAR_UPDATE_INTERVAL = 4;
+const MAX_FRAME_DT = 0.1;
 
-function speedFactorFor(state: ZombieState): number {
-  if (state === "chase") return 1.4;
-  if (state === "attack") return 1.1;
-  if (state === "wander") return 0.45;
-  return 0;
+function locomotionFor(state: ZombieState): LocomotionState {
+  if (state === "chase") return "run";
+  if (state === "wander") return "shamble";
+  return "idle"; // idle + attack (the punch overlay carries the swing)
+}
+
+interface ZombieSlot {
+  rig: CharacterRig;
+  lastState: ZombieState | null;
+  nextSwingIn: number;
+  accumDt: number;
 }
 
 interface ZombiePool {
   root: THREE.Group;
-  rigs: HumanoidRig[];
+  slots: ZombieSlot[];
   byId: Map<number, number>;
   free: number[];
+  frame: number;
 }
 
 function createPool(): ZombiePool {
   const root = new THREE.Group();
-  const rigs: HumanoidRig[] = [];
+  const slots: ZombieSlot[] = [];
   const free: number[] = [];
   for (let i = 0; i < ZOMBIE_MAX; i++) {
-    const rig = createHumanoid(ZOMBIE_COLORS);
-    rig.group.visible = false;
-    rig.upper.rotation.x = HUNCH_X;
-    root.add(rig.group);
-    rigs.push(rig);
+    const rig = createCharacterRig("zombie");
+    rig.root.visible = false;
+    root.add(rig.root);
+    slots.push({ rig, lastState: null, nextSwingIn: 0, accumDt: 0 });
     free.push(ZOMBIE_MAX - 1 - i);
   }
-  return { root, rigs, byId: new Map(), free };
+  return { root, slots, byId: new Map(), free, frame: 0 };
 }
 
 export function Zombies(): ReactElement {
+  useCharacterModel("zombie");
   const pool = useMemo(createPool, []);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const zombies = clientWorld.zombies;
+    pool.frame++;
 
     for (const [id, idx] of pool.byId) {
       if (zombies.has(id)) continue;
       pool.byId.delete(id);
       pool.free.push(idx);
-      pool.rigs[idx].group.visible = false;
+      pool.slots[idx].rig.root.visible = false;
     }
 
-    const t = state.clock.elapsedTime;
+    const dt = Math.min(delta, MAX_FRAME_DT);
+    const camPos = state.camera.position;
 
     for (const z of zombies.values()) {
       let idx = pool.byId.get(z.id);
@@ -70,31 +87,43 @@ export function Zombies(): ReactElement {
         idx = pool.free.pop();
         if (idx === undefined) continue;
         pool.byId.set(z.id, idx);
-        const fresh = pool.rigs[idx];
-        fresh.group.visible = true;
+        const fresh = pool.slots[idx];
+        fresh.rig.root.visible = true;
         // Variant styling on assignment (slots are reused — always set both ways).
-        fresh.shirtMaterial.color.set(z.mil ? MIL_ZOMBIE_SHIRT : ZOMBIE_COLORS.shirt);
-        fresh.pantsMaterial.color.set(z.mil ? MIL_ZOMBIE_PANTS : ZOMBIE_COLORS.pants);
-        fresh.torso.scale.x = z.mil ? MIL_TORSO_SCALE_X : 1;
+        fresh.rig.setTint(z.mil ? MIL_TINT : NORMAL_TINT);
+        fresh.rig.root.scale.setScalar(z.mil ? MIL_SCALE : 1);
+        fresh.lastState = null;
+        fresh.accumDt = 0;
       }
-      const rig = pool.rigs[idx];
-      rig.group.position.set(z.x, z.y, z.z);
-      rig.group.rotation.y = z.yaw;
+      const slot = pool.slots[idx];
+      const root = slot.rig.root;
+      root.position.set(z.x, z.y, z.z);
+      root.rotation.y = z.yaw;
 
-      const tz = t + idx * 2.3; // de-sync the pool's walk cycles
-      rig.update(tz, speedFactorFor(z.state), false);
+      if (z.state !== slot.lastState) {
+        slot.lastState = z.state;
+        slot.rig.setLocomotion(locomotionFor(z.state));
+        if (z.state === "attack") {
+          slot.rig.playOverlay("attack_punch");
+          slot.nextSwingIn = ATTACK_SWING_INTERVAL_S;
+        }
+      } else if (z.state === "attack") {
+        slot.nextSwingIn -= dt;
+        if (slot.nextSwingIn <= 0) {
+          slot.rig.playOverlay("attack_punch");
+          slot.nextSwingIn += ATTACK_SWING_INTERVAL_S;
+        }
+      }
 
-      // Posture overrides AFTER update(): hunch + aggro arms + lunge.
-      rig.upper.rotation.x = HUNCH_X;
-      if (z.state === "chase" || z.state === "attack") {
-        const wobble = Math.sin(tz * 5) * 0.12;
-        rig.leftArm.rotation.x = ARMS_RAISED_X + wobble;
-        rig.rightArm.rotation.x = ARMS_RAISED_X - wobble;
-      }
-      if (z.state === "attack") {
-        const lunge = Math.max(0, Math.sin(tz * 7));
-        rig.upper.rotation.x = HUNCH_X + lunge * LUNGE_AMPLITUDE;
-      }
+      // Mixer step — far rigs only every Nth frame, staggered by slot.
+      slot.accumDt += dt;
+      const dx = z.x - camPos.x;
+      const dy = z.y - camPos.y;
+      const dz = z.z - camPos.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0) continue;
+      slot.rig.update(slot.accumDt);
+      slot.accumDt = 0;
     }
   });
 

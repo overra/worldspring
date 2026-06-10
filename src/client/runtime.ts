@@ -170,6 +170,13 @@ if (import.meta.env.DEV && typeof window !== "undefined") {
   window.__game = { inputState, clientWorld };
 }
 
+// Dev-only: expose three for console profiling (tree-shaken out of prod).
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  void import("three").then((m) => {
+    (window as unknown as { __THREE?: unknown }).__THREE = m;
+  });
+}
+
 /** Drain pending VFX events (called once per frame by the effects renderer). */
 export function drainEvents(): GameEvent[] {
   if (clientWorld.events.length === 0) return clientWorld.events;

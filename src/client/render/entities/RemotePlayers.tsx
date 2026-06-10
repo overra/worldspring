@@ -1,6 +1,6 @@
-// Remote player rendering: a fixed pool of MAX_PLAYERS humanoid rigs created
-// once and assigned to player ids per frame. No React re-render per snapshot —
-// everything is imperative inside useFrame.
+// Remote player rendering: a fixed pool of MAX_PLAYERS rigged GLTF characters
+// created once and assigned to player ids per frame. No React re-render per
+// snapshot — everything is imperative inside useFrame.
 
 import { useMemo } from "react";
 import type { ReactElement } from "react";
@@ -9,16 +9,25 @@ import * as THREE from "three";
 import { MAX_PLAYERS } from "@/shared/constants";
 import { ANIM_ATTACKING, ANIM_MOVING, ANIM_SPRINTING } from "@/shared/protocol";
 import { clientWorld } from "@/client/runtime";
-import { createHumanoid, type HumanoidRig } from "./Humanoid";
+import {
+  createCharacterRig,
+  overlayForItem,
+  useCharacterModel,
+  type CharacterRig,
+} from "./CharacterRig";
 
-const LABEL_Y = 2.1;
+// Head top sits at PLAYER_HEIGHT (1.8) — float the name a bit above it.
+const LABEL_Y = 2.0;
 const LABEL_MAX_DIST_SQ = 60 * 60;
-const SPRINT_ANIM_FACTOR = 1.35;
-const PANTS_COLOR = "#4a4e57";
-const SKIN_COLOR = "#d9b08c";
+// Rigs beyond this only step their mixer every Nth frame (accumulated dt).
+const FAR_DIST_SQ = 80 * 80;
+const FAR_UPDATE_INTERVAL = 4;
+const MAX_FRAME_DT = 0.1;
 
-// Small muted shirt palette; stable per id via hash.
-const SHIRT_PALETTE = [
+// Subtle per-player tint: lerp white toward a hashed palette color so the
+// model's authored palette still reads underneath.
+const TINT_STRENGTH = 0.35;
+const TINT_PALETTE = [
   "#7a6f5d",
   "#5d7a6f",
   "#6f5d7a",
@@ -27,7 +36,7 @@ const SHIRT_PALETTE = [
   "#74837a",
   "#8a7a64",
   "#647a8a",
-];
+].map((hex) => new THREE.Color(1, 1, 1).lerp(new THREE.Color(hex), TINT_STRENGTH));
 
 function hashId(id: string): number {
   let h = 5381;
@@ -80,9 +89,11 @@ function labelMaterial(name: string): THREE.SpriteMaterial {
 }
 
 interface PlayerSlot {
-  rig: HumanoidRig;
+  rig: CharacterRig;
   label: THREE.Sprite;
   appliedName: string;
+  lastAttacking: boolean;
+  accumDt: number;
 }
 
 interface PlayerPool {
@@ -90,6 +101,7 @@ interface PlayerPool {
   slots: PlayerSlot[];
   byId: Map<string, number>;
   free: number[];
+  frame: number;
 }
 
 function createPool(): PlayerPool {
@@ -97,34 +109,36 @@ function createPool(): PlayerPool {
   const slots: PlayerSlot[] = [];
   const free: number[] = [];
   for (let i = 0; i < MAX_PLAYERS; i++) {
-    const rig = createHumanoid({ shirt: SHIRT_PALETTE[0], pants: PANTS_COLOR, skin: SKIN_COLOR });
-    rig.group.visible = false;
+    const rig = createCharacterRig("survivor");
+    rig.root.visible = false;
     const label = new THREE.Sprite(emptyLabelMaterial);
     label.position.y = LABEL_Y;
     label.scale.set(1.6, 0.4, 1);
-    rig.group.add(label);
-    root.add(rig.group);
-    slots.push({ rig, label, appliedName: "" });
+    rig.root.add(label);
+    root.add(rig.root);
+    slots.push({ rig, label, appliedName: "", lastAttacking: false, accumDt: 0 });
     free.push(MAX_PLAYERS - 1 - i); // pop() hands out slot 0 first
   }
-  return { root, slots, byId: new Map(), free };
+  return { root, slots, byId: new Map(), free, frame: 0 };
 }
 
 export function RemotePlayers(): ReactElement {
+  useCharacterModel("survivor");
   const pool = useMemo(createPool, []);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const players = clientWorld.players;
+    pool.frame++;
 
     // Release slots whose player left (Map tolerates delete-while-iterating).
     for (const [id, idx] of pool.byId) {
       if (players.has(id)) continue;
       pool.byId.delete(id);
       pool.free.push(idx);
-      pool.slots[idx].rig.group.visible = false;
+      pool.slots[idx].rig.root.visible = false;
     }
 
-    const t = state.clock.elapsedTime;
+    const dt = Math.min(delta, MAX_FRAME_DT);
     const camPos = state.camera.position;
 
     for (const view of players.values()) {
@@ -135,22 +149,24 @@ export function RemotePlayers(): ReactElement {
         if (idx === undefined) continue; // pool exhausted (shouldn't happen)
         pool.byId.set(view.id, idx);
         const fresh = pool.slots[idx];
-        fresh.rig.group.visible = true;
-        fresh.rig.shirtMaterial.color.set(
-          SHIRT_PALETTE[hashId(view.id) % SHIRT_PALETTE.length],
-        );
+        fresh.rig.root.visible = true;
+        fresh.rig.setTint(TINT_PALETTE[hashId(view.id) % TINT_PALETTE.length]);
+        fresh.rig.setLocomotion("idle");
+        fresh.lastAttacking = false;
+        fresh.accumDt = 0;
       }
       const slot = pool.slots[idx];
-      const g = slot.rig.group;
-      g.position.set(view.x, view.y, view.z);
-      g.rotation.y = view.yaw;
+      const root = slot.rig.root;
+      root.position.set(view.x, view.y, view.z);
+      root.rotation.y = view.yaw;
 
       const moving = (view.anim & ANIM_MOVING) !== 0;
       const sprinting = (view.anim & ANIM_SPRINTING) !== 0;
       const attacking = (view.anim & ANIM_ATTACKING) !== 0;
-      const speedFactor = sprinting ? SPRINT_ANIM_FACTOR : moving ? 1 : 0;
-      // Per-slot phase offset so the pool doesn't march in lockstep.
-      slot.rig.update(t + idx * 1.7, speedFactor, attacking);
+      slot.rig.setLocomotion(sprinting ? "run" : moving ? "walk" : "idle");
+      // Fire the overlay on the rising edge of the attack flag only.
+      if (attacking && !slot.lastAttacking) slot.rig.playOverlay(overlayForItem(view.item));
+      slot.lastAttacking = attacking;
       slot.rig.setHeldItem(view.item);
 
       if (slot.appliedName !== view.name) {
@@ -160,7 +176,14 @@ export function RemotePlayers(): ReactElement {
       const dx = view.x - camPos.x;
       const dy = view.y - camPos.y;
       const dz = view.z - camPos.z;
-      slot.label.visible = dx * dx + dy * dy + dz * dz <= LABEL_MAX_DIST_SQ;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      slot.label.visible = distSq <= LABEL_MAX_DIST_SQ;
+
+      // Mixer step — far rigs only every Nth frame, staggered by slot.
+      slot.accumDt += dt;
+      if (distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0) continue;
+      slot.rig.update(slot.accumDt);
+      slot.accumDt = 0;
     }
   });
 
