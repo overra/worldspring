@@ -59,6 +59,19 @@ export const inputState: InputState = {
 };
 
 /**
+ * Local player attack-swing animation bridge: any input surface (mouse,
+ * touch button) triggers it; the camera-owned local rig reads it. Lives here
+ * because both writers and the reader span ownership areas.
+ */
+export const localPlayerAnim = { attackUntil: 0 };
+
+const LOCAL_ATTACK_ANIM_MS = 300;
+
+export function triggerLocalAttackAnim(): void {
+  localPlayerAnim.attackUntil = performance.now() + LOCAL_ATTACK_ANIM_MS;
+}
+
+/**
  * Render/perf stats, written by the debug collector inside the Canvas and
  * read by the DOM debug overlay. Mutable for the same reason as clientWorld.
  */
@@ -69,6 +82,8 @@ export interface DebugStats {
   triangles: number;
   geometries: number;
   textures: number;
+  /** AudioContext state + mute, e.g. "running" / "suspended" / "running/muted". */
+  audio: string;
 }
 
 export const debugStats: DebugStats = {
@@ -78,6 +93,7 @@ export const debugStats: DebugStats = {
   triangles: 0,
   geometries: 0,
   textures: 0,
+  audio: "-",
 };
 
 export interface RemotePlayerView {

@@ -37,10 +37,6 @@ export interface HumanoidRig {
   update(timeSec: number, speedFactor: number, attacking: boolean): void;
 }
 
-/** Local-player FX bridge: InputController stamps attacks, PlayerCamera reads.
- * Both files live in this build area; uses performance.now() milliseconds. */
-export const localPlayerAnim = { attackUntil: 0 };
-
 export const ATTACK_ANIM_S = 0.3;
 
 // --- Proportions (PLAYER_HEIGHT 1.8: feet 0, hip 0.85, head top 1.8) ---

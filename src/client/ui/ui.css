@@ -814,3 +814,54 @@
     bottom: calc(282px + env(safe-area-inset-bottom, 0px));
   }
 }
+
+/* ==================== Touch layout v2: use the screen edges ====================
+   Overrides the earlier coarse-pointer lift rules (later in file wins at equal
+   specificity). Vitals live top-left on touch devices — the bottom belongs to
+   thumbs. The hotbar hugs whatever free strip the orientation offers. */
+@media (pointer: coarse) {
+  .hud-vitals {
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    bottom: auto;
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    width: 160px;
+    font-size: 11px;
+  }
+
+  /* Notices drop below the relocated vitals. */
+  .hud-notices {
+    top: calc(120px + env(safe-area-inset-top, 0px));
+    left: calc(12px + env(safe-area-inset-left, 0px));
+  }
+
+  /* Portrait: the joystick/buttons own the bottom ~210px; the hotbar sits
+     immediately above them instead of floating mid-screen. */
+  .hud-hotbar {
+    bottom: calc(216px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Landscape: the strip between the joystick (left, ends ~172px) and the
+   button cluster (right, 208px incl. margin) is free — put the hotbar there,
+   at the bottom where thumbs expect it. Slots shrink on narrow phones so
+   8 of them always fit the strip (min 30px, max 44px). */
+@media (pointer: coarse) and (orientation: landscape) {
+  .hud-hotbar {
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    gap: 3px;
+  }
+
+  .hotbar-slot {
+    width: clamp(30px, calc((100vw - 420px) / 8), 44px);
+    height: auto;
+    aspect-ratio: 1;
+  }
+
+  /* The debug panel would cover the relocated vitals — park it top-center-
+     right, clear of the clock/gear stack. */
+  .debug-overlay {
+    left: auto;
+    right: calc(110px + env(safe-area-inset-right, 0px));
+    top: calc(10px + env(safe-area-inset-top, 0px));
+  }
+}

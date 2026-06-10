@@ -23,6 +23,7 @@ interface DebugSnapshot {
   triangles: number;
   geometries: number;
   textures: number;
+  audio: string;
   x: number;
   z: number;
   yaw: number;
@@ -42,6 +43,7 @@ function takeSnapshot(): DebugSnapshot {
     triangles: debugStats.triangles,
     geometries: debugStats.geometries,
     textures: debugStats.textures,
+    audio: debugStats.audio,
     x: clientWorld.me.x,
     z: clientWorld.me.z,
     yaw: clientWorld.me.yaw,
@@ -110,6 +112,7 @@ export function DebugOverlay(): ReactElement | null {
       <Row label="tris" value={`${(snap.triangles / 1000).toFixed(1)}k`} />
       <Row label="geo/tex" value={`${snap.geometries}/${snap.textures}`} />
       <Row label="ping" value={`${pingMs} ms`} />
+      <Row label="audio" value={snap.audio} />
       <Row
         label="pos"
         value={`${snap.x.toFixed(1)}, ${snap.z.toFixed(1)} @ ${snap.yaw.toFixed(1)}`}

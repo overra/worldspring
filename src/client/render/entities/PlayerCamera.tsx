@@ -11,9 +11,9 @@ import { useEffect, useMemo } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { PLAYER_EYE_HEIGHT } from "@/shared/constants";
-import { clientWorld, inputState } from "@/client/runtime";
+import { clientWorld, inputState, localPlayerAnim } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
-import { createHumanoid, localPlayerAnim } from "./Humanoid";
+import { createHumanoid } from "./Humanoid";
 
 const CAM_DISTANCE = 3.6; // third-person boom length (per contract)
 const CAM_SIDE = 0.45; // right-shoulder offset
@@ -85,8 +85,15 @@ export function PlayerCamera(): null {
       rig.group.visible = clientWorld.ready;
       rig.group.position.set(me.x, me.y, me.z);
       rig.group.rotation.y = yaw;
+      // Keys OR the virtual joystick (analog) count as moving — touch input
+      // never sets the boolean key flags.
+      const analogMag = Math.hypot(inputState.analogX, inputState.analogZ);
       const moving =
-        inputState.forward || inputState.back || inputState.left || inputState.right;
+        inputState.forward ||
+        inputState.back ||
+        inputState.left ||
+        inputState.right ||
+        analogMag > 0.05;
       const speedFactor = moving ? (inputState.sprint ? SPRINT_ANIM_FACTOR : 1) : 0;
       const attacking = performance.now() < localPlayerAnim.attackUntil;
       rig.update(state.clock.elapsedTime, speedFactor, attacking);

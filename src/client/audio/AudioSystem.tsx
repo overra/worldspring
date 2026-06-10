@@ -11,7 +11,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { SFX_FILES, type SfxName } from "@/client/audio/manifest";
 import { registerCueSink } from "@/client/audio/cues";
-import { clientWorld, drainAudioEvents, type ZombieView } from "@/client/runtime";
+import { clientWorld, debugStats, drainAudioEvents, type ZombieView } from "@/client/runtime";
 import { useSettingsStore } from "@/client/state/settings";
 import { useUIStore } from "@/client/state/store";
 import { TEMP_SHIVER } from "@/shared/constants";
@@ -546,6 +546,8 @@ export function AudioSystem(): null {
           if (ctx.state !== "running") return;
           markUnlocked(engine);
           document.removeEventListener("pointerdown", tryUnlock);
+          document.removeEventListener("touchend", tryUnlock);
+          document.removeEventListener("click", tryUnlock);
           document.removeEventListener("keydown", tryUnlock);
         })
         .catch((err: unknown) => {
@@ -553,7 +555,12 @@ export function AudioSystem(): null {
           console.warn("[audio] AudioContext resume failed; will retry on next gesture", err);
         });
     };
+    // iOS Safari only honors resume() from certain gestures (touchend/click
+    // are the reliable ones; pointerdown alone can be ignored) — listen to
+    // all of them, first one to succeed removes the rest.
     document.addEventListener("pointerdown", tryUnlock);
+    document.addEventListener("touchend", tryUnlock);
+    document.addEventListener("click", tryUnlock);
     document.addEventListener("keydown", tryUnlock);
 
     // M toggles master mute (mute overrides; unmute restores the store value).
@@ -590,6 +597,8 @@ export function AudioSystem(): null {
       unsubVolume();
       registerCueSink(null);
       document.removeEventListener("pointerdown", tryUnlock);
+      document.removeEventListener("touchend", tryUnlock);
+      document.removeEventListener("click", tryUnlock);
       document.removeEventListener("keydown", tryUnlock);
       document.removeEventListener("keydown", onMuteKey);
       silenceEngine(engine);
@@ -602,6 +611,7 @@ export function AudioSystem(): null {
     const engine = getEngine();
     const dt = Math.min(delta, 0.1);
     const now = nowSec();
+    debugStats.audio = `${engine.listener.context.state}${engine.muted ? "/muted" : ""}`;
     state.camera.getWorldPosition(tmpCamPos);
 
     // Always drain (even while the context is locked) so the queue never grows;

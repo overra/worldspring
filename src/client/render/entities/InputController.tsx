@@ -4,11 +4,10 @@
 
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
-import { clientWorld, inputState } from "@/client/runtime";
+import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
 import { doAttack, doDrop, doEquip, doPickup } from "@/client/net/connection";
-import { ATTACK_ANIM_S, localPlayerAnim } from "./Humanoid";
 
 const MOUSE_SENSITIVITY = 0.0024; // rad per px at sensitivity 1
 const PITCH_LIMIT = 1.45; // rad, per contract
@@ -127,7 +126,7 @@ export function InputController(): null {
       if (!inputState.pointerLocked) return;
       const ui = useUIStore.getState();
       if (ui.invOpen || ui.phase !== "playing") return;
-      localPlayerAnim.attackUntil = performance.now() + ATTACK_ANIM_S * 1000;
+      triggerLocalAttackAnim();
       doAttack();
     };
 

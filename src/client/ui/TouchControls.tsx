@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { clientWorld, inputState } from "@/client/runtime";
+import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
 import { doAttack, doPickup } from "@/client/net/connection";
@@ -139,6 +139,7 @@ export function TouchControls(): ReactElement | null {
       switch (btn.dataset.tc) {
         case "attack":
           if (gameplayBlocked()) return;
+          triggerLocalAttackAnim();
           doAttack();
           return;
         case "jump":
