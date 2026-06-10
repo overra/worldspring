@@ -1,0 +1,35 @@
+/* F3 debug overlay — top-left, parked below the notice stack
+   (.hud-notices is top: 14px with up to 6 rows). Read-only panel. */
+
+.debug-overlay {
+  position: absolute;
+  top: 178px;
+  left: 16px;
+  z-index: 12; /* above the HUD (5) and death screen (10) — it is a debug tool */
+  min-width: 190px;
+  padding: 7px 10px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  font-family: var(--ui-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ui-text);
+  pointer-events: none;
+  user-select: none;
+}
+
+.debug-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  white-space: nowrap;
+}
+
+.debug-label {
+  color: var(--ui-dim);
+  letter-spacing: 0.08em;
+}
+
+.debug-value {
+  text-align: right;
+}

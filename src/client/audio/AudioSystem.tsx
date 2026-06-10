@@ -12,13 +12,13 @@ import * as THREE from "three";
 import { SFX_FILES, type SfxName } from "@/client/audio/manifest";
 import { registerCueSink } from "@/client/audio/cues";
 import { clientWorld, drainAudioEvents, type ZombieView } from "@/client/runtime";
+import { useSettingsStore } from "@/client/state/settings";
 import { useUIStore } from "@/client/state/store";
 import { TEMP_SHIVER } from "@/shared/constants";
 import type { GameEvent, WireFire, ZombieState } from "@/shared/protocol";
 
 // --- Presentation tunables (audio polish, not gameplay) ---
 
-const MASTER_VOLUME = 0.9;
 const POSITIONAL_POOL_SIZE = 16;
 const FLAT_POOL_SIZE = 8;
 const DEFAULT_REF_DISTANCE = 8;
@@ -113,7 +113,7 @@ function getEngine(): Engine {
 
 function createEngine(): Engine {
   const listener = new THREE.AudioListener();
-  listener.setMasterVolume(MASTER_VOLUME);
+  listener.setMasterVolume(useSettingsStore.getState().masterVolume);
 
   const group = new THREE.Group();
   group.name = "audio-positional-pool";
@@ -556,15 +556,22 @@ export function AudioSystem(): null {
     document.addEventListener("pointerdown", tryUnlock);
     document.addEventListener("keydown", tryUnlock);
 
-    // M toggles master mute.
+    // M toggles master mute (mute overrides; unmute restores the store value).
     const onMuteKey = (e: KeyboardEvent): void => {
       if (e.code !== "KeyM" || e.repeat) return;
       const target = e.target instanceof HTMLElement ? e.target : null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
       engine.muted = !engine.muted;
-      engine.listener.setMasterVolume(engine.muted ? 0 : MASTER_VOLUME);
+      engine.listener.setMasterVolume(engine.muted ? 0 : useSettingsStore.getState().masterVolume);
     };
     document.addEventListener("keydown", onMuteKey);
+
+    // Settings → master volume (live; the persisted value seeded createEngine).
+    engine.listener.setMasterVolume(engine.muted ? 0 : useSettingsStore.getState().masterVolume);
+    const unsubVolume = useSettingsStore.subscribe((state, prev) => {
+      if (state.masterVolume === prev.masterVolume) return;
+      engine.listener.setMasterVolume(engine.muted ? 0 : state.masterVolume);
+    });
 
     // UI/self one-shot cues (eat/drink/bandage/campfire_place/pickup).
     registerCueSink((name) => {
@@ -580,6 +587,7 @@ export function AudioSystem(): null {
 
     return () => {
       unsubPhase();
+      unsubVolume();
       registerCueSink(null);
       document.removeEventListener("pointerdown", tryUnlock);
       document.removeEventListener("keydown", tryUnlock);

@@ -30,6 +30,8 @@ export interface UIState {
   clockHours: number;
   pingMs: number;
   invOpen: boolean;
+  /** Escape menu (resume/settings/leave). Gates gameplay input like invOpen. */
+  menuOpen: boolean;
 
   setPhase(phase: GamePhase): void;
   setError(error: string | null): void;
@@ -44,6 +46,7 @@ export interface UIState {
   setClockHours(hours: number): void;
   setPingMs(ms: number): void;
   setInvOpen(open: boolean): void;
+  setMenuOpen(open: boolean): void;
 }
 
 let noticeId = 0;
@@ -62,6 +65,7 @@ export const useUIStore = create<UIState>((set) => ({
   clockHours: 9,
   pingMs: 0,
   invOpen: false,
+  menuOpen: false,
 
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error }),
@@ -80,4 +84,5 @@ export const useUIStore = create<UIState>((set) => ({
   setClockHours: (clockHours) => set({ clockHours }),
   setPingMs: (pingMs) => set({ pingMs }),
   setInvOpen: (invOpen) => set({ invOpen }),
+  setMenuOpen: (menuOpen) => set({ menuOpen }),
 }));

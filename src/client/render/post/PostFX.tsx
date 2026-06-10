@@ -21,6 +21,7 @@ import {
   BrightnessContrast,
   SMAA,
 } from "@react-three/postprocessing";
+import { QUALITY_CONFIGS, useSettingsStore } from "@/client/state/settings";
 
 // Ambient occlusion — grounds the low-poly primitives.
 const AO_RADIUS = 2.5;
@@ -39,6 +40,20 @@ const GRADE_SATURATION = -0.12;
 const GRADE_CONTRAST = 0.06;
 
 export function PostFX(): React.ReactElement {
+  // Subscribe (not getState) so quality changes re-render the chain live.
+  const quality = useSettingsStore((s) => s.quality);
+
+  // Low quality: the composer MUST stay mounted — it is the scene's only
+  // renderer (R3F auto-render is disabled by PlayerCamera) — so we keep it
+  // with just SMAA instead of unmounting the whole pipeline.
+  if (!QUALITY_CONFIGS[quality].postFx) {
+    return (
+      <EffectComposer renderPriority={2} multisampling={0}>
+        <SMAA />
+      </EffectComposer>
+    );
+  }
+
   return (
     <EffectComposer renderPriority={2} multisampling={0}>
       <N8AO

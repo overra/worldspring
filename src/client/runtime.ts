@@ -28,12 +28,18 @@ export interface InputState {
    * Attack/pickup/drop/equip have no flags — InputController calls the net
    * action helpers directly in its event handlers. */
   jump: boolean;
-  /** Mouse-look, written by the pointer-lock controller. */
+  /** Mouse-look, written by the pointer-lock controller (and touch look). */
   yaw: number;
   pitch: number;
   pointerLocked: boolean;
   /** First-person vs third-person toggle (owned/read by the camera rig). */
   firstPerson: boolean;
+  /** Touch device input is active: gameplay input flows without pointer lock. */
+  touchMode: boolean;
+  /** Analog move vector from the virtual joystick, each -1..1 (0 = none).
+   * Summed with the keyboard direction in NetSystem, then clamped. */
+  analogX: number;
+  analogZ: number;
 }
 
 export const inputState: InputState = {
@@ -47,6 +53,31 @@ export const inputState: InputState = {
   pitch: 0,
   pointerLocked: false,
   firstPerson: false,
+  touchMode: false,
+  analogX: 0,
+  analogZ: 0,
+};
+
+/**
+ * Render/perf stats, written by the debug collector inside the Canvas and
+ * read by the DOM debug overlay. Mutable for the same reason as clientWorld.
+ */
+export interface DebugStats {
+  fps: number;
+  frameMs: number;
+  drawCalls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+}
+
+export const debugStats: DebugStats = {
+  fps: 0,
+  frameMs: 0,
+  drawCalls: 0,
+  triangles: 0,
+  geometries: 0,
+  textures: 0,
 };
 
 export interface RemotePlayerView {

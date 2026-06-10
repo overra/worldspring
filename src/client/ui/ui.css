@@ -35,7 +35,9 @@
 .menu-panel {
   position: relative;
   width: min(440px, calc(100vw - 32px));
-  padding: 44px 44px 36px;
+  /* Horizontal padding shrinks with the viewport so the panel (and the
+     clamp()-sized title below) fits 360px-wide screens. */
+  padding: 44px clamp(20px, 6vw, 44px) 36px;
   background: var(--ui-bg);
   border: 1px solid var(--ui-border);
   text-align: center;
@@ -43,7 +45,9 @@
 
 .menu-title {
   margin: 0;
-  font-size: 42px;
+  /* 9 letterspaced caps ≈ 9.7em — clamp keeps the wordmark inside the panel
+     from 360px phones up (a fixed 42px overflowed even the 440px panel). */
+  font-size: clamp(20px, calc(10vw - 12px), 34px);
   font-weight: 600;
   letter-spacing: 0.34em;
   text-indent: 0.34em; /* balance trailing letterspace */
@@ -155,8 +159,8 @@
 
 .hud-vitals {
   position: absolute;
-  left: 16px;
-  bottom: 16px;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   width: 230px;
   display: flex;
   flex-direction: column;
@@ -238,7 +242,7 @@
 
 .hud-hotbar {
   position: absolute;
-  bottom: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -326,7 +330,7 @@
 .hud-status {
   position: absolute;
   top: 14px;
-  right: 16px;
+  right: calc(16px + env(safe-area-inset-right, 0px));
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -346,7 +350,7 @@
 .hud-notices {
   position: absolute;
   top: 14px;
-  left: 16px;
+  left: calc(16px + env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -528,6 +532,285 @@
 /* Narrow viewports: lift the hotbar clear of the vitals stack. */
 @media (max-width: 980px) {
   .hud-hotbar {
-    bottom: 140px;
+    bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ====================== Touch controls (coarse pointer) ====================== */
+/* Rendered by TouchControls.tsx on touch-primary devices only. The joystick
+   nub is moved imperatively (style.transform) at touch-move rate. */
+
+.touch-root {
+  position: absolute;
+  inset: 0;
+  z-index: 6; /* above the HUD (5), below the death screen (10) */
+  pointer-events: none; /* interactive children opt back in */
+  user-select: none;
+  -webkit-user-select: none;
+  font-size: 13px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* --- left thumb: virtual joystick --- */
+
+.tc-stick-zone {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: 160px; /* forgiving hit area around the 120px base */
+  height: 160px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.tc-stick-base {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 120px;
+  height: 120px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+}
+
+.tc-stick-nub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(216, 220, 212, 0.16);
+  border: 1px solid var(--ui-dim);
+  will-change: transform;
+}
+
+/* --- buttons --- */
+
+.tc-btn {
+  pointer-events: auto;
+  touch-action: none; /* taps are ours: no scroll/zoom gesture handoff */
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-indent: 0.14em;
+}
+
+.tc-btn:active {
+  border-color: var(--ui-accent);
+  background: rgba(125, 160, 107, 0.2);
+}
+
+.tc-btn--active {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 7px rgba(125, 160, 107, 0.35);
+}
+
+/* Right thumb cluster: all targets >= 56px. */
+.tc-cluster {
+  position: absolute;
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  width: 196px;
+  height: 200px;
+  pointer-events: none;
+}
+
+.tc-cluster > .tc-btn {
+  position: absolute;
+}
+
+.tc-btn--attack {
+  right: 4px;
+  bottom: 0;
+  width: 88px;
+  height: 88px;
+  font-size: 11px;
+  border-color: rgba(179, 58, 46, 0.55);
+}
+
+.tc-btn--attack:active {
+  border-color: var(--ui-hp);
+  background: rgba(179, 58, 46, 0.22);
+}
+
+.tc-btn--jump {
+  right: 104px;
+  bottom: 12px;
+  width: 60px;
+  height: 60px;
+}
+
+.tc-btn--interact {
+  right: 14px;
+  bottom: 100px;
+  width: 64px;
+  height: 64px;
+  border-color: var(--ui-accent);
+  background: rgba(125, 160, 107, 0.16);
+}
+
+.tc-btn--bag {
+  right: 112px;
+  bottom: 88px;
+  width: 56px;
+  height: 56px;
+}
+
+.tc-btn--menu {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px));
+  width: 56px;
+  height: 56px;
+  font-size: 22px;
+  text-indent: 0;
+  letter-spacing: 0;
+}
+
+/* ================= Responsive HUD (small / touch screens) ================= */
+
+@media (pointer: coarse) {
+  /* Look-drags over the canvas must never scroll, zoom or pull-to-refresh
+     (declarative twin of the preventDefault in TouchControls). */
+  .game-canvas {
+    touch-action: none;
+  }
+
+  /* Keyboard legend is noise on touch devices. */
+  .menu-controls {
+    display: none;
+  }
+
+  /* Clear the ⚙ button in the top-right corner. */
+  .hud-status {
+    right: calc(78px + env(safe-area-inset-right, 0px));
+  }
+
+  /* Vitals ride above the joystick zone. */
+  .hud-vitals {
+    bottom: calc(186px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Finger-sized USE/DROP; the Tab hint is meaningless without a keyboard. */
+  .inv-btn {
+    padding: 9px 14px;
+  }
+
+  .inv-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .hud {
+    font-size: 12px;
+  }
+
+  /* Vitals: narrower bars, tighter type. */
+  .hud-vitals {
+    width: 170px;
+    gap: 5px;
+  }
+
+  .bar-label {
+    width: 38px;
+    font-size: 10px;
+  }
+
+  .bar-track {
+    height: 11px;
+  }
+
+  .bar-value {
+    width: 26px;
+    font-size: 10px;
+  }
+
+  /* Hotbar: 40px slots, tighter gap (8 slots = 348px, fits 360px screens). */
+  .hud-hotbar {
+    gap: 4px;
+  }
+
+  .hotbar-slot {
+    width: 40px;
+    height: 40px;
+  }
+
+  .hotbar-swatch {
+    inset: 10px;
+  }
+
+  .hotbar-count {
+    font-size: 10px;
+  }
+
+  /* Notices: stay clear of the top-right meta stack. */
+  .hud-notices {
+    max-width: min(240px, calc(100vw - 170px));
+  }
+
+  .hud-notice {
+    font-size: 11px;
+    padding: 3px 7px;
+  }
+
+  /* Top-right meta stack, smaller. */
+  .hud-status {
+    font-size: 11px;
+  }
+
+  .hud-clock {
+    font-size: 15px;
+  }
+
+  /* Inventory: full-width-ish sheet, scrollable. The KIND column is
+     redundant with the swatch and starves the name column at 360px. */
+  .hud-inv {
+    width: calc(100vw - 24px);
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+
+  .inv-kind {
+    display: none;
+  }
+
+  /* Death screen, scaled down. */
+  .death-title {
+    font-size: clamp(30px, 11vw, 52px);
+  }
+
+  .death-cause {
+    font-size: 13px;
+    margin: 12px 0 30px;
+  }
+
+  .death-respawn {
+    padding: 11px 26px;
+    font-size: 13px;
+  }
+}
+
+/* Touch phones: stack the bottom HUD clear of the joystick and the button
+   cluster — joystick (to ~172px) < hotbar < vitals. Must follow the generic
+   980px/coarse rules above so it wins the cascade. */
+@media (pointer: coarse) and (max-width: 768px) {
+  .hud-hotbar {
+    bottom: calc(226px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .hud-vitals {
+    bottom: calc(282px + env(safe-area-inset-bottom, 0px));
   }
 }

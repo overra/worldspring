@@ -12,11 +12,15 @@ import type { ReactElement } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { clientWorld } from "@/client/runtime";
+import { qualityConfig, useSettingsStore } from "@/client/state/settings";
 import { createRng, hashString } from "@/shared/rng";
 import { clamp } from "@/shared/math";
 import type { World } from "@/shared/world";
 
 const CHUNK_SIZE = 16; // meters
+// Instance capacity per chunk mesh. The actual blade count is this times the
+// quality preset's grassDensity, applied at chunk build time (pooled meshes
+// keep full capacity, so density changes only ever lower mesh.count).
 const BLADES_PER_CHUNK = 700;
 const VIEW_CHUNK_RADIUS = 2; // 5x5 grid around the player's chunk
 const MAX_BUILT_CHUNKS = 40; // LRU cap (recycle beyond this)
@@ -171,8 +175,15 @@ function buildChunk(world: World, cx: number, cz: number, mesh: THREE.InstancedM
       z0 + CHUNK_SIZE > b.cz - b.halfD - pad,
   );
 
+  // Quality density scales the attempt count; iterating a prefix of the same
+  // seeded sequence keeps placement deterministic across density levels.
+  const bladeTarget = Math.min(
+    BLADES_PER_CHUNK,
+    Math.round(BLADES_PER_CHUNK * qualityConfig().grassDensity),
+  );
+
   let placed = 0;
-  for (let i = 0; i < BLADES_PER_CHUNK; i++) {
+  for (let i = 0; i < bladeTarget; i++) {
     const x = x0 + rng.next() * CHUNK_SIZE;
     const z = z0 + rng.next() * CHUNK_SIZE;
     const yaw = rng.range(0, Math.PI * 2);
@@ -309,6 +320,29 @@ export function Grass(): ReactElement {
     lastCx: Number.NaN,
     lastCz: Number.NaN,
   });
+
+  // Live quality changes: recycle every built chunk into the pool so the 5x5
+  // window rebuilds at the new density over the next frames (the per-frame
+  // build budget in useFrame paces the rebuild — no hitch).
+  useEffect(
+    () =>
+      useSettingsStore.subscribe((state, prev) => {
+        if (state.quality === prev.quality) return;
+        const rt = runtimeRef.current;
+        for (const entry of rt.built.values()) {
+          entry.mesh.visible = false;
+          rt.pool.push(entry.mesh);
+        }
+        rt.built.clear();
+        rt.queue.length = 0;
+        rt.queued.clear();
+        rt.desired.clear();
+        // Force refreshDesired on the next frame to re-queue the window.
+        rt.lastCx = Number.NaN;
+        rt.lastCz = Number.NaN;
+      }),
+    [],
+  );
 
   useEffect(() => {
     const rt = runtimeRef.current;

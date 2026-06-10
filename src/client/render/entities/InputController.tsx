@@ -6,10 +6,11 @@ import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { clientWorld, inputState } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
+import { useSettingsStore } from "@/client/state/settings";
 import { doAttack, doDrop, doEquip, doPickup } from "@/client/net/connection";
 import { ATTACK_ANIM_S, localPlayerAnim } from "./Humanoid";
 
-const MOUSE_SENSITIVITY = 0.0024; // rad per px of pointer-lock movement
+const MOUSE_SENSITIVITY = 0.0024; // rad per px at sensitivity 1
 const PITCH_LIMIT = 1.45; // rad, per contract
 
 function clearMovementKeys(): void {
@@ -33,14 +34,21 @@ export function InputController(): null {
       if (e.code === "Tab") {
         e.preventDefault();
         if (e.repeat) return;
-        ui.setInvOpen(!ui.invOpen); // turning on clears movement via subscription
+        if (ui.menuOpen) return; // menu has priority over inventory
+        // Turning on clears movement via subscription; turning off re-locks
+        // via subscription (still inside this keydown's user gesture).
+        ui.setInvOpen(!ui.invOpen);
         return;
       }
 
-      // Movement only registers while in mouselook — this matches the
-      // NetSystem gate exactly, so the local rig never animates a walk the
-      // prediction isn't actually running.
-      const canMove = !ui.invOpen && inputState.pointerLocked;
+      // Movement only registers while in mouselook (or touch mode, where
+      // input flows without pointer lock) — this matches the NetSystem gate
+      // exactly, so the local rig never animates a walk the prediction isn't
+      // actually running.
+      const canMove =
+        !ui.invOpen &&
+        !ui.menuOpen &&
+        (inputState.pointerLocked || inputState.touchMode);
       switch (e.code) {
         case "KeyW":
           if (canMove) inputState.forward = true;
@@ -125,25 +133,44 @@ export function InputController(): null {
 
     const onMouseMove = (e: MouseEvent): void => {
       if (!inputState.pointerLocked) return;
-      inputState.yaw -= e.movementX * MOUSE_SENSITIVITY;
-      const pitch = inputState.pitch - e.movementY * MOUSE_SENSITIVITY;
+      // Live-read the multiplier each event — getState() is cheap and the
+      // settings slider applies instantly, no re-subscribe needed.
+      const sens = MOUSE_SENSITIVITY * useSettingsStore.getState().sensitivity;
+      inputState.yaw -= e.movementX * sens;
+      const pitch = inputState.pitch - e.movementY * sens;
       inputState.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
     };
 
-    const onCanvasClick = (): void => {
+    const requestLock = (): void => {
       if (document.pointerLockElement === canvas) return;
-      if (useUIStore.getState().phase !== "playing") return;
-      // Promise-wrapped: requestPointerLock can reject (e.g. re-lock too soon
-      // after Esc) and we don't want an unhandled rejection for that.
+      // Promise-wrapped: requestPointerLock can reject (e.g. Chrome blocks
+      // re-locking for ~1.5s after Esc) and we don't want an unhandled
+      // rejection for that. On rejection do nothing — clicking the canvas
+      // tries again.
       Promise.resolve(canvas.requestPointerLock()).catch(() => {
         // Browser refused the lock; the next click tries again.
       });
     };
 
+    const onCanvasClick = (): void => {
+      if (inputState.touchMode) return; // touch input flows without lock
+      if (useUIStore.getState().phase !== "playing") return;
+      requestLock();
+    };
+
     const onPointerLockChange = (): void => {
+      const wasLocked = inputState.pointerLocked;
       inputState.pointerLocked = document.pointerLockElement === canvas;
+      if (inputState.pointerLocked) return;
       // Esc exits pointer lock natively — don't fight it, just stop moving.
-      if (!inputState.pointerLocked) clearMovementKeys();
+      clearMovementKeys();
+      // An unlock mid-play that no UI asked for means the user pressed Esc —
+      // surface the escape menu. Intentional unlocks are excluded: inventory
+      // sets invOpen first, and death flips phase before exitLock runs.
+      if (!wasLocked || inputState.touchMode) return;
+      const ui = useUIStore.getState();
+      if (ui.phase !== "playing" || ui.invOpen || ui.menuOpen) return;
+      ui.setMenuOpen(true);
     };
 
     const onBlur = (): void => {
@@ -166,6 +193,23 @@ export function InputController(): null {
         exitLock();
       }
       if (state.phase === "dead" && prev.phase !== "dead") exitLock();
+
+      // Re-lock when a blocking UI closes mid-play. Zustand notifies
+      // synchronously, so this still runs inside the user gesture that
+      // closed it (Tab keydown / the menu's Resume click) and browsers
+      // allow the request. If Chrome still refuses (≈1.5s cooldown after
+      // Esc), requestLock's catch swallows it and a canvas click re-locks.
+      const invClosed = !state.invOpen && prev.invOpen;
+      const menuClosed = !state.menuOpen && prev.menuOpen;
+      if (
+        (invClosed || menuClosed) &&
+        state.phase === "playing" &&
+        !state.invOpen &&
+        !state.menuOpen &&
+        !inputState.touchMode
+      ) {
+        requestLock();
+      }
     });
 
     document.addEventListener("keydown", onKeyDown);

@@ -45,13 +45,26 @@ export function NetSystem(): null {
     // --- Build this frame's input cmds ---
     const jumpEdge = inputState.jump;
     inputState.jump = false;
-    const blocked = !inputState.pointerLocked || ui.invOpen;
+    const blocked =
+      ui.invOpen ||
+      ui.menuOpen ||
+      (!inputState.pointerLocked && !inputState.touchMode);
     let mx = 0;
     let mz = 0;
     let jump = false;
     if (!blocked) {
-      mx = (inputState.right ? 1 : 0) - (inputState.left ? 1 : 0);
-      mz = (inputState.back ? 1 : 0) - (inputState.forward ? 1 : 0);
+      // Keyboard direction + virtual joystick, clamped; stepPlayer normalizes
+      // anything above unit length but preserves analog magnitudes below it.
+      mx = clamp(
+        (inputState.right ? 1 : 0) - (inputState.left ? 1 : 0) + inputState.analogX,
+        -1,
+        1,
+      );
+      mz = clamp(
+        (inputState.back ? 1 : 0) - (inputState.forward ? 1 : 0) + inputState.analogZ,
+        -1,
+        1,
+      );
       jump = jumpEdge;
     }
     // A long frame becomes several sub-cmds of at most MAX_INPUT_DT each, so

@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { NIGHT_END_HOUR, NIGHT_START_HOUR } from "@/shared/constants";
 import { clamp, lerp } from "@/shared/math";
 import { clientWorld } from "@/client/runtime";
+import { QUALITY_CONFIGS, useSettingsStore } from "@/client/state/settings";
 
 const DAY_LEN = NIGHT_START_HOUR - NIGHT_END_HOUR; // 16h of daylight
 const NIGHT_LEN = 24 - DAY_LEN;
@@ -49,8 +50,8 @@ const STARS_SHOW_ELEVATION = -0.16; // sky is already near-black here — no pop
 
 // Shadows: ortho box centered on the camera, sun pulled this far out along
 // the sun direction. At night the sun intensity is 0 — no special casing.
+// On/off + map size come from the quality preset (settings store).
 const SUN_SHADOW_DIST = 120;
-const SHADOW_MAP_SIZE = 2048;
 const SHADOW_ORTHO_HALF = 55;
 const SHADOW_NEAR = 1;
 const SHADOW_FAR = 240;
@@ -183,6 +184,7 @@ function smoothstep01(x: number): number {
 
 export function SkyAndLighting(): ReactElement | null {
   const scene = useThree((s) => s.scene);
+  const quality = useSettingsStore((s) => s.quality);
 
   const sunRef = useRef<THREE.DirectionalLight>(null);
   const moonRef = useRef<THREE.DirectionalLight>(null);
@@ -208,12 +210,16 @@ export function SkyAndLighting(): ReactElement | null {
 
   // Shadow camera setup is imperative: changing ortho extents needs an
   // explicit updateProjectionMatrix, which pierced JSX props don't guarantee.
+  // Re-runs on quality change: castShadow + map size follow the preset.
   useEffect(() => {
     const sun = sunRef.current;
     if (!sun) return;
-    sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    const config = QUALITY_CONFIGS[quality];
+    sun.castShadow = config.shadows;
+    sun.shadow.mapSize.set(config.shadowMapSize, config.shadowMapSize);
     if (sun.shadow.map) {
-      // A frame may have rendered before this effect — drop the stale target.
+      // A frame may have rendered before this effect (or the size just
+      // changed) — drop the stale target so three reallocates it.
       sun.shadow.map.dispose();
       sun.shadow.map = null;
     }
@@ -227,7 +233,7 @@ export function SkyAndLighting(): ReactElement | null {
     cam.updateProjectionMatrix();
     sun.shadow.bias = SHADOW_BIAS;
     sun.shadow.normalBias = SHADOW_NORMAL_BIAS;
-  }, []);
+  }, [quality]);
 
   useFrame((state) => {
     const camPos = state.camera.position;
