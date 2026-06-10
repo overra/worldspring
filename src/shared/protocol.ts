@@ -1,0 +1,238 @@
+// Wire protocol between client and the GameRoom Durable Object.
+// JSON for v1 — readable and fast enough at this scale. All messages are
+// discriminated unions on `t`.
+
+import type { ItemStack, ItemType } from "./items";
+
+// --- Sim state shared by prediction (client) and authority (server) ---
+
+export interface PlayerCore {
+  x: number;
+  y: number;
+  z: number;
+  vy: number;
+  yaw: number;
+  pitch: number;
+  grounded: boolean;
+}
+
+export interface InputCmd {
+  seq: number;
+  dt: number; // seconds, clamped server-side
+  mx: number; // strafe: -1 left .. 1 right (local space)
+  mz: number; // -1 forward .. 1 back (local space)
+  yaw: number;
+  pitch: number;
+  sprint: boolean;
+  jump: boolean;
+}
+
+export interface Vitals {
+  hp: number;
+  food: number;
+  water: number;
+  temp: number;
+}
+
+// Anim bit flags carried in player snapshots.
+export const ANIM_MOVING = 1;
+export const ANIM_SPRINTING = 2;
+export const ANIM_ATTACKING = 4;
+
+// --- Client -> Server ---
+
+export type ClientMsg =
+  | { t: "join"; name: string }
+  | { t: "input"; cmds: InputCmd[] }
+  | { t: "attack" } // server resolves melee vs ranged from equipped item
+  | { t: "use"; slot: number }
+  | { t: "equip"; slot: number }
+  | { t: "pickup"; id: number }
+  | { t: "drop"; slot: number }
+  | { t: "respawn" }
+  | { t: "ping"; ts: number };
+
+// --- Server -> Client ---
+
+export interface WirePlayer {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  hp: number;
+  item: ItemType | null; // currently held item (for rendering)
+  anim: number; // ANIM_* bit flags
+}
+
+export type ZombieState = "idle" | "wander" | "chase" | "attack";
+
+export interface WireZombie {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  state: ZombieState;
+}
+
+export interface WireLoot {
+  id: number;
+  type: ItemType;
+  count: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * A body left behind by a dead player or zombie. Scavenge with the pickup
+ * message (corpses share the entity id space with loot). The body persists
+ * until its TTL even after being emptied.
+ */
+export interface WireCorpse {
+  id: number;
+  kind: "player" | "zombie";
+  /** Player name for the scavenge prompt; null for zombies. */
+  name: string | null;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  /** Number of item stacks still on the body (0 = picked clean). */
+  items: number;
+}
+
+export interface WireFire {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Authoritative state of YOUR player inside a snapshot (drives reconciliation). */
+export interface YouState extends Vitals {
+  x: number;
+  y: number;
+  z: number;
+  vy: number;
+  grounded: boolean;
+}
+
+export type GameEvent =
+  | { e: "shot"; sx: number; sy: number; sz: number; tx: number; ty: number; tz: number }
+  | { e: "swing"; id: string } // player id swung a melee weapon
+  | { e: "hit"; x: number; y: number; z: number } // impact effect
+  | { e: "zdie"; x: number; y: number; z: number }
+  | { e: "hurt" }; // YOU took damage (vignette flash); only sent to the victim
+
+export type ServerMsg =
+  | {
+      t: "welcome";
+      id: string;
+      seed: number;
+      time: number; // server game time in seconds since boot
+      you: YouState;
+      inv: (ItemStack | null)[];
+      selected: number;
+    }
+  | {
+      t: "snap";
+      tick: number;
+      time: number; // game time seconds; client derives time-of-day
+      ack: number; // last input seq applied for YOU
+      you: YouState;
+      players: WirePlayer[]; // includes you (renderers skip own id)
+      zombies: WireZombie[];
+      loot: WireLoot[];
+      corpses: WireCorpse[];
+      fires: WireFire[];
+      events: GameEvent[];
+      count: number; // players online
+    }
+  | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
+  | { t: "death"; by: string } // "a zombie", player name, "the cold", "starvation"
+  | { t: "notice"; msg: string }
+  | { t: "pong"; ts: number }
+  | { t: "error"; msg: string };
+
+// --- Validation (server-side trust boundary) ---
+
+function isFiniteNum(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+/**
+ * Parse and shape-check a raw websocket payload from a client. Returns null
+ * for anything malformed. Range clamping (dt, name length…) happens in the
+ * server systems; this guards types only.
+ */
+export function parseClientMsg(data: unknown): ClientMsg | null {
+  if (typeof data !== "string" || data.length > 8192) return null;
+  let msg: unknown;
+  try {
+    msg = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (typeof msg !== "object" || msg === null) return null;
+  const m = msg as Record<string, unknown>;
+  switch (m.t) {
+    case "join":
+      return typeof m.name === "string" ? { t: "join", name: m.name } : null;
+    case "input": {
+      if (!Array.isArray(m.cmds)) return null;
+      // Truncate oversized batches instead of rejecting wholesale — a reject
+      // would stall the ack stream and grow the client's pending queue.
+      const rawCmds = (m.cmds as unknown[]).slice(0, 40);
+      const cmds: InputCmd[] = [];
+      for (const c of rawCmds) {
+        if (typeof c !== "object" || c === null) return null;
+        const i = c as Record<string, unknown>;
+        if (
+          !isFiniteNum(i.seq) ||
+          !isFiniteNum(i.dt) ||
+          !isFiniteNum(i.mx) ||
+          !isFiniteNum(i.mz) ||
+          !isFiniteNum(i.yaw) ||
+          !isFiniteNum(i.pitch)
+        ) {
+          return null;
+        }
+        cmds.push({
+          seq: i.seq,
+          dt: i.dt,
+          mx: Math.max(-1, Math.min(1, i.mx)),
+          mz: Math.max(-1, Math.min(1, i.mz)),
+          yaw: i.yaw,
+          pitch: i.pitch,
+          sprint: i.sprint === true,
+          jump: i.jump === true,
+        });
+      }
+      return { t: "input", cmds };
+    }
+    case "attack":
+      return { t: "attack" };
+    case "use":
+      return isFiniteNum(m.slot) ? { t: "use", slot: m.slot | 0 } : null;
+    case "equip":
+      return isFiniteNum(m.slot) ? { t: "equip", slot: m.slot | 0 } : null;
+    case "pickup":
+      return isFiniteNum(m.id) ? { t: "pickup", id: m.id | 0 } : null;
+    case "drop":
+      return isFiniteNum(m.slot) ? { t: "drop", slot: m.slot | 0 } : null;
+    case "respawn":
+      return { t: "respawn" };
+    case "ping":
+      return isFiniteNum(m.ts) ? { t: "ping", ts: m.ts } : null;
+    default:
+      return null;
+  }
+}
+
+/** Game-time seconds -> hour of day [0, 24). */
+export function gameHours(timeS: number, dayDurationS: number, startHour: number): number {
+  return (startHour + (timeS / dayDurationS) * 24) % 24;
+}

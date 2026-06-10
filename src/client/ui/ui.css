@@ -1,0 +1,533 @@
+/* DEADCOAST UI — grim survival minimal.
+   Base tokens (--ui-bg, --ui-border, --ui-text, --ui-dim, --ui-accent,
+   --ui-danger) come from styles.css (frozen). Local tokens below. */
+
+:root {
+  --ui-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --ui-hp: #b33a2e;
+  --ui-food: #c8862e;
+  --ui-water: #3e7fa8;
+  --ui-cold: #7fd4e4;
+}
+
+/* ============================== Main menu ============================== */
+
+.menu-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(ellipse at 50% 115%, rgba(28, 38, 33, 0.55), transparent 60%),
+    linear-gradient(180deg, #0c1013 0%, #121a1d 45%, #090c0a 100%);
+}
+
+.menu-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.72) 100%);
+}
+
+.menu-panel {
+  position: relative;
+  width: min(440px, calc(100vw - 32px));
+  padding: 44px 44px 36px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  text-align: center;
+}
+
+.menu-title {
+  margin: 0;
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em; /* balance trailing letterspace */
+  color: var(--ui-text);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.menu-subtitle {
+  margin: 10px 0 0;
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  color: var(--ui-dim);
+}
+
+.menu-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 30px;
+}
+
+.menu-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  letter-spacing: 0.05em;
+  outline: none;
+}
+
+.menu-input::placeholder {
+  color: var(--ui-dim);
+  opacity: 0.7;
+}
+
+.menu-input:focus {
+  border-color: var(--ui-accent);
+}
+
+.menu-join {
+  padding: 10px 18px;
+  background: rgba(125, 160, 107, 0.14);
+  border: 1px solid var(--ui-accent);
+  color: var(--ui-text);
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+
+.menu-join:hover:not(:disabled) {
+  background: rgba(125, 160, 107, 0.28);
+}
+
+.menu-join:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.menu-error {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--ui-danger);
+}
+
+.menu-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 0;
+  right: 0;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--ui-dim);
+}
+
+/* ================================= HUD ================================= */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  user-select: none;
+  font-size: 13px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* --- damage vignette flash --- */
+
+.hud-damage-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(160, 20, 12, 0) 38%,
+    rgba(160, 20, 12, 0.55) 100%
+  );
+  animation: hud-damage-fade 250ms ease-out forwards;
+}
+
+@keyframes hud-damage-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* --- vitals (bottom-left) --- */
+
+.hud-vitals {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bar-label {
+  width: 46px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ui-dim);
+}
+
+.bar-track {
+  position: relative;
+  flex: 1;
+  height: 13px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  overflow: hidden;
+}
+
+.bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  transition: width 0.35s ease;
+}
+
+.bar-fill--hp { background: var(--ui-hp); }
+.bar-fill--food { background: var(--ui-food); }
+.bar-fill--water { background: var(--ui-water); }
+
+.bar-value {
+  width: 32px;
+  text-align: right;
+  font-family: var(--ui-mono);
+  font-size: 11px;
+  color: var(--ui-text);
+}
+
+.hud-temp {
+  margin-top: 2px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--ui-dim);
+}
+
+.hud-temp-value {
+  font-family: var(--ui-mono);
+  font-size: 12px;
+}
+
+.hud-temp--cold {
+  color: var(--ui-cold);
+}
+
+.hud-shiver {
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--ui-cold);
+  animation: hud-shiver-pulse 1s ease-in-out infinite;
+}
+
+@keyframes hud-shiver-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+
+/* --- hotbar (bottom-center) --- */
+
+.hud-hotbar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.hotbar-slot {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+}
+
+.hotbar-slot:hover {
+  border-color: var(--ui-dim);
+}
+
+.hotbar-slot--selected,
+.hotbar-slot--selected:hover {
+  border-color: var(--ui-accent);
+  box-shadow: 0 0 7px rgba(125, 160, 107, 0.35);
+}
+
+.hotbar-index {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  color: var(--ui-dim);
+}
+
+.hotbar-swatch {
+  position: absolute;
+  inset: 12px;
+  opacity: 0.92;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.hotbar-count {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-family: var(--ui-mono);
+  font-size: 11px;
+  color: var(--ui-text);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* --- crosshair + pickup prompt (center) --- */
+
+.hud-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.hud-prompt {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 26px);
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.hud-prompt-key {
+  color: var(--ui-accent);
+  font-family: var(--ui-mono);
+}
+
+/* --- status (top-right) --- */
+
+.hud-status {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+  color: var(--ui-dim);
+}
+
+.hud-clock {
+  font-size: 18px;
+  color: var(--ui-text);
+}
+
+/* --- notices (top-left) --- */
+
+.hud-notices {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 320px;
+}
+
+.hud-notice {
+  padding: 4px 9px;
+  background: var(--ui-bg);
+  border-left: 2px solid var(--ui-accent);
+  font-size: 12px;
+  color: var(--ui-text);
+  animation: hud-notice-fade 0.6s ease 6s forwards;
+}
+
+@keyframes hud-notice-fade {
+  to { opacity: 0; }
+}
+
+/* --- inventory panel --- */
+
+.hud-inv {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100vw - 32px));
+  padding: 16px 18px 12px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  pointer-events: auto;
+}
+
+.inv-title {
+  margin-bottom: 10px;
+  font-size: 13px;
+  letter-spacing: 0.28em;
+  color: var(--ui-dim);
+}
+
+.inv-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  min-height: 34px;
+}
+
+.inv-row:last-of-type {
+  border-bottom: none;
+}
+
+.inv-slot-num {
+  width: 14px;
+  font-family: var(--ui-mono);
+  font-size: 11px;
+  color: var(--ui-dim);
+}
+
+.inv-swatch {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.inv-name {
+  flex: 1;
+  color: var(--ui-text);
+}
+
+.inv-empty {
+  flex: 1;
+  color: var(--ui-dim);
+  font-style: italic;
+  opacity: 0.6;
+}
+
+.inv-count {
+  width: 36px;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+  color: var(--ui-dim);
+}
+
+.inv-kind {
+  width: 72px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+.inv-actions {
+  display: flex;
+  gap: 6px;
+  width: 112px;
+  justify-content: flex-end;
+}
+
+.inv-btn {
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+.inv-btn:hover {
+  border-color: var(--ui-accent);
+  background: rgba(125, 160, 107, 0.12);
+}
+
+.inv-hint {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ui-dim);
+}
+
+/* ============================ Death screen ============================= */
+
+.death-root {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(42, 5, 2, 0.84) 0%,
+    rgba(12, 2, 1, 0.96) 100%
+  );
+  animation: death-fade-in 1.2s ease forwards;
+}
+
+@keyframes death-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.death-title {
+  margin: 0;
+  font-size: clamp(48px, 10vw, 84px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: var(--ui-hp);
+  text-shadow: 0 0 28px rgba(179, 58, 46, 0.45);
+}
+
+.death-cause {
+  margin: 14px 0 40px;
+  font-size: 15px;
+  letter-spacing: 0.1em;
+  color: var(--ui-dim);
+}
+
+.death-respawn {
+  padding: 12px 34px;
+  background: rgba(179, 58, 46, 0.14);
+  border: 1px solid var(--ui-hp);
+  color: var(--ui-text);
+  font-size: 14px;
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+}
+
+.death-respawn:hover {
+  background: rgba(179, 58, 46, 0.3);
+}
+
+/* Narrow viewports: lift the hotbar clear of the vitals stack. */
+@media (max-width: 980px) {
+  .hud-hotbar {
+    bottom: 140px;
+  }
+}
