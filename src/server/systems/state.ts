@@ -6,6 +6,7 @@
 
 import type { ItemStack, ItemType } from "@/shared/items";
 import type {
+  DeathRecap,
   GameEvent,
   InputCmd,
   PlayerCore,
@@ -15,14 +16,33 @@ import type {
 } from "@/shared/protocol";
 import type { World } from "@/shared/world";
 
+/** Per-life stats; reset on (re)spawn, written to the leaderboard on death. */
+export interface PlayerStats {
+  /** Game-time seconds when this life began. */
+  bornAt: number;
+  kills: number;
+  zombieKills: number;
+  distanceM: number;
+}
+
 export interface ServerPlayer {
   id: string;
+  /** SHA-256 hex of the client identity token — the persistence key. */
+  tokenHash: string;
   name: string;
   core: PlayerCore;
   vitals: Vitals;
   inventory: (ItemStack | null)[];
   selectedSlot: number;
   alive: boolean;
+  /** Disconnected-but-lingering body (no socket); expires LOGOUT_LINGER_S
+   * after offlineSince, then the character is saved and removed. */
+  offline: boolean;
+  /** Game-time seconds when the owning socket dropped (0 while online). */
+  offlineSince: number;
+  stats: PlayerStats;
+  /** Recap of this character's death, kept for dead-character takeover joins. */
+  lastRecap: DeathRecap | null;
   /** Game-time seconds when the player last died (gates respawn requests). */
   diedAt: number;
   /** Pending input commands; capped, carried across ticks. */

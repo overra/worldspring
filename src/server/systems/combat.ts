@@ -120,7 +120,10 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
       hitZombie.z,
     );
     hitZombie.hp -= dmg;
-    if (hitZombie.hp <= 0) killZombie(state, hitZombie);
+    if (hitZombie.hp <= 0) {
+      killZombie(state, hitZombie);
+      player.stats.zombieKills++;
+    }
     return;
   }
   if (hitPlayer) {
@@ -135,7 +138,7 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
       hitPlayer.core.x,
       hitPlayer.core.z,
     );
-    damagePlayer(state, hitPlayer, dmg, player.name, true);
+    if (damagePlayer(state, hitPlayer, dmg, player.name, true)) player.stats.kills++;
   }
 }
 
@@ -217,8 +220,13 @@ function firePistol(state: GameState, player: ServerPlayer, def: ItemDef): void 
 
   if (hitZombie) {
     hitZombie.hp -= def.power;
-    if (hitZombie.hp <= 0) killZombie(state, hitZombie);
+    if (hitZombie.hp <= 0) {
+      killZombie(state, hitZombie);
+      player.stats.zombieKills++;
+    }
     return;
   }
-  if (hitPlayer) damagePlayer(state, hitPlayer, def.power, player.name, true);
+  if (hitPlayer && damagePlayer(state, hitPlayer, def.power, player.name, true)) {
+    player.stats.kills++;
+  }
 }

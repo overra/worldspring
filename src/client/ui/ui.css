@@ -873,3 +873,159 @@
   inset: 0;
   pointer-events: auto;
 }
+
+/* ================== Life recap (death screen + LAST LIFE toast) ================== */
+/* Shared stat rows rendered by RecapStats — minimal monospace ledger. */
+
+.recap-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 230px;
+}
+
+.recap-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.recap-label {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--ui-dim);
+}
+
+.recap-value {
+  font-family: var(--ui-mono);
+  font-size: 12px;
+  color: var(--ui-text);
+}
+
+/* On the death screen the cause line already carries 40px bottom margin;
+   mirror it below the stats so the RESPAWN button keeps its distance. */
+.death-root .recap-stats {
+  margin: -16px 0 38px;
+}
+
+/* --- LAST LIFE toast (top-center, while playing): you died offline --- */
+
+.hud-lastlife {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(340px, calc(100vw - 24px)); /* 336px at a 360px viewport */
+  padding: 10px 12px 12px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-top: 2px solid var(--ui-hp);
+  pointer-events: auto;
+}
+
+.hud-lastlife .recap-stats {
+  width: auto;
+}
+
+.lastlife-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lastlife-title {
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  color: var(--ui-hp);
+}
+
+.lastlife-close {
+  margin: -6px -8px -6px 0; /* grow the hit area without moving the glyph */
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--ui-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lastlife-close:hover {
+  color: var(--ui-text);
+}
+
+.lastlife-msg {
+  margin: 7px 0 9px;
+  font-size: 12px;
+  color: var(--ui-text);
+}
+
+/* Touch layout: vitals/menu own the top strip — drop the toast below them
+   (notices are transient; brief overlap is fine, the toast is dismissible). */
+@media (pointer: coarse) {
+  .hud-lastlife {
+    top: calc(124px + env(safe-area-inset-top, 0px));
+  }
+
+  .lastlife-close {
+    padding: 12px 14px;
+    font-size: 20px;
+  }
+}
+
+/* ===================== Main menu: longest-lives board ===================== */
+
+.menu-leaderboard {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.lb-title {
+  margin-bottom: 9px;
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
+  color: var(--ui-dim);
+}
+
+.lb-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+  color: var(--ui-dim);
+  text-align: left;
+}
+
+.lb-rank {
+  width: 14px;
+  flex: none;
+  opacity: 0.7;
+}
+
+.lb-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text);
+  opacity: 0.85;
+}
+
+.lb-days {
+  width: 44px;
+  flex: none;
+  text-align: right;
+}
+
+.lb-kills {
+  width: 60px;
+  flex: none;
+  text-align: right;
+}

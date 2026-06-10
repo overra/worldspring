@@ -1,19 +1,25 @@
 // Authoritative game server: one global room as a Durable Object. Owns socket
 // lifecycle, message routing and per-player interest-filtered snapshots; all
-// simulation lives in ./systems/*.
+// simulation lives in ./systems/*, all SQLite storage code in ./persistence.
 //
-// State is in-memory only (v1, per ARCHITECTURE.md): the tick interval keeps
-// the object resident while anyone is connected, so it never hibernates
-// mid-session. If every socket drops, the interval stops and the room may be
-// evicted — the next connection lazily rebuilds the world from WORLD_SEED.
+// The live sim is in-memory; the DO's SQLite storage (new_sqlite_classes)
+// holds durable snapshots: the dynamic world every WORLD_SAVE_INTERVAL_S,
+// characters keyed by token hash (resume across room restarts), and the
+// longest-lives leaderboard. The tick interval keeps the object resident
+// while anyone is connected OR while a logged-out body lingers; when both are
+// gone, everything is persisted and the interval stops — the next connection
+// rebuilds the world from WORLD_SEED + the stored snapshot.
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  INPUT_BUDGET_CAP_S,
   INTEREST_RADIUS,
+  LOGOUT_LINGER_S,
   LOOT_INTEREST_RADIUS,
   MAX_PLAYERS,
   RESPAWN_DELAY_S,
   TICK_MS,
+  WORLD_SAVE_INTERVAL_S,
   WORLD_SEED,
 } from "@/shared/constants";
 import { distSq2D } from "@/shared/math";
@@ -22,6 +28,7 @@ import {
   ANIM_MOVING,
   ANIM_SPRINTING,
   parseClientMsg,
+  type DeathRecap,
   type GameEvent,
   type ServerMsg,
   type WireCorpse,
@@ -32,9 +39,20 @@ import {
   type YouState,
 } from "@/shared/protocol";
 import { createWorld } from "@/shared/world";
+import {
+  appendLeaderboard,
+  clearPendingRecap,
+  initSchema,
+  loadCharacter,
+  loadWorld,
+  markCharacterDead,
+  pruneStaleCharacters,
+  saveCharacter,
+  saveWorld,
+  topLeaderboard,
+} from "./persistence";
 import { performAttack } from "./systems/combat";
 import {
-  spawnPlayerCorpse,
   stockInitialLoot,
   tickCorpses,
   tickDroppedLoot,
@@ -48,18 +66,38 @@ import {
   pickupLoot,
   queueInput,
   respawnPlayer,
+  restorePlayer,
   sanitizeName,
   useItem,
 } from "./systems/players";
 import { createGameState, type GameState, type ServerPlayer } from "./systems/state";
-import { tickFires, tickSurvival } from "./systems/survival";
+import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/zombies";
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
 
+/** SHA-256 of the client identity token, as lowercase hex. */
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  let hex = "";
+  for (const byte of new Uint8Array(digest)) hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/** True while any logged-out body is still lingering in the world. */
+function hasLingeringPlayers(game: GameState): boolean {
+  for (const player of game.players.values()) {
+    if (player.offline) return true;
+  }
+  return false;
+}
+
 /** Sockets that never send a valid join get closed after this long. */
 const JOIN_TIMEOUT_MS = 10_000;
+/** Joined sockets silent for this long are treated as dirty disconnects and
+ * closed (the client pings every 2s, so 15s of silence means a dead link). */
+const LIVENESS_TIMEOUT_MS = 15_000;
 /** Inbound message rate limit: budget per window, generous for 20Hz input. */
 const RATE_LIMIT_WINDOW_MS = 5_000;
 const RATE_LIMIT_MAX_MSGS = 600;
@@ -75,9 +113,33 @@ export class GameRoom extends DurableObject<Env> {
   private playerBySocket = new Map<WebSocket, string>();
   private socketByPlayer = new Map<string, WebSocket>();
   private rateBySocket = new Map<WebSocket, RateWindow>();
+  /** Last inbound message per socket — dirty disconnects are closed by the
+   * tick once silent past LIVENESS_TIMEOUT_MS, which starts their linger. */
+  private lastMsgAt = new Map<WebSocket, number>();
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  /** Game time of the last periodic world+character save. */
+  private lastSaveTime = 0;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    void ctx.blockConcurrencyWhile(async () => {
+      initSchema(ctx.storage.sql);
+      pruneStaleCharacters(ctx.storage.sql);
+    });
+    // killPlayer reports every finished life here (see survival.ts).
+    setDeathSink((victim, recap) => this.handleDeath(victim, recap));
+  }
 
   override fetch(request: Request): Response {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/leaderboard") {
+      return new Response(JSON.stringify(topLeaderboard(this.ctx.storage.sql, 10)), {
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+        },
+      });
+    }
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 426 });
     }
@@ -123,8 +185,9 @@ export class GameRoom extends DurableObject<Env> {
     return true;
   }
 
-  override webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string") return;
+    this.lastMsgAt.set(ws, Date.now());
     if (this.rateLimited(ws)) return;
     const msg = parseClientMsg(message);
     if (!msg) return;
@@ -137,7 +200,7 @@ export class GameRoom extends DurableObject<Env> {
 
     const game = this.ensureGame();
     if (msg.t === "join") {
-      this.handleJoin(ws, game, msg.name);
+      await this.handleJoin(ws, game, msg.name, msg.token);
       this.flushOutbox(game);
       return;
     }
@@ -171,6 +234,9 @@ export class GameRoom extends DurableObject<Env> {
       case "respawn":
         if (!player.alive && game.time - player.diedAt >= RESPAWN_DELAY_S) {
           respawnPlayer(game, player);
+          // Persist the new life right away (atomically with the world):
+          // overwrites the dead row and clears any stale pending recap.
+          this.persistAll(game);
         }
         break;
     }
@@ -191,9 +257,13 @@ export class GameRoom extends DurableObject<Env> {
     if (this.game) return this.game;
     const world = createWorld(WORLD_SEED);
     const game = createGameState(world);
-    stockInitialLoot(game);
+    // loadWorld hydrates loot/corpses/fires/respawn timers and restores
+    // game.time/tick from meta; a fresh database stocks the world instead.
+    if (!loadWorld(this.ctx.storage.sql, game)) stockInitialLoot(game);
+    // Zombies are never persisted — they always spawn fresh.
     spawnInitialZombies(game);
     this.game = game;
+    this.lastSaveTime = game.time;
     return game;
   }
 
@@ -208,52 +278,219 @@ export class GameRoom extends DurableObject<Env> {
     this.tickHandle = null;
   }
 
-  private handleJoin(ws: WebSocket, game: GameState, rawName: string): void {
+  private async handleJoin(
+    ws: WebSocket,
+    game: GameState,
+    rawName: string,
+    token: string,
+  ): Promise<void> {
     if (this.playerBySocket.has(ws)) return; // already joined
-    if (game.players.size >= MAX_PLAYERS) {
+    const tokenHash = await sha256Hex(token);
+    // Re-check after the await: a duplicate join racing across the digest.
+    if (this.playerBySocket.has(ws)) return;
+    const sql = this.ctx.storage.sql;
+
+    // (1) The character is in the live world: a reconnect during the logout
+    // linger, or a second tab/device taking the session over. Either way the
+    // new socket adopts the existing character; no capacity is consumed.
+    for (const existing of game.players.values()) {
+      if (existing.tokenHash !== tokenHash) continue;
+      const oldWs = this.socketByPlayer.get(existing.id);
+      if (oldWs && oldWs !== ws) {
+        this.playerBySocket.delete(oldWs);
+        this.rateBySocket.delete(oldWs);
+        try {
+          oldWs.close(1008, "session taken over");
+        } catch {
+          // Already closed.
+        }
+      }
+      existing.offline = false;
+      existing.offlineSince = 0;
+      existing.cmdQueue.length = 0;
+      existing.wantsAttack = false;
+      existing.inputBudget = INPUT_BUDGET_CAP_S;
+      existing.lastAck = 0;
+      this.playerBySocket.set(ws, existing.id);
+      this.socketByPlayer.set(existing.id, ws);
+      this.lastMsgAt.set(ws, Date.now());
+      this.sendWelcome(ws, game, existing, true, null);
+      if (!existing.alive) {
+        // Taking over a character that is sitting on the death screen: the
+        // death message was consumed by the old socket, so without this the
+        // new client renders the playing HUD at 0 hp with no respawn path.
+        this.send(ws, {
+          t: "death",
+          by: existing.lastRecap?.by ?? "the wasteland",
+          recap: existing.lastRecap ?? {
+            by: "the wasteland",
+            survivedS: 0,
+            kills: 0,
+            zombieKills: 0,
+            distanceM: 0,
+          },
+        });
+      }
+      this.persistAll(game);
+      this.broadcastMsg({ t: "notice", msg: `${existing.name} reconnected` });
+      return;
+    }
+
+    let connected = 0;
+    for (const p of game.players.values()) {
+      if (!p.offline) connected++;
+    }
+    if (connected >= MAX_PLAYERS) {
       this.send(ws, { t: "error", msg: "Server full" });
       return;
     }
+
+    const saved = loadCharacter(sql, tokenHash);
+
+    // (2) A living character saved before a room restart: resume it. The
+    // persisted name stays authoritative — a transient collision with an
+    // online namesake must not permanently rename a saved character (the
+    // token already disambiguates identity).
+    if (saved && saved.alive) {
+      const player = restorePlayer(game, saved.id, saved.name, tokenHash, saved.state);
+      this.playerBySocket.set(ws, player.id);
+      this.socketByPlayer.set(player.id, ws);
+      this.lastMsgAt.set(ws, Date.now());
+      this.sendWelcome(ws, game, player, true, null);
+      this.persistAll(game);
+      this.broadcastMsg({ t: "notice", msg: `${player.name} joined` });
+      return;
+    }
+
+    // (3) Dead row or no row: a brand-new life. If the previous life ended
+    // while its owner was offline, deliver the stored recap exactly once.
     const name = sanitizeName(rawName, game);
     const id = crypto.randomUUID().slice(0, 8);
-    const player = createPlayer(game, id, name);
+    const player = createPlayer(game, id, name, tokenHash);
+    const recap = saved ? saved.pendingRecap : null;
+    if (recap) clearPendingRecap(sql, tokenHash);
     this.playerBySocket.set(ws, id);
     this.socketByPlayer.set(id, ws);
+    this.lastMsgAt.set(ws, Date.now());
+    this.sendWelcome(ws, game, player, false, recap);
+    this.persistAll(game);
+    this.broadcastMsg({ t: "notice", msg: `${name} joined` });
+  }
+
+  private sendWelcome(
+    ws: WebSocket,
+    game: GameState,
+    player: ServerPlayer,
+    resumed: boolean,
+    recap: DeathRecap | null,
+  ): void {
     this.send(ws, {
       t: "welcome",
-      id,
+      id: player.id,
       seed: game.world.seed,
       time: game.time,
       you: this.youState(player),
       inv: player.inventory.map((stack) => (stack ? { ...stack } : null)),
       selected: player.selectedSlot,
+      resumed,
+      recap,
     });
-    this.broadcastMsg({ t: "notice", msg: `${name} joined` });
   }
 
   private dropSocket(ws: WebSocket): void {
     const playerId = this.playerBySocket.get(ws);
     this.playerBySocket.delete(ws);
     this.rateBySocket.delete(ws);
+    this.lastMsgAt.delete(ws);
     if (playerId !== undefined) {
       this.socketByPlayer.delete(playerId);
       const game = this.game;
       if (game) {
         const player = game.players.get(playerId);
-        game.players.delete(playerId);
         if (player) {
-          // Combat-log deterrent: leaving while alive drops your body and
-          // everything you carried, exactly as if you had died on the spot.
-          if (player.alive) spawnPlayerCorpse(game, player);
+          if (player.alive) {
+            // Combat-log deterrent: the body lingers in the world,
+            // defenseless, for LOGOUT_LINGER_S (it drops a real corpse only
+            // if something kills it). Replaces the old instant death bag.
+            player.offline = true;
+            player.offlineSince = game.time;
+            player.cmdQueue.length = 0;
+            player.wantsAttack = false;
+            this.persistAll(game);
+          } else {
+            // Dead characters were already marked dead in storage at kill
+            // time; nothing lingers.
+            game.players.delete(playerId);
+          }
           this.broadcastMsg({ t: "notice", msg: `${player.name} left` });
         }
       }
     }
     // getWebSockets() can still include the socket whose close handler is
     // running — filter it out, or the tick never stops for the last leaver.
+    // While offline bodies linger the tick keeps running even with zero
+    // sockets (zombies can still reach them); the tick's own check stops the
+    // loop once the lingers expire.
     if (this.ctx.getWebSockets().filter((s) => s !== ws).length === 0) {
-      this.stopTicking();
+      const game = this.game;
+      if (!game) {
+        this.stopTicking();
+        return;
+      }
+      if (!hasLingeringPlayers(game)) this.stopAndPersist(game);
     }
+  }
+
+  /** Persist a death: leaderboard row + character row (recap stored for
+   * offline victims, who are removed from the world immediately — their
+   * lingering body is now a corpse entity). */
+  private handleDeath(victim: ServerPlayer, recap: DeathRecap): void {
+    const sql = this.ctx.storage.sql;
+    appendLeaderboard(sql, {
+      name: victim.name,
+      survivedS: recap.survivedS,
+      kills: recap.kills,
+      zombieKills: recap.zombieKills,
+      distanceM: recap.distanceM,
+      by: recap.by,
+      endedAt: Date.now(),
+    });
+    markCharacterDead(sql, victim.tokenHash, victim.offline ? JSON.stringify(recap) : null);
+    if (victim.offline) this.game?.players.delete(victim.id);
+    // The victim's inventory just became a world corpse — make that corpse
+    // durable in the same breath as the death, or a restart in the gap
+    // destroys it while the death is already permanent.
+    if (this.game) this.persistAll(this.game);
+  }
+
+  /** Snapshot the world and every character (online, offline and dead) in
+   * ONE transaction. World entities and inventories trade items between
+   * them; saving either alone opens duplication/destruction windows across
+   * an unclean restart, so this is the only way anything gets saved. */
+  private persistAll(game: GameState): void {
+    const storage = this.ctx.storage;
+    storage.transactionSync(() => {
+      saveWorld(storage, storage.sql, game);
+      for (const player of game.players.values()) {
+        saveCharacter(storage.sql, player, game.time);
+      }
+    });
+  }
+
+  /**
+   * Final save before the room goes idle. Any offline players still lingering
+   * are saved and removed right now rather than waiting out the linger (this
+   * is belt-and-braces — the callers only stop once no lingers remain).
+   */
+  private stopAndPersist(game: GameState): void {
+    const sql = this.ctx.storage.sql;
+    for (const player of game.players.values()) {
+      if (!player.offline) continue;
+      saveCharacter(sql, player, game.time);
+      game.players.delete(player.id);
+    }
+    this.persistAll(game);
+    this.stopTicking();
   }
 
   // --- Tick ---
@@ -261,12 +498,42 @@ export class GameRoom extends DurableObject<Env> {
   private tick(): void {
     const game = this.game;
     if (!game) return;
-    // Self-terminate a stale interval (belt-and-braces vs dropSocket timing).
-    if (this.ctx.getWebSockets().length === 0) {
-      this.stopTicking();
+    // No sockets: keep simulating while offline bodies linger (zombies may
+    // still eat them); once none remain, persist everything and go idle.
+    if (this.ctx.getWebSockets().length === 0 && !hasLingeringPlayers(game)) {
+      this.stopAndPersist(game);
       return;
     }
     const dt = TICK_MS / 1000;
+
+    // Logged-out bodies past the linger window are saved and removed —
+    // no corpse, no notice; they simply fade from the world. The save is a
+    // full persistAll AFTER removal so world + characters stay coherent
+    // (the character row was already saved when the linger began; vitals
+    // drift during the linger is persisted by the same persistAll).
+    let lingersExpired = false;
+    for (const player of game.players.values()) {
+      if (!player.offline) continue;
+      if (game.time - player.offlineSince < LOGOUT_LINGER_S) continue;
+      saveCharacter(this.ctx.storage.sql, player, game.time);
+      game.players.delete(player.id);
+      lingersExpired = true;
+    }
+    if (lingersExpired) this.persistAll(game);
+
+    // Dirty disconnects: joined sockets silent past the liveness window are
+    // closed here, which fires webSocketClose -> dropSocket -> linger.
+    const nowMs = Date.now();
+    for (const [ws] of this.playerBySocket) {
+      const last = this.lastMsgAt.get(ws);
+      if (last !== undefined && nowMs - last > LIVENESS_TIMEOUT_MS) {
+        try {
+          ws.close(1001, "liveness timeout");
+        } catch {
+          // Already closing.
+        }
+      }
+    }
 
     applyQueuedInputs(game, dt);
     // Attacks resolve after this tick's movement so aim is current.
@@ -286,6 +553,12 @@ export class GameRoom extends DurableObject<Env> {
     game.time += dt;
     game.tick++;
 
+    // Periodic durable snapshot of the world + every character.
+    if (game.time - this.lastSaveTime >= WORLD_SAVE_INTERVAL_S) {
+      this.lastSaveTime = game.time;
+      this.persistAll(game);
+    }
+
     this.flushOutbox(game);
     this.broadcastSnapshots(game);
     game.events.length = 0;
@@ -294,7 +567,9 @@ export class GameRoom extends DurableObject<Env> {
   // --- Snapshots ---
 
   private broadcastSnapshots(game: GameState): void {
-    const count = game.players.size;
+    // Connected players only — lingering offline bodies are in game.players
+    // (and in the players array below) but are not "online".
+    const count = this.socketByPlayer.size;
     for (const [id, ws] of this.socketByPlayer) {
       const player = game.players.get(id);
       if (!player) continue;

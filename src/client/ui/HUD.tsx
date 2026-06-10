@@ -15,6 +15,7 @@ import { ITEM_DEFS } from "@/shared/items";
 import type { ItemKind, ItemStack } from "@/shared/items";
 import { doDrop, doEquip, doUse } from "@/client/net/connection";
 import { useUIStore } from "@/client/state/store";
+import { RecapStats } from "./DeathScreen";
 import "./ui.css";
 
 const USABLE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
@@ -150,6 +151,31 @@ function StatusCorner(): ReactElement {
   );
 }
 
+// --- top-center: "last life" recap toast (died while offline) ---
+
+function LastLifeToast(): ReactElement | null {
+  const phase = useUIStore((s) => s.phase);
+  const recap = useUIStore((s) => s.recap);
+  const setRecap = useUIStore((s) => s.setRecap);
+  if (phase !== "playing" || recap === null) return null;
+  return (
+    <div className="hud-lastlife">
+      <div className="lastlife-head">
+        <span className="lastlife-title">LAST LIFE</span>
+        <button
+          className="lastlife-close"
+          aria-label="dismiss"
+          onClick={() => setRecap(null)}
+        >
+          ×
+        </button>
+      </div>
+      <p className="lastlife-msg">While you were away you died — killed by {recap.by}</p>
+      <RecapStats recap={recap} />
+    </div>
+  );
+}
+
 // --- top-left: notices feed ---
 
 function Notices(): ReactElement {
@@ -233,6 +259,7 @@ export function HUD(): ReactElement {
     <div className="hud">
       <DamageFlash />
       <Notices />
+      <LastLifeToast />
       <StatusCorner />
       <div className="hud-crosshair" />
       <PickupPrompt />

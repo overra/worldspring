@@ -42,7 +42,7 @@ export const ANIM_ATTACKING = 4;
 // --- Client -> Server ---
 
 export type ClientMsg =
-  | { t: "join"; name: string }
+  | { t: "join"; name: string; token: string }
   | { t: "input"; cmds: InputCmd[] }
   | { t: "attack" } // server resolves melee vs ranged from equipped item
   | { t: "use"; slot: number }
@@ -111,6 +111,29 @@ export interface WireFire {
   z: number;
 }
 
+/** How a finished life went — shown on the death screen and in welcome
+ * messages when the character died while its owner was offline. */
+export interface DeathRecap {
+  by: string;
+  /** Game-seconds survived (divide by DAY_DURATION_S for in-game days). */
+  survivedS: number;
+  kills: number;
+  zombieKills: number;
+  distanceM: number;
+}
+
+/** One longest-lives leaderboard row (served over /api/leaderboard). */
+export interface LeaderboardEntry {
+  name: string;
+  survivedS: number;
+  kills: number;
+  zombieKills: number;
+  distanceM: number;
+  by: string;
+  /** Epoch ms when the life ended. */
+  endedAt: number;
+}
+
 /** Authoritative state of YOUR player inside a snapshot (drives reconciliation). */
 export interface YouState extends Vitals {
   x: number;
@@ -136,6 +159,10 @@ export type ServerMsg =
       you: YouState;
       inv: (ItemStack | null)[];
       selected: number;
+      /** True when this join restored a persisted living character. */
+      resumed: boolean;
+      /** Set when the character died while its owner was offline. */
+      recap: DeathRecap | null;
     }
   | {
       t: "snap";
@@ -152,7 +179,7 @@ export type ServerMsg =
       count: number; // players online
     }
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
-  | { t: "death"; by: string } // "a zombie", player name, "the cold", "starvation"
+  | { t: "death"; by: string; recap: DeathRecap }
   | { t: "notice"; msg: string }
   | { t: "pong"; ts: number }
   | { t: "error"; msg: string };
@@ -180,7 +207,10 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
   const m = msg as Record<string, unknown>;
   switch (m.t) {
     case "join":
-      return typeof m.name === "string" ? { t: "join", name: m.name } : null;
+      if (typeof m.name !== "string") return null;
+      // Identity token: 32-64 hex chars, generated and stored client-side.
+      if (typeof m.token !== "string" || !/^[0-9a-f]{32,64}$/i.test(m.token)) return null;
+      return { t: "join", name: m.name, token: m.token };
     case "input": {
       if (!Array.isArray(m.cmds)) return null;
       // Truncate oversized batches instead of rejecting wholesale — a reject

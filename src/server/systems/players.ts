@@ -20,8 +20,9 @@ import { ITEM_DEFS, type ItemStack, type ItemType } from "@/shared/items";
 import { clamp, distSq2D, yawToDir } from "@/shared/math";
 import { stepPlayer } from "@/shared/movement";
 import type { InputCmd, PlayerCore } from "@/shared/protocol";
+import type { CharacterState } from "../persistence";
 import { startLootRespawn } from "./loot";
-import { sendTo, type GameState, type ServerPlayer } from "./state";
+import { sendTo, type GameState, type PlayerStats, type ServerPlayer } from "./state";
 
 /** Contract gap: queue cap is specified as "~60 cmds" with no shared constant. */
 const INPUT_QUEUE_CAP = 60;
@@ -30,10 +31,9 @@ const PITCH_LIMIT = 1.6;
 
 /** Trim, strip control chars, cap length, default, and de-duplicate a name. */
 export function sanitizeName(raw: string, state: GameState): string {
-  let base = raw
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
+  let base = [...raw.replace(/[\u0000-\u001f\u007f]/g, "").trim()]
     .slice(0, MAX_NAME_LENGTH)
+    .join("")
     .trim();
   if (base.length === 0) base = "Survivor";
   const taken = new Set<string>();
@@ -81,16 +81,76 @@ function emptyInventory(): (ItemStack | null)[] {
   return Array.from({ length: INVENTORY_SLOTS }, () => null);
 }
 
+function freshStats(state: GameState): PlayerStats {
+  return { bornAt: state.time, kills: 0, zombieKills: 0, distanceM: 0 };
+}
+
 /** Spawn a brand-new player: random beach spawn, full vitals, empty inventory. */
-export function createPlayer(state: GameState, id: string, name: string): ServerPlayer {
+export function createPlayer(
+  state: GameState,
+  id: string,
+  name: string,
+  tokenHash: string,
+): ServerPlayer {
   const player: ServerPlayer = {
     id,
+    tokenHash,
     name,
     core: freshSpawnCore(state),
     vitals: { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL },
     inventory: emptyInventory(),
     selectedSlot: 0,
     alive: true,
+    offline: false,
+    offlineSince: 0,
+    stats: freshStats(state),
+    diedAt: -Infinity,
+    lastRecap: null,
+    cmdQueue: [],
+    lastAck: 0,
+    inputBudget: INPUT_BUDGET_CAP_S,
+    wantsAttack: false,
+    attackCooldown: 0,
+    attackAnimT: 0,
+    sprinting: false,
+    movedThisTick: false,
+    sprintedThisTick: false,
+  };
+  state.players.set(id, player);
+  return player;
+}
+
+/**
+ * Rebuild a living ServerPlayer from a persisted character (room restarted
+ * since they left): saved core/vitals/inventory/stats, fresh transient state
+ * (cmdQueue, cooldowns, input budget). The saved id is kept unless another
+ * live player somehow holds it.
+ */
+export function restorePlayer(
+  state: GameState,
+  savedId: string,
+  name: string,
+  tokenHash: string,
+  saved: CharacterState,
+): ServerPlayer {
+  const id = state.players.has(savedId) ? crypto.randomUUID().slice(0, 8) : savedId;
+  // Time between the snapshot and now is offline time — shift bornAt forward
+  // so survivedS (and the leaderboard) never credit time spent logged out.
+  // Rows written before savedAt existed fall back to "no shift".
+  const offlineGap = Math.max(0, state.time - (saved.savedAt ?? state.time));
+  const player: ServerPlayer = {
+    id,
+    tokenHash,
+    name,
+    core: { ...saved.core },
+    vitals: { ...saved.vitals },
+    inventory: saved.inventory.map((stack) => (stack ? { ...stack } : null)),
+    selectedSlot: saved.selectedSlot,
+    alive: true,
+    offline: false,
+    offlineSince: 0,
+    stats: { ...saved.stats, bornAt: saved.stats.bornAt + offlineGap },
+    lastRecap: null,
     diedAt: -Infinity,
     cmdQueue: [],
     lastAck: 0,
@@ -113,6 +173,10 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.inventory = emptyInventory();
   player.selectedSlot = 0;
   player.alive = true;
+  // A new life: stats restart here. The stale pending recap (if any) is
+  // storage-side state — GameRoom calls saveCharacter right after respawn,
+  // which clears it.
+  player.stats = freshStats(state);
   player.cmdQueue = [];
   player.inputBudget = INPUT_BUDGET_CAP_S;
   player.wantsAttack = false;
@@ -160,7 +224,11 @@ export function applyQueuedInputs(state: GameState, dt: number): void {
         dt: cmdDt,
         pitch: clamp(next.pitch, -PITCH_LIMIT, PITCH_LIMIT),
       };
+      const fromX = player.core.x;
+      const fromZ = player.core.z;
       stepPlayer(player.core, clamped, state.world);
+      // Lifetime odometer: horizontal displacement per applied cmd.
+      player.stats.distanceM += Math.hypot(player.core.x - fromX, player.core.z - fromZ);
       appliedAny = true;
       player.lastAck = next.seq;
       const moving = clamped.mx !== 0 || clamped.mz !== 0;

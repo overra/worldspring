@@ -1,22 +1,86 @@
 // Title screen: name entry + join. Pure DOM over a CSS-only backdrop —
 // the 3D canvas is not mounted while this is visible.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import { MAX_NAME_LENGTH } from "@/shared/constants";
+import { DAY_DURATION_S, MAX_NAME_LENGTH } from "@/shared/constants";
+import type { LeaderboardEntry } from "@/shared/protocol";
 import { connect } from "@/client/net/connection";
 import { useUIStore } from "@/client/state/store";
 import "./ui.css";
 
 const NAME_STORAGE_KEY = "dc_name";
+const LEADERBOARD_SHOWN = 5;
 
 const CONTROLS_LEGEND =
   "WASD move · Shift sprint · Mouse look · LMB attack · E pick up · " +
   "1-8 hotbar · Tab inventory · G drop · V camera · Space jump";
 
 function loadSavedName(): string {
-  const saved = localStorage.getItem(NAME_STORAGE_KEY);
-  return saved === null ? "" : saved.slice(0, MAX_NAME_LENGTH);
+  // localStorage can throw in private browsing / blocked-storage contexts.
+  try {
+    const saved = localStorage.getItem(NAME_STORAGE_KEY);
+    return saved === null ? "" : saved.slice(0, MAX_NAME_LENGTH);
+  } catch {
+    return "";
+  }
+}
+
+function saveName(name: string): void {
+  try {
+    localStorage.setItem(NAME_STORAGE_KEY, name);
+  } catch {
+    // Non-fatal: the name just won't survive a reload.
+  }
+}
+
+function isLeaderboardEntry(row: unknown): row is LeaderboardEntry {
+  if (typeof row !== "object" || row === null) return false;
+  const r = row as Record<string, unknown>;
+  return (
+    typeof r.name === "string" &&
+    typeof r.survivedS === "number" &&
+    typeof r.kills === "number"
+  );
+}
+
+/** Top lives fetched from /api/leaderboard. Any failure renders nothing —
+ * the leaderboard is decoration, never a join blocker. */
+function Leaderboard(): ReactElement | null {
+  const [rows, setRows] = useState<LeaderboardEntry[]>([]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch("/api/leaderboard", { signal: ctrl.signal });
+        if (!res.ok) return;
+        const data: unknown = await res.json();
+        if (!Array.isArray(data)) return;
+        setRows(data.filter(isLeaderboardEntry).slice(0, LEADERBOARD_SHOWN));
+      } catch {
+        // Network error or unmount abort: keep the menu clean.
+      }
+    })();
+    return () => ctrl.abort();
+  }, []);
+
+  if (rows.length === 0) return null;
+  return (
+    <div className="menu-leaderboard">
+      <div className="lb-title">LONGEST LIVES</div>
+      {rows.map((row, i) => (
+        <div key={`${i}-${row.name}`} className="lb-row">
+          <span className="lb-rank">{i + 1}</span>
+          <span className="lb-name">{row.name}</span>
+          <span className="lb-days">{(row.survivedS / DAY_DURATION_S).toFixed(1)}d</span>
+          <span className="lb-kills">
+            {row.kills} {row.kills === 1 ? "kill" : "kills"}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function MainMenu(): ReactElement {
@@ -31,7 +95,7 @@ export function MainMenu(): ReactElement {
     if (connecting) return;
     const trimmed = name.trim().slice(0, MAX_NAME_LENGTH);
     if (trimmed.length === 0) return;
-    localStorage.setItem(NAME_STORAGE_KEY, trimmed);
+    saveName(trimmed);
     setPlayerName(trimmed);
     connect(trimmed);
   }
@@ -64,6 +128,7 @@ export function MainMenu(): ReactElement {
           </button>
         </div>
         {error !== null && <p className="menu-error">{error}</p>}
+        <Leaderboard />
       </div>
       <div className="menu-controls">{CONTROLS_LEGEND}</div>
     </div>

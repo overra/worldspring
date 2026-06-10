@@ -121,3 +121,11 @@ export const DROPPED_LOOT_TTL_S = 600; // player-dropped items despawn after thi
 
 // --- Respawn ---
 export const RESPAWN_DELAY_S = 4;
+
+// --- Persistence ---
+/** A disconnected (alive) body stays in the world this long, defenseless. */
+export const LOGOUT_LINGER_S = 60;
+/** World + character state is snapshotted to DO storage on this cadence. */
+export const WORLD_SAVE_INTERVAL_S = 20;
+/** Completed lives kept for the longest-lives leaderboard. */
+export const LEADERBOARD_MAX = 50;

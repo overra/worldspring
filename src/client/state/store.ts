@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import { INVENTORY_SLOTS } from "@/shared/constants";
 import type { ItemStack } from "@/shared/items";
-import type { Vitals } from "@/shared/protocol";
+import type { DeathRecap, Vitals } from "@/shared/protocol";
 
 export type GamePhase = "menu" | "connecting" | "playing" | "dead";
 
@@ -25,6 +25,9 @@ export interface UIState {
   prompt: string | null;
   notices: Notice[];
   deathCause: string | null;
+  /** Stats of the life that just ended: set with the death message, and on
+   * welcome when the character died while offline (shown as a recap toast). */
+  recap: DeathRecap | null;
   playerCount: number;
   /** Hour of day [0,24) at snapshot rate — for the HUD clock only. */
   clockHours: number;
@@ -42,6 +45,7 @@ export interface UIState {
   setPrompt(prompt: string | null): void;
   pushNotice(msg: string): void;
   setDeathCause(cause: string | null): void;
+  setRecap(recap: DeathRecap | null): void;
   setPlayerCount(count: number): void;
   setClockHours(hours: number): void;
   setPingMs(ms: number): void;
@@ -61,6 +65,7 @@ export const useUIStore = create<UIState>((set) => ({
   prompt: null,
   notices: [],
   deathCause: null,
+  recap: null,
   playerCount: 0,
   clockHours: 9,
   pingMs: 0,
@@ -80,6 +85,7 @@ export const useUIStore = create<UIState>((set) => ({
       notices: [...s.notices.slice(-5), { id: noticeId++, msg, ts: Date.now() }],
     })),
   setDeathCause: (deathCause) => set({ deathCause }),
+  setRecap: (recap) => set({ recap }),
   setPlayerCount: (playerCount) => set({ playerCount }),
   setClockHours: (clockHours) => set({ clockHours }),
   setPingMs: (pingMs) => set({ pingMs }),

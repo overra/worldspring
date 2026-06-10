@@ -20,6 +20,38 @@ const PING_INTERVAL_MS = 2000;
 let socket: WebSocket | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 
+// --- Identity token: 32 hex chars, persisted so the server can restore the
+// same character across page loads. localStorage can throw (private browsing,
+// blocked storage) — fall back to an in-memory token for the session.
+
+const TOKEN_STORAGE_KEY = "dc_token";
+
+let memoryToken: string | null = null;
+
+function generateToken(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function getToken(): string {
+  if (memoryToken !== null) return memoryToken;
+  try {
+    const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (stored !== null && /^[0-9a-f]{32,64}$/i.test(stored)) {
+      memoryToken = stored;
+      return stored;
+    }
+    const fresh = generateToken();
+    localStorage.setItem(TOKEN_STORAGE_KEY, fresh);
+    memoryToken = fresh;
+    return fresh;
+  } catch {
+    memoryToken = generateToken();
+    return memoryToken;
+  }
+}
+
 export function connect(name: string): void {
   if (socket !== null) disconnect();
 
@@ -33,7 +65,7 @@ export function connect(name: string): void {
 
   ws.onopen = () => {
     if (socket !== ws) return;
-    sendMsg({ t: "join", name: name.slice(0, MAX_NAME_LENGTH) });
+    sendMsg({ t: "join", name: name.slice(0, MAX_NAME_LENGTH), token: getToken() });
     startPing();
   };
   ws.onmessage = (ev: MessageEvent) => {
@@ -65,6 +97,8 @@ export function disconnect(): void {
   resetInterpolation();
   resetClientWorld();
   const ui = useUIStore.getState();
+  ui.setRecap(null);
+  ui.setDeathCause(null);
   if (ui.phase !== "menu") ui.setPhase("menu");
 }
 
@@ -133,6 +167,8 @@ function handleClosed(): void {
   resetPrediction();
   resetInterpolation();
   resetClientWorld();
+  ui.setRecap(null);
+  ui.setDeathCause(null);
   if (phase === "playing" || phase === "dead") {
     ui.setError("Connection lost");
   } else if (phase === "connecting") {
@@ -164,6 +200,7 @@ function handleMessage(data: unknown): void {
       return;
     case "death":
       ui.setDeathCause(msg.by);
+      ui.setRecap(msg.recap);
       ui.setPhase("dead"); // socket stays open; respawn reuses it
       return;
     case "notice":
@@ -205,10 +242,22 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   setTimeBase(msg.time, performance.now());
 
   const ui = useUIStore.getState();
+  if (msg.resumed) ui.pushNotice("character restored");
+  // Set unconditionally: null CLEARS any recap left over from a previous
+  // session (die -> leave -> rejoin must not show a stale LAST LIFE toast).
+  ui.setRecap(msg.recap);
   ui.setInventory(msg.inv, msg.selected);
   ui.setVitals(vitalsOf(msg.you));
   ui.setClockHours(gameHours(msg.time, DAY_DURATION_S, START_HOUR));
-  ui.setPhase("playing");
+  if (msg.you.hp > 0) {
+    ui.setPhase("playing");
+  } else {
+    // Defensive: a welcome for a dead character (e.g. taking over a session
+    // that sat on the death screen). The server also re-sends the death
+    // message in that case; entering "dead" here covers any path it misses.
+    ui.setDeathCause(msg.recap?.by ?? "the wasteland");
+    ui.setPhase("dead");
+  }
 }
 
 function onSnap(msg: SnapMsg): void {
@@ -220,6 +269,7 @@ function onSnap(msg: SnapMsg): void {
     if (msg.you.hp > 0) {
       clearPending();
       setMeFrom(msg.you);
+      ui.setRecap(null); // the finished life's stats leave with the screen
       ui.setPhase("playing");
     }
   } else {

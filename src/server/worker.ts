@@ -1,5 +1,5 @@
-// Worker entry: static assets are served by the platform; /ws upgrades go to
-// the single global GameRoom Durable Object.
+// Worker entry: static assets are served by the platform; /ws upgrades and
+// the leaderboard API go to the single global GameRoom Durable Object.
 
 export { GameRoom } from "./GameRoom";
 
@@ -10,6 +10,10 @@ export default {
       if (request.headers.get("Upgrade") !== "websocket") {
         return new Response("Expected WebSocket", { status: 426 });
       }
+      const stub = env.GAME.getByName("main");
+      return stub.fetch(request);
+    }
+    if (url.pathname === "/api/leaderboard") {
       const stub = env.GAME.getByName("main");
       return stub.fetch(request);
     }
