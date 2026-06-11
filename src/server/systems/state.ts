@@ -4,6 +4,7 @@
 // per recipient at snapshot time), direct/broadcast messages go into `outbox`
 // (drained by GameRoom after each handled message and each tick).
 
+import { LAG_COMP_MAX_REWIND_S } from "@/shared/constants";
 import type { ItemStack, ItemType } from "@/shared/items";
 import type {
   DeathRecap,
@@ -56,6 +57,15 @@ export interface ServerPlayer {
   inputBudget: number;
   /** Attack requested this tick; resolved after movement applies. */
   wantsAttack: boolean;
+  /**
+   * Lag compensation: client-reported game-time their screen showed when the
+   * pending attack was fired (`attack.at`). Consumed together with
+   * `wantsAttack`; null/absent = resolve against current positions. Clamped
+   * at resolve time to at most LAG_COMP_MAX_REWIND_S in the past — a
+   * malicious past timestamp gains no more rewind than any laggy-but-honest
+   * client gets. Optional so existing construction sites need no changes.
+   */
+  wantsAttackAt?: number | null;
   /** Game-time seconds of the last accepted chat message (rate limit).
    * Transient — never persisted; -Infinity until the first message. */
   lastChatAt: number;
@@ -173,6 +183,27 @@ export interface ZombieRespawn {
   mil: boolean;
 }
 
+/** Minimal position record cloned into the lag-comp history each tick. */
+export interface PosSnapshot {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * One lag-compensation history frame: where every hittable mover stood at the
+ * end of a tick, stamped with the same `time` the outgoing snapshots carry
+ * (so client-reported aim times and frame times share one clock).
+ */
+export interface PosHistoryFrame {
+  time: number;
+  /** Alive, non-offline players only (offline lingerers never move — combat
+   * falls back to their current position, which is exact). */
+  players: Map<string, PosSnapshot>;
+  zombies: Map<number, PosSnapshot>;
+  animals: Map<number, PosSnapshot>;
+}
+
 export interface QueuedEvent {
   ev: GameEvent;
   /** World position used for per-recipient interest filtering. */
@@ -214,6 +245,12 @@ export interface GameState {
   outbox: OutboundMsg[];
   /** Shared id counter for zombies, loot entities and campfires. */
   nextEntityId: number;
+  /**
+   * Lag-compensation ring of recent end-of-tick positions, oldest first.
+   * Bounded by capturePosHistory to LAG_COMP_MAX_REWIND_S + slack — at 15Hz
+   * that is ~9 frames of tiny {x,y,z} records.
+   */
+  posHistory: PosHistoryFrame[];
 }
 
 export function createGameState(world: World): GameState {
@@ -238,7 +275,45 @@ export function createGameState(world: World): GameState {
     events: [],
     outbox: [],
     nextEntityId: 1,
+    posHistory: [],
   };
+}
+
+/**
+ * History slack kept beyond the max rewind so a frame at-or-below the clamp
+ * floor still exists to bracket the oldest legal aim time. Local
+ * implementation detail of the history buffer, not a gameplay tunable
+ * (contract gap: not in shared constants).
+ */
+const POS_HISTORY_SLACK_S = 0.2;
+
+/**
+ * Push a lag-comp history frame and prune expired ones. Call once per tick
+ * AFTER movement/AI systems and after `state.time` advances, so the frame's
+ * positions and timestamp match what this tick's snapshots broadcast.
+ */
+export function capturePosHistory(state: GameState): void {
+  const players = new Map<string, PosSnapshot>();
+  for (const player of state.players.values()) {
+    if (!player.alive || player.offline) continue;
+    players.set(player.id, { x: player.core.x, y: player.core.y, z: player.core.z });
+  }
+  const zombies = new Map<number, PosSnapshot>();
+  for (const zombie of state.zombies.values()) {
+    zombies.set(zombie.id, { x: zombie.x, y: zombie.y, z: zombie.z });
+  }
+  const animals = new Map<number, PosSnapshot>();
+  for (const deer of state.animals.values()) {
+    animals.set(deer.id, { x: deer.x, y: deer.y, z: deer.z });
+  }
+  state.posHistory.push({ time: state.time, players, zombies, animals });
+
+  const cutoff = state.time - (LAG_COMP_MAX_REWIND_S + POS_HISTORY_SLACK_S);
+  while (state.posHistory.length > 0) {
+    const oldest = state.posHistory[0];
+    if (!oldest || oldest.time >= cutoff) break;
+    state.posHistory.shift();
+  }
 }
 
 export function queueEvent(

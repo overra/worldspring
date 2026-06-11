@@ -154,6 +154,8 @@ export interface ClientWorldState {
   animals: Map<number, AnimalView>;
   /** Rain intensity 0..1, lerped between snapshots. */
   weather: number;
+  /** Game-time of the interpolated state being rendered (lag comp aim time). */
+  renderGameTime: number;
   /** Loot/corpse/crate id in pickup range (shared id space; prompt + E key). */
   promptLootId: number | null;
   /** VFX queue: net layer pushes, render effects drain via drainEvents(). */
@@ -177,6 +179,7 @@ export const clientWorld: ClientWorldState = {
   drops: [],
   animals: new Map(),
   weather: 0,
+  renderGameTime: 0,
   promptLootId: null,
   events: [],
   audioEvents: [],
@@ -232,6 +235,7 @@ export function resetClientWorld(): void {
   clientWorld.drops = [];
   clientWorld.animals.clear();
   clientWorld.weather = 0;
+  clientWorld.renderGameTime = 0;
   clientWorld.promptLootId = null;
   clientWorld.events = [];
   clientWorld.audioEvents = [];

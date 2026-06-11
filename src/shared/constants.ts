@@ -158,6 +158,11 @@ export const VENISON_PER_DEER_MIN = 2;
 export const VENISON_PER_DEER_MAX = 3;
 export const DEER_CORPSE_TTL_S = 180;
 
+// --- Lag compensation ---
+/** Max seconds the server will rewind target positions for a hitscan. Covers
+ * INTERP_DELAY (120ms) + input batching (50ms) + ~150ms network. */
+export const LAG_COMP_MAX_REWIND_S = 0.35;
+
 // --- Chat ---
 export const CHAT_RADIUS = 40; // meters — proximity text chat delivery
 export const CHAT_MAX_LENGTH = 120;

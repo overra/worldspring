@@ -78,7 +78,13 @@ import {
   STRIP_TEXT_RE,
   useItem,
 } from "./systems/players";
-import { createGameState, sendTo, type GameState, type ServerPlayer } from "./systems/state";
+import {
+  capturePosHistory,
+  createGameState,
+  sendTo,
+  type GameState,
+  type ServerPlayer,
+} from "./systems/state";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -112,6 +118,14 @@ const LIVENESS_TIMEOUT_MS = 15_000;
 const RATE_LIMIT_WINDOW_MS = 5_000;
 const RATE_LIMIT_MAX_MSGS = 600;
 
+// --- Tick instrumentation (surfaced via /api/health) ---
+/** EMA smoothing factor for the per-tick wall-clock cost. */
+const TICK_EMA_ALPHA = 0.1;
+/** Ticks costing more than this log a "tick overrun" warning. */
+const TICK_OVERRUN_WARN_MS = 40;
+/** tickMsMax decays by rotating two max-windows of this length (~5s memory). */
+const TICK_MAX_WINDOW_MS = 5_000;
+
 interface RateWindow {
   windowStart: number;
   count: number;
@@ -129,6 +143,12 @@ export class GameRoom extends DurableObject<Env> {
   private tickHandle: ReturnType<typeof setInterval> | null = null;
   /** Game time of the last periodic world+character save. */
   private lastSaveTime = 0;
+  // Tick timing stats (read by the /api/health route; see timedTick).
+  private tickMsEma = 0;
+  private tickCount = 0;
+  private tickMsWindowMax = 0;
+  private tickMsPrevWindowMax = 0;
+  private tickMsWindowStart = 0;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -149,6 +169,31 @@ export class GameRoom extends DurableObject<Env> {
           "access-control-allow-origin": "*",
         },
       });
+    }
+    // Read-only room stats (no auth — nothing sensitive, used by loadtest).
+    // Counts are 0 while the room is idle; we never wake the sim to answer.
+    if (url.pathname === "/api/health") {
+      const game = this.game;
+      return new Response(
+        JSON.stringify({
+          players: game?.players.size ?? 0,
+          zombies: game?.zombies.size ?? 0,
+          animals: game?.animals.size ?? 0,
+          drops: game?.drops.size ?? 0,
+          corpses: game?.corpses.size ?? 0,
+          loot: game?.loot.size ?? 0,
+          tickMsEma: round2(this.tickMsEma),
+          tickMsMax: round2(Math.max(this.tickMsWindowMax, this.tickMsPrevWindowMax)),
+          tick: game?.tick ?? 0,
+          uptime: round2(game?.time ?? 0),
+        }),
+        {
+          headers: {
+            "content-type": "application/json",
+            "access-control-allow-origin": "*",
+          },
+        },
+      );
     }
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 426 });
@@ -228,6 +273,12 @@ export class GameRoom extends DurableObject<Env> {
         // Deferred to the tick so queued movement (and the yaw/pitch in it)
         // applies first — resolving on receipt used stale aim.
         player.wantsAttack = true;
+        // Lag comp: game-time the shooter's screen showed when they fired
+        // (parse-validated number or absent). Not trusted as-is — combat
+        // clamps it to at most LAG_COMP_MAX_REWIND_S in the past, so a
+        // malicious timestamp gains no more than the ~350ms rewind any
+        // laggy-but-honest client gets; future values clamp to now.
+        player.wantsAttackAt = msg.at ?? null;
         break;
       case "use":
         useItem(game, player, msg.slot);
@@ -315,13 +366,42 @@ export class GameRoom extends DurableObject<Env> {
 
   private startTicking(): void {
     if (this.tickHandle !== null) return;
-    this.tickHandle = setInterval(() => this.tick(), TICK_MS);
+    this.tickHandle = setInterval(() => this.timedTick(), TICK_MS);
   }
 
   private stopTicking(): void {
     if (this.tickHandle === null) return;
     clearInterval(this.tickHandle);
     this.tickHandle = null;
+  }
+
+  /**
+   * Timing wrapper around the tick body — wall-clocks every tick for the
+   * /api/health stats: an EMA (alpha TICK_EMA_ALPHA), a windowed max (max of
+   * the current and previous TICK_MAX_WINDOW_MS windows, so spikes age out
+   * after ~5-10s), and a total tick count. Note: deployed workerd only
+   * advances timers at I/O boundaries, so pure-CPU ticks can read low there;
+   * local dev (and any tick touching storage) reports real numbers.
+   */
+  private timedTick(): void {
+    const start = performance.now();
+    this.tick();
+    const ms = performance.now() - start;
+    this.tickCount++;
+    this.tickMsEma =
+      this.tickCount === 1 ? ms : this.tickMsEma + TICK_EMA_ALPHA * (ms - this.tickMsEma);
+    const nowMs = Date.now();
+    if (nowMs - this.tickMsWindowStart >= TICK_MAX_WINDOW_MS) {
+      this.tickMsPrevWindowMax = this.tickMsWindowMax;
+      this.tickMsWindowMax = 0;
+      this.tickMsWindowStart = nowMs;
+    }
+    if (ms > this.tickMsWindowMax) this.tickMsWindowMax = ms;
+    if (ms > TICK_OVERRUN_WARN_MS) {
+      console.warn(
+        `tick overrun: ${ms.toFixed(1)}ms at tick ${this.game?.tick ?? 0} (ema ${this.tickMsEma.toFixed(1)}ms)`,
+      );
+    }
   }
 
   private async handleJoin(
@@ -355,6 +435,7 @@ export class GameRoom extends DurableObject<Env> {
       existing.offlineSince = 0;
       existing.cmdQueue.length = 0;
       existing.wantsAttack = false;
+      existing.wantsAttackAt = null;
       existing.inputBudget = INPUT_BUDGET_CAP_S;
       existing.lastAck = 0;
       this.playerBySocket.set(ws, existing.id);
@@ -462,6 +543,7 @@ export class GameRoom extends DurableObject<Env> {
             player.offlineSince = game.time;
             player.cmdQueue.length = 0;
             player.wantsAttack = false;
+            player.wantsAttackAt = null;
             this.persistAll(game);
           } else {
             // Dead characters were already marked dead in storage at kill
@@ -582,11 +664,14 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     applyQueuedInputs(game, dt);
-    // Attacks resolve after this tick's movement so aim is current.
+    // Attacks resolve after this tick's movement so aim is current; the
+    // client-reported aim time rides along for target rewind (lag comp).
     for (const player of game.players.values()) {
       if (player.wantsAttack) {
         player.wantsAttack = false;
-        if (player.alive) performAttack(game, player);
+        const aimTime = player.wantsAttackAt ?? undefined;
+        player.wantsAttackAt = null;
+        if (player.alive) performAttack(game, player, aimTime);
       }
     }
     tickZombies(game, dt);
@@ -602,6 +687,12 @@ export class GameRoom extends DurableObject<Env> {
     tickDroppedLoot(game, dt);
     game.time += dt;
     game.tick++;
+
+    // Lag-comp history: end-of-tick positions stamped with the same game.time
+    // the snapshots below carry, so client aim times and history frames share
+    // one clock. capturePosHistory prunes frames past the rewind window — the
+    // buffer stays bounded at ~9 tiny frames at 15Hz.
+    capturePosHistory(game);
 
     // Periodic durable snapshot of the world + every character.
     if (game.time - this.lastSaveTime >= WORLD_SAVE_INTERVAL_S) {

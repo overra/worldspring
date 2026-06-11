@@ -13,7 +13,7 @@ export default {
       const stub = env.GAME.getByName("main");
       return stub.fetch(request);
     }
-    if (url.pathname === "/api/leaderboard") {
+    if (url.pathname === "/api/leaderboard" || url.pathname === "/api/health") {
       const stub = env.GAME.getByName("main");
       return stub.fetch(request);
     }

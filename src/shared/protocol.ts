@@ -44,7 +44,10 @@ export const ANIM_ATTACKING = 4;
 export type ClientMsg =
   | { t: "join"; name: string; token: string }
   | { t: "input"; cmds: InputCmd[] }
-  | { t: "attack" } // server resolves melee vs ranged from equipped item
+  /** `at` = game-time the shooter's screen was rendering (interpolation runs
+   * INTERP_DELAY_MS behind). The server rewinds targets to it, clamped to
+   * LAG_COMP_MAX_REWIND_S — omitted/invalid means "no rewind". */
+  | { t: "attack"; at?: number } // server resolves melee vs ranged
   | { t: "use"; slot: number }
   | { t: "equip"; slot: number }
   | { t: "pickup"; id: number }
@@ -288,7 +291,7 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       return { t: "input", cmds };
     }
     case "attack":
-      return { t: "attack" };
+      return { t: "attack", at: isFiniteNum(m.at) ? m.at : undefined };
     case "use":
       return isFiniteNum(m.slot) ? { t: "use", slot: m.slot | 0 } : null;
     case "equip":

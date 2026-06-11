@@ -118,7 +118,10 @@ export function sendMsg(msg: ClientMsg): void {
 // --- Action helpers (thin wrappers used by input + UI) ---
 
 export function doAttack(): void {
-  sendMsg({ t: "attack" });
+  // Aim timestamp: the game-time of the interpolated world on the shooter's
+  // screen. The server rewinds hit targets to it (clamped server-side).
+  const at = clientWorld.renderGameTime;
+  sendMsg(at > 0 ? { t: "attack", at } : { t: "attack" });
 }
 
 export function doUse(slot: number): void {

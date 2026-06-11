@@ -2,11 +2,17 @@
 // hitscan (pistol/rifle/shotgun, driven by each ItemDef's RangedConfig) with
 // static occlusion. The server decides melee vs ranged from the attacker's
 // equipped slot.
+//
+// Lag compensation: hit DETECTION runs against target positions rewound to
+// the game-time the shooter's screen showed (`attack.at`), LERPed from the
+// posHistory frames captured each tick. Damage/kill application still hits
+// the CURRENT entity objects; the shooter is never rewound.
 
 import {
   ATTACK_COOLDOWN_S,
   FIST_DMG,
   HIT_CAPSULE_RADIUS,
+  LAG_COMP_MAX_REWIND_S,
   MELEE_HALF_ANGLE_RAD,
   MELEE_RANGE,
   PLAYER_EYE_HEIGHT,
@@ -21,7 +27,15 @@ import {
   type Vec3,
 } from "@/shared/math";
 import { consumeFromSlot, sendInventory } from "./players";
-import { queueEvent, type Deer, type GameState, type ServerPlayer, type Zombie } from "./state";
+import {
+  queueEvent,
+  type Deer,
+  type GameState,
+  type PosHistoryFrame,
+  type PosSnapshot,
+  type ServerPlayer,
+  type Zombie,
+} from "./state";
 import { damagePlayer } from "./survival";
 import { killDeer } from "./wildlife";
 import { killZombie } from "./zombies";
@@ -58,81 +72,197 @@ function meleeBlocked(
   return t !== null && t < dist - 0.05;
 }
 
-/** Entry point for an "attack" message. */
-export function performAttack(state: GameState, player: ServerPlayer): void {
+/** Read-only position; Zombie/Deer/PlayerCore all satisfy it structurally. */
+interface RewoundPos {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/** Resolves where each hittable target stood at the shooter's aim time. */
+interface RewindLookup {
+  player(p: ServerPlayer): RewoundPos;
+  zombie(z: Zombie): RewoundPos;
+  deer(d: Deer): RewoundPos;
+}
+
+/** No-rewind lookup: exactly today's behavior, current positions. */
+const CURRENT_POSITIONS: RewindLookup = {
+  player: (p) => p.core,
+  zombie: (z) => z,
+  deer: (d) => d,
+};
+
+/**
+ * Build the rewound position lookup for one attack (built ONCE per shot, then
+ * shared by every cone/cylinder test and pellet).
+ *
+ * `aimTime` is the game-time the shooter's screen showed when they fired.
+ * Anti-abuse: it is clamped to [state.time - LAG_COMP_MAX_REWIND_S,
+ * state.time] — a malicious past timestamp gains at most 350ms of rewind,
+ * the same advantage any laggy-but-honest client gets; future timestamps
+ * clamp to now. The two posHistory frames bracketing the clamped time are
+ * LERPed; with only one side available we snap to that frame. Undefined
+ * aimTime or empty history falls back to current positions (today's
+ * behavior). Entities missing from the frames (newly spawned, or offline
+ * lingerers which are never captured) also fall back to their current
+ * position. Entities that died since aimTime are simply absent from the
+ * current maps — callers never query them.
+ */
+function buildRewind(state: GameState, aimTime: number | undefined): RewindLookup {
+  const history = state.posHistory;
+  if (aimTime === undefined || history.length === 0) return CURRENT_POSITIONS;
+
+  const t = Math.min(state.time, Math.max(state.time - LAG_COMP_MAX_REWIND_S, aimTime));
+
+  // History is appended once per tick, so it is sorted ascending by time.
+  let before: PosHistoryFrame | null = null;
+  let after: PosHistoryFrame | null = null;
+  for (const frame of history) {
+    if (frame.time <= t) before = frame;
+    if (frame.time >= t) {
+      after = frame;
+      break;
+    }
+  }
+  // Snap to the nearest frame when only one side of t exists.
+  const frameA = before ?? after;
+  const frameB = after ?? before;
+  if (!frameA || !frameB) return CURRENT_POSITIONS; // unreachable: history non-empty
+  const span = frameB.time - frameA.time;
+  const alpha = span > 0 ? (t - frameA.time) / span : 0;
+
+  const resolve = (
+    a: PosSnapshot | undefined,
+    b: PosSnapshot | undefined,
+    current: RewoundPos,
+  ): RewoundPos => {
+    if (a && b) {
+      if (a === b) return a;
+      return {
+        x: a.x + (b.x - a.x) * alpha,
+        y: a.y + (b.y - a.y) * alpha,
+        z: a.z + (b.z - a.z) * alpha,
+      };
+    }
+    // One-sided frames: lerp toward the current position rather than
+    // returning the stale sample raw — a raw frameA could sit up to one tick
+    // older than the clamped rewind floor (~67ms extra at 15Hz).
+    if (a) {
+      return {
+        x: a.x + (current.x - a.x) * alpha,
+        y: a.y + (current.y - a.y) * alpha,
+        z: a.z + (current.z - a.z) * alpha,
+      };
+    }
+    return b ?? current;
+  };
+
+  return {
+    player: (p) => resolve(frameA.players.get(p.id), frameB.players.get(p.id), p.core),
+    zombie: (z) => resolve(frameA.zombies.get(z.id), frameB.zombies.get(z.id), z),
+    deer: (d) => resolve(frameA.animals.get(d.id), frameB.animals.get(d.id), d),
+  };
+}
+
+/** Entry point for an "attack" message. `aimTime` = client `attack.at`. */
+export function performAttack(
+  state: GameState,
+  player: ServerPlayer,
+  aimTime: number | undefined,
+): void {
   if (!player.alive) return;
   if (player.attackCooldown > 0) return;
   const stack = player.inventory[player.selectedSlot];
   const def: ItemDef | null = stack ? ITEM_DEFS[stack.type] : null;
   if (def && def.kind === "ranged") {
-    fireRanged(state, player, def);
+    fireRanged(state, player, def, aimTime);
     return;
   }
-  meleeAttack(state, player, def);
+  meleeAttack(state, player, def, aimTime);
 }
 
-function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null): void {
+function meleeAttack(
+  state: GameState,
+  player: ServerPlayer,
+  def: ItemDef | null,
+  aimTime: number | undefined,
+): void {
   player.attackCooldown = ATTACK_COOLDOWN_S;
   player.attackAnimT = ATTACK_ANIM_S;
   const dmg = def && def.kind === "melee" ? def.power : FIST_DMG;
+  // Standard lag comp: the SHOOTER swings from their CURRENT server position;
+  // only TARGET positions are rewound (detection + occlusion endpoint).
   const { x, z, yaw } = player.core;
 
   // The swing is always visible, hit or miss.
   queueEvent(state, { e: "swing", id: player.id }, x, z);
 
+  const rewind = buildRewind(state, aimTime);
+
   // Nearest target inside the cone wins — zombie, deer or player alike.
+  // `hitPos` is the winner's REWOUND position (where the swing connected).
   let bestSq = Infinity;
   let hitZombie: Zombie | null = null;
   let hitDeer: Deer | null = null;
   let hitPlayer: ServerPlayer | null = null;
+  let hitPos: RewoundPos | null = null;
   const py = player.core.y;
   for (const zombie of state.zombies.values()) {
-    if (Math.abs(zombie.y - py) > MELEE_MAX_DY) continue;
-    if (!inMeleeCone(x, z, yaw, zombie.x, zombie.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) continue;
-    const dSq = distSq2D(x, z, zombie.x, zombie.z);
-    if (dSq < bestSq && !meleeBlocked(state, x, py, z, zombie.x, zombie.y, zombie.z)) {
+    const pos = rewind.zombie(zombie);
+    if (Math.abs(pos.y - py) > MELEE_MAX_DY) continue;
+    if (!inMeleeCone(x, z, yaw, pos.x, pos.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) continue;
+    const dSq = distSq2D(x, z, pos.x, pos.z);
+    // Walls are static, so occlusion stays consistent with the rewound world
+    // by simply aiming the blocked-check at the rewound target point.
+    if (dSq < bestSq && !meleeBlocked(state, x, py, z, pos.x, pos.y, pos.z)) {
       bestSq = dSq;
       hitZombie = zombie;
       hitDeer = null;
       hitPlayer = null;
+      hitPos = pos;
     }
   }
   for (const deer of state.animals.values()) {
-    if (Math.abs(deer.y - py) > MELEE_MAX_DY) continue;
-    if (!inMeleeCone(x, z, yaw, deer.x, deer.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) continue;
-    const dSq = distSq2D(x, z, deer.x, deer.z);
-    if (dSq < bestSq && !meleeBlocked(state, x, py, z, deer.x, deer.y, deer.z)) {
+    const pos = rewind.deer(deer);
+    if (Math.abs(pos.y - py) > MELEE_MAX_DY) continue;
+    if (!inMeleeCone(x, z, yaw, pos.x, pos.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) continue;
+    const dSq = distSq2D(x, z, pos.x, pos.z);
+    if (dSq < bestSq && !meleeBlocked(state, x, py, z, pos.x, pos.y, pos.z)) {
       bestSq = dSq;
       hitZombie = null;
       hitDeer = deer;
       hitPlayer = null;
+      hitPos = pos;
     }
   }
   for (const other of state.players.values()) {
     if (other.id === player.id || !other.alive) continue;
-    if (Math.abs(other.core.y - py) > MELEE_MAX_DY) continue;
-    if (!inMeleeCone(x, z, yaw, other.core.x, other.core.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) {
+    const pos = rewind.player(other);
+    if (Math.abs(pos.y - py) > MELEE_MAX_DY) continue;
+    if (!inMeleeCone(x, z, yaw, pos.x, pos.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) {
       continue;
     }
-    const dSq = distSq2D(x, z, other.core.x, other.core.z);
-    if (
-      dSq < bestSq &&
-      !meleeBlocked(state, x, py, z, other.core.x, other.core.y, other.core.z)
-    ) {
+    const dSq = distSq2D(x, z, pos.x, pos.z);
+    if (dSq < bestSq && !meleeBlocked(state, x, py, z, pos.x, pos.y, pos.z)) {
       bestSq = dSq;
       hitZombie = null;
       hitDeer = null;
       hitPlayer = other;
+      hitPos = pos;
     }
   }
 
+  if (!hitPos) return;
+  // The impact flash lands at the REWOUND point (where the shooter saw the
+  // target); damage/kill below applies to the CURRENT entity objects.
+  queueEvent(
+    state,
+    { e: "hit", x: hitPos.x, y: hitPos.y + HIT_EFFECT_HEIGHT, z: hitPos.z },
+    hitPos.x,
+    hitPos.z,
+  );
   if (hitZombie) {
-    queueEvent(
-      state,
-      { e: "hit", x: hitZombie.x, y: hitZombie.y + HIT_EFFECT_HEIGHT, z: hitZombie.z },
-      hitZombie.x,
-      hitZombie.z,
-    );
     hitZombie.hp -= dmg;
     if (hitZombie.hp <= 0) {
       killZombie(state, hitZombie);
@@ -141,28 +271,11 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
     return;
   }
   if (hitDeer) {
-    queueEvent(
-      state,
-      { e: "hit", x: hitDeer.x, y: hitDeer.y + HIT_EFFECT_HEIGHT, z: hitDeer.z },
-      hitDeer.x,
-      hitDeer.z,
-    );
     hitDeer.hp -= dmg;
     if (hitDeer.hp <= 0) killDeer(state, hitDeer);
     return;
   }
   if (hitPlayer) {
-    queueEvent(
-      state,
-      {
-        e: "hit",
-        x: hitPlayer.core.x,
-        y: hitPlayer.core.y + HIT_EFFECT_HEIGHT,
-        z: hitPlayer.core.z,
-      },
-      hitPlayer.core.x,
-      hitPlayer.core.z,
-    );
     if (damagePlayer(state, hitPlayer, dmg, player.name, true)) player.stats.kills++;
   }
 }
@@ -173,7 +286,12 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
  * (each perturbed by up to `spreadRad`) — `def.power` damage per pellet hit.
  * One "shot" event per pellet: the tracer fan IS the shotgun visual.
  */
-function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void {
+function fireRanged(
+  state: GameState,
+  player: ServerPlayer,
+  def: ItemDef,
+  aimTime: number | undefined,
+): void {
   const ranged = def.ranged;
   if (!ranged) return; // guaranteed present for kind "ranged"; belt-and-braces
 
@@ -187,6 +305,11 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
   player.attackAnimT = ATTACK_ANIM_S;
   consumeFromSlot(player.inventory, ammoSlot);
   sendInventory(state, player);
+
+  // Lag comp: one rewound lookup per trigger pull, shared by every pellet.
+  // TARGETS are tested at their rewound positions; the SHOOTER's ray origin
+  // stays their CURRENT server position (never rewind the shooter).
+  const rewind = buildRewind(state, aimTime);
 
   const origin: Vec3 = {
     x: player.core.x,
@@ -202,7 +325,10 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
     const pitch = player.core.pitch + (Math.random() * 2 - 1) * ranged.spreadRad;
     const dir = lookDir(yaw, pitch);
 
-    // Walls/roofs/terrain occlude; nothing beyond the closest static hit counts.
+    // Walls/roofs/terrain occlude; nothing beyond the closest static hit
+    // counts. Statics never move, so the ray needs no rewinding: capping the
+    // cylinder tests at `maxT` already rejects any REWOUND target point that
+    // sits behind a wall — occlusion stays consistent with the rewound world.
     const staticT = state.world.raycastStatics(origin, dir, ranged.range);
     const maxT = staticT ?? ranged.range;
 
@@ -211,13 +337,14 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
     let hitDeer: Deer | null = null;
     let hitPlayer: ServerPlayer | null = null;
     for (const zombie of state.zombies.values()) {
+      const pos = rewind.zombie(zombie);
       const t = rayVerticalCylinder(
         origin,
         dir,
-        zombie.x,
-        zombie.z,
-        zombie.y,
-        zombie.y + PLAYER_HEIGHT,
+        pos.x,
+        pos.z,
+        pos.y,
+        pos.y + PLAYER_HEIGHT,
         HIT_CAPSULE_RADIUS,
         maxT,
       );
@@ -229,13 +356,14 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
       }
     }
     for (const deer of state.animals.values()) {
+      const pos = rewind.deer(deer);
       const t = rayVerticalCylinder(
         origin,
         dir,
-        deer.x,
-        deer.z,
-        deer.y,
-        deer.y + PLAYER_HEIGHT,
+        pos.x,
+        pos.z,
+        pos.y,
+        pos.y + PLAYER_HEIGHT,
         HIT_CAPSULE_RADIUS,
         maxT,
       );
@@ -248,13 +376,14 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
     }
     for (const other of state.players.values()) {
       if (other.id === player.id || !other.alive) continue;
+      const pos = rewind.player(other);
       const t = rayVerticalCylinder(
         origin,
         dir,
-        other.core.x,
-        other.core.z,
-        other.core.y,
-        other.core.y + PLAYER_HEIGHT,
+        pos.x,
+        pos.z,
+        pos.y,
+        pos.y + PLAYER_HEIGHT,
         HIT_CAPSULE_RADIUS,
         maxT,
       );

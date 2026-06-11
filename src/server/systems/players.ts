@@ -195,6 +195,7 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.cmdQueue = [];
   player.inputBudget = INPUT_BUDGET_CAP_S;
   player.wantsAttack = false;
+  player.wantsAttackAt = null;
   player.attackCooldown = 0;
   player.attackAnimT = 0;
   player.sprinting = false;

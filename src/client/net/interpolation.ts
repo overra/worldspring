@@ -15,6 +15,8 @@ export type SnapMsg = Extract<ServerMsg, { t: "snap" }>;
 
 interface BufferedSnap {
   arrival: number; // performance.now() at receipt
+  /** Server game-time of this snapshot (lag compensation aim timestamps). */
+  time: number;
   players: WirePlayer[];
   zombies: WireZombie[];
   animals: WireAnimal[];
@@ -47,6 +49,7 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
 
   buffer.push({
     arrival: arrivalMs,
+    time: snap.time,
     players: snap.players,
     zombies: snap.zombies,
     animals: snap.animals,
@@ -115,6 +118,9 @@ export function updateInterpolation(nowMs: number): void {
   interpolateZombies(a, b, t);
   interpolateAnimals(a, b, t);
   clientWorld.weather = lerp(a.weather, b.weather, t);
+  // Game-time of the world state currently on screen — attaches to attack
+  // messages so the server can rewind targets to what the shooter SAW.
+  clientWorld.renderGameTime = lerp(a.time, b.time, t);
 }
 
 function interpolateAnimals(a: BufferedSnap, b: BufferedSnap, t: number): void {
