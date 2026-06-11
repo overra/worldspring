@@ -21,8 +21,9 @@ import {
   type Vec3,
 } from "@/shared/math";
 import { consumeFromSlot, sendInventory } from "./players";
-import { queueEvent, type GameState, type ServerPlayer, type Zombie } from "./state";
+import { queueEvent, type Deer, type GameState, type ServerPlayer, type Zombie } from "./state";
 import { damagePlayer } from "./survival";
+import { killDeer } from "./wildlife";
 import { killZombie } from "./zombies";
 
 /** Contract gap: ANIM_ATTACKING duration is specified as "~0.3s" in prose. */
@@ -79,9 +80,10 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
   // The swing is always visible, hit or miss.
   queueEvent(state, { e: "swing", id: player.id }, x, z);
 
-  // Nearest target inside the cone wins, zombie or player alike.
+  // Nearest target inside the cone wins — zombie, deer or player alike.
   let bestSq = Infinity;
   let hitZombie: Zombie | null = null;
+  let hitDeer: Deer | null = null;
   let hitPlayer: ServerPlayer | null = null;
   const py = player.core.y;
   for (const zombie of state.zombies.values()) {
@@ -91,6 +93,18 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
     if (dSq < bestSq && !meleeBlocked(state, x, py, z, zombie.x, zombie.y, zombie.z)) {
       bestSq = dSq;
       hitZombie = zombie;
+      hitDeer = null;
+      hitPlayer = null;
+    }
+  }
+  for (const deer of state.animals.values()) {
+    if (Math.abs(deer.y - py) > MELEE_MAX_DY) continue;
+    if (!inMeleeCone(x, z, yaw, deer.x, deer.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) continue;
+    const dSq = distSq2D(x, z, deer.x, deer.z);
+    if (dSq < bestSq && !meleeBlocked(state, x, py, z, deer.x, deer.y, deer.z)) {
+      bestSq = dSq;
+      hitZombie = null;
+      hitDeer = deer;
       hitPlayer = null;
     }
   }
@@ -107,6 +121,7 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
     ) {
       bestSq = dSq;
       hitZombie = null;
+      hitDeer = null;
       hitPlayer = other;
     }
   }
@@ -123,6 +138,17 @@ function meleeAttack(state: GameState, player: ServerPlayer, def: ItemDef | null
       killZombie(state, hitZombie);
       player.stats.zombieKills++;
     }
+    return;
+  }
+  if (hitDeer) {
+    queueEvent(
+      state,
+      { e: "hit", x: hitDeer.x, y: hitDeer.y + HIT_EFFECT_HEIGHT, z: hitDeer.z },
+      hitDeer.x,
+      hitDeer.z,
+    );
+    hitDeer.hp -= dmg;
+    if (hitDeer.hp <= 0) killDeer(state, hitDeer);
     return;
   }
   if (hitPlayer) {
@@ -182,6 +208,7 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
 
     let hitT = Infinity;
     let hitZombie: Zombie | null = null;
+    let hitDeer: Deer | null = null;
     let hitPlayer: ServerPlayer | null = null;
     for (const zombie of state.zombies.values()) {
       const t = rayVerticalCylinder(
@@ -197,6 +224,25 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
       if (t !== null && t < hitT) {
         hitT = t;
         hitZombie = zombie;
+        hitDeer = null;
+        hitPlayer = null;
+      }
+    }
+    for (const deer of state.animals.values()) {
+      const t = rayVerticalCylinder(
+        origin,
+        dir,
+        deer.x,
+        deer.z,
+        deer.y,
+        deer.y + PLAYER_HEIGHT,
+        HIT_CAPSULE_RADIUS,
+        maxT,
+      );
+      if (t !== null && t < hitT) {
+        hitT = t;
+        hitZombie = null;
+        hitDeer = deer;
         hitPlayer = null;
       }
     }
@@ -215,6 +261,7 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
       if (t !== null && t < hitT) {
         hitT = t;
         hitZombie = null;
+        hitDeer = null;
         hitPlayer = other;
       }
     }
@@ -233,16 +280,21 @@ function fireRanged(state: GameState, player: ServerPlayer, def: ItemDef): void 
       queueEvent(state, { e: "hit", x: tx, y: ty, z: tz }, tx, tz);
     }
 
-    // Kill credit lands at most once per victim per trigger pull: killZombie
-    // removes the zombie (later pellets can't re-hit it) and damagePlayer
-    // returns true only on the living->dead transition (dead players are
-    // skipped above).
+    // Kill credit lands at most once per victim per trigger pull: killZombie/
+    // killDeer remove the target (later pellets can't re-hit it) and
+    // damagePlayer returns true only on the living->dead transition (dead
+    // players are skipped above).
     if (hitZombie) {
       hitZombie.hp -= def.power;
       if (hitZombie.hp <= 0) {
         killZombie(state, hitZombie);
         player.stats.zombieKills++;
       }
+      continue;
+    }
+    if (hitDeer) {
+      hitDeer.hp -= def.power;
+      if (hitDeer.hp <= 0) killDeer(state, hitDeer);
       continue;
     }
     if (hitPlayer && damagePlayer(state, hitPlayer, def.power, player.name, true)) {

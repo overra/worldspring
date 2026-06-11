@@ -84,6 +84,13 @@ const FIRE_VOLUME = 0.55;
 
 const AMBIENT_FADE_S = 2;
 const WIND_VOLUME = 0.22;
+const RAIN_VOLUME_SCALE = 0.5;
+// Heavy rain muffles distant gunfire — scale shot one-shots while pouring.
+const RAIN_MUFFLE_ABOVE = 0.5;
+const RAIN_MUFFLE_FACTOR = 0.7;
+const PLANE_FLYOVER_VOLUME = 0.5;
+const CRATE_THUD_VOLUME = 0.9;
+const CRATE_THUD_REF_DISTANCE = 25; // audible far across the island
 const WAVES_VOLUME = 0.45;
 const WAVES_FULL_BELOW = 1.5;
 const WAVES_SILENT_ABOVE = 6;
@@ -139,6 +146,8 @@ interface Engine {
   vocalNextAt: number;
   zombiePrevState: Map<number, ZombieState>;
   zombieAttackLastAt: Map<number, number>;
+  /** Airdrop id → last seen `falling` flag (plane on appear, thud on landing). */
+  dropPrevFalling: Map<number, boolean>;
   shotLastPlayed: Map<ShotWeapon, { t: number; x: number; y: number; z: number }>;
   lcg: number;
 }
@@ -194,6 +203,7 @@ function createEngine(): Engine {
     vocalNextAt: 0,
     zombiePrevState: new Map(),
     zombieAttackLastAt: new Map(),
+    dropPrevFalling: new Map(),
     shotLastPlayed: new Map(),
     lcg: 0x2f6e2b1,
   };
@@ -334,11 +344,30 @@ function processEvents(engine: Engine, events: GameEvent[], cam: THREE.Vector3, 
         engine.shotLastPlayed.set(ev.w, { t: now, x: ev.sx, y: ev.sy, z: ev.sz });
 
         const profile = SHOT_PROFILES[ev.w];
+        // Downpour muffles gunfire — applied here (shot one-shots only),
+        // never to the global listener volume.
+        const muffle = clientWorld.weather > RAIN_MUFFLE_ABOVE ? RAIN_MUFFLE_FACTOR : 1;
         const dist = Math.hypot(ev.sx - cam.x, ev.sy - cam.y, ev.sz - cam.z);
         if (dist > profile.farDistance) {
-          playPositional(engine, profile.far, ev.sx, ev.sy, ev.sz, 0.85, profile.farRefDistance);
+          playPositional(
+            engine,
+            profile.far,
+            ev.sx,
+            ev.sy,
+            ev.sz,
+            0.85 * muffle,
+            profile.farRefDistance,
+          );
         } else {
-          playPositional(engine, profile.near, ev.sx, ev.sy, ev.sz, 0.9, profile.nearRefDistance);
+          playPositional(
+            engine,
+            profile.near,
+            ev.sx,
+            ev.sy,
+            ev.sz,
+            0.9 * muffle,
+            profile.nearRefDistance,
+          );
         }
         break;
       }
@@ -492,6 +521,37 @@ function updateFires(engine: Engine, cam: THREE.Vector3): void {
   }
 }
 
+// --- Airdrops: plane on appearance, crate thud on touchdown ---
+
+function updateAirdrops(engine: Engine): void {
+  const drops = clientWorld.drops;
+  for (const drop of drops) {
+    const prev = engine.dropPrevFalling.get(drop.id);
+    if (prev === undefined) {
+      // New drop. Only an in-flight crate gets the flyover — a crate that was
+      // already on the ground when we connected stays silent.
+      if (drop.falling) playFlat(engine, "plane_flyover", PLANE_FLYOVER_VOLUME);
+    } else if (prev && !drop.falling) {
+      playPositional(
+        engine,
+        "crate_thud",
+        drop.x,
+        drop.y,
+        drop.z,
+        CRATE_THUD_VOLUME,
+        CRATE_THUD_REF_DISTANCE,
+      );
+    }
+    engine.dropPrevFalling.set(drop.id, drop.falling);
+  }
+  if (engine.dropPrevFalling.size > drops.length) {
+    for (const id of engine.dropPrevFalling.keys()) {
+      if (drops.some((d) => d.id === id)) continue;
+      engine.dropPrevFalling.delete(id);
+    }
+  }
+}
+
 // --- Ambience (non-positional gain-faded loops) ---
 
 function clamp01(v: number): number {
@@ -550,6 +610,8 @@ function updateAmbience(engine: Engine, dt: number): void {
   setAmbientTarget(engine, "waves_loop", waves, dt);
   setAmbientTarget(engine, "crickets_loop", crickets, dt);
   setAmbientTarget(engine, "heartbeat", heartbeat, dt);
+  // Rain tracks the server's weather ramp directly (already lerped client-side).
+  setAmbientTarget(engine, "rain_loop", clientWorld.weather * RAIN_VOLUME_SCALE, dt);
 }
 
 // --- Teardown ---
@@ -577,6 +639,7 @@ function silenceEngine(engine: Engine): void {
   engine.vocalNextAt = 0;
   engine.zombiePrevState.clear();
   engine.zombieAttackLastAt.clear();
+  engine.dropPrevFalling.clear();
   engine.shotLastPlayed.clear();
 }
 
@@ -678,6 +741,7 @@ export function AudioSystem(): null {
     updateZombieStates(engine, now);
     updateVocalizations(engine, now, tmpCamPos);
     updateFires(engine, tmpCamPos);
+    updateAirdrops(engine);
     updateAmbience(engine, dt);
   });
 

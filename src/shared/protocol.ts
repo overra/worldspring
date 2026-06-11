@@ -113,6 +113,30 @@ export interface WireFire {
   z: number;
 }
 
+/** An airdrop crate. Sent in EVERY snapshot regardless of distance — the
+ * smoke column must be visible across the whole island. */
+export interface WireDrop {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  /** False once the crate has landed long enough for the smoke to die. */
+  smoke: boolean;
+  /** True while still falling (render the chute, no pickup yet). */
+  falling: boolean;
+}
+
+export type AnimalState = "idle" | "wander" | "flee";
+
+export interface WireAnimal {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  state: AnimalState;
+}
+
 /** How a finished life went — shown on the death screen and in welcome
  * messages when the character died while its owner was offline. */
 export interface DeathRecap {
@@ -187,6 +211,11 @@ export type ServerMsg =
       loot: WireLoot[];
       corpses: WireCorpse[];
       fires: WireFire[];
+      /** All active airdrops, never interest-filtered (island-wide smoke). */
+      drops: WireDrop[];
+      animals: WireAnimal[];
+      /** Rain intensity 0..1 (server weather machine; ramped, not stepped). */
+      weather: number;
       events: GameEvent[];
       count: number; // players online
     }

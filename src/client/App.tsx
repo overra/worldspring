@@ -11,12 +11,15 @@ import { WaterPlane } from "./render/world/WaterPlane";
 import { Buildings } from "./render/world/Buildings";
 import { Trees } from "./render/world/Trees";
 import { Grass } from "./render/world/Grass";
+import { RainLayer } from "./render/world/RainLayer";
 import { InputController } from "./render/entities/InputController";
 import { PlayerCamera } from "./render/entities/PlayerCamera";
 import { RemotePlayers } from "./render/entities/RemotePlayers";
 import { Zombies } from "./render/entities/Zombies";
 import { LootItems } from "./render/entities/LootItems";
 import { Corpses } from "./render/entities/Corpses";
+import { Animals } from "./render/entities/Animals";
+import { Airdrops } from "./render/entities/Airdrops";
 import { Campfires } from "./render/entities/Campfires";
 import { EffectsLayer } from "./render/entities/EffectsLayer";
 import { MainMenu } from "./ui/MainMenu";
@@ -54,6 +57,9 @@ function GameCanvas(): React.ReactElement {
       <Zombies />
       <LootItems />
       <Corpses />
+      <Animals />
+      <Airdrops />
+      <RainLayer />
       <Campfires />
       <EffectsLayer />
     </Canvas>

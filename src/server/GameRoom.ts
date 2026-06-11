@@ -12,6 +12,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  AIRDROP_SMOKE_S,
   INPUT_BUDGET_CAP_S,
   INTEREST_RADIUS,
   LOGOUT_LINGER_S,
@@ -31,7 +32,9 @@ import {
   type DeathRecap,
   type GameEvent,
   type ServerMsg,
+  type WireAnimal,
   type WireCorpse,
+  type WireDrop,
   type WireFire,
   type WireLoot,
   type WirePlayer,
@@ -51,6 +54,7 @@ import {
   saveWorld,
   topLeaderboard,
 } from "./persistence";
+import { tickAirdrops } from "./systems/airdrops";
 import { performAttack } from "./systems/combat";
 import {
   stockInitialLoot,
@@ -72,6 +76,8 @@ import {
 } from "./systems/players";
 import { createGameState, type GameState, type ServerPlayer } from "./systems/state";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
+import { tickWeather } from "./systems/weather";
+import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
 import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/zombies";
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -260,8 +266,9 @@ export class GameRoom extends DurableObject<Env> {
     // loadWorld hydrates loot/corpses/fires/respawn timers and restores
     // game.time/tick from meta; a fresh database stocks the world instead.
     if (!loadWorld(this.ctx.storage.sql, game)) stockInitialLoot(game);
-    // Zombies are never persisted — they always spawn fresh.
+    // Zombies and deer are never persisted — they always spawn fresh.
     spawnInitialZombies(game);
+    spawnInitialDeer(game);
     this.game = game;
     this.lastSaveTime = game.time;
     return game;
@@ -546,6 +553,10 @@ export class GameRoom extends DurableObject<Env> {
     tickZombies(game, dt);
     tickZombieRespawns(game, dt);
     tickSurvival(game, dt);
+    tickWeather(game, dt);
+    tickAirdrops(game, dt);
+    tickWildlife(game, dt);
+    tickDeerRespawns(game, dt);
     tickFires(game, dt);
     tickLootRespawns(game, dt);
     tickCorpses(game, dt);
@@ -657,6 +668,33 @@ export class GameRoom extends DurableObject<Env> {
       fires.push({ id: fire.id, x: round2(fire.x), y: round2(fire.y), z: round2(fire.z) });
     }
 
+    // Airdrops are NEVER interest-filtered: the smoke column (and the falling
+    // crate) must be visible from anywhere on the island.
+    const drops: WireDrop[] = [];
+    for (const drop of game.drops.values()) {
+      drops.push({
+        id: drop.id,
+        x: round2(drop.x),
+        y: round2(drop.y),
+        z: round2(drop.z),
+        smoke: game.time >= drop.landsAt && game.time < drop.landsAt + AIRDROP_SMOKE_S,
+        falling: game.time < drop.landsAt,
+      });
+    }
+
+    const animals: WireAnimal[] = [];
+    for (const deer of game.animals.values()) {
+      if (distSq2D(px, pz, deer.x, deer.z) > interestSq) continue;
+      animals.push({
+        id: deer.id,
+        x: round2(deer.x),
+        y: round2(deer.y),
+        z: round2(deer.z),
+        yaw: round3(deer.yaw),
+        state: deer.state,
+      });
+    }
+
     const events: GameEvent[] = [];
     for (const queued of game.events) {
       if (queued.onlyTo !== undefined) {
@@ -677,6 +715,9 @@ export class GameRoom extends DurableObject<Env> {
       loot,
       corpses,
       fires,
+      drops,
+      animals,
+      weather: round2(game.weather),
       events,
       count,
     };

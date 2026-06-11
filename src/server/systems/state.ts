@@ -117,6 +117,36 @@ export interface Corpse {
   ttl: number;
 }
 
+/** An airdrop crate (announced, falls, lands, lootable, despawns). */
+export interface Airdrop {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  /** Game-time when the crate touches down (falling until then). */
+  landsAt: number;
+  /** Game-time when the crate despawns. */
+  expiresAt: number;
+  contents: ItemStack[];
+}
+
+export type DeerState = "idle" | "wander" | "flee";
+
+export interface Deer {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  hp: number;
+  state: DeerState;
+  homeX: number;
+  homeZ: number;
+  wanderX: number;
+  wanderZ: number;
+  wanderWait: number;
+}
+
 export interface Campfire {
   id: number;
   x: number;
@@ -164,9 +194,19 @@ export interface GameState {
   loot: Map<number, LootEntity>;
   corpses: Map<number, Corpse>;
   fires: Campfire[];
+  drops: Map<number, Airdrop>;
+  animals: Map<number, Deer>;
+  /** Rain intensity 0..1 (ramped by the weather machine). */
+  weather: number;
+  /** Game-time of the next weather flip and next airdrop. */
+  weatherNextAt: number;
+  weatherRaining: boolean;
+  airdropNextAt: number;
   lootRespawns: LootRespawnTimer[];
   /** Pending zombie respawns (countdown + variant). */
   zombieRespawns: ZombieRespawn[];
+  /** Pending deer respawns — seconds remaining, one entry per dead deer. */
+  deerRespawns: number[];
   events: QueuedEvent[];
   outbox: OutboundMsg[];
   /** Shared id counter for zombies, loot entities and campfires. */
@@ -183,8 +223,15 @@ export function createGameState(world: World): GameState {
     loot: new Map(),
     corpses: new Map(),
     fires: [],
+    drops: new Map(),
+    animals: new Map(),
+    weather: 0,
+    weatherNextAt: 0,
+    weatherRaining: false,
+    airdropNextAt: 0,
     lootRespawns: [],
     zombieRespawns: [],
+    deerRespawns: [],
     events: [],
     outbox: [],
     nextEntityId: 1,

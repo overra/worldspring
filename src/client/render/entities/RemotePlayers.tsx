@@ -8,7 +8,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { MAX_PLAYERS } from "@/shared/constants";
 import { ANIM_ATTACKING, ANIM_MOVING, ANIM_SPRINTING } from "@/shared/protocol";
-import { clientWorld } from "@/client/runtime";
+import { clientWorld, type RemotePlayerView } from "@/client/runtime";
 import {
   createCharacterRig,
   overlayForItem,
@@ -23,6 +23,22 @@ const LABEL_MAX_DIST_SQ = 60 * 60;
 const FAR_DIST_SQ = 80 * 80;
 const FAR_UPDATE_INTERVAL = 4;
 const MAX_FRAME_DT = 0.1;
+
+// Remote flashlights: a tiny pool of real spotlights assigned each frame to
+// the nearest holders — every extra live light is a forward-pass cost.
+const FLASHLIGHT_POOL_SIZE = 4;
+const FLASHLIGHT_MAX_DIST_SQ = 90 * 90;
+const FLASHLIGHT_COLOR = "#ffe9b0";
+const FLASHLIGHT_INTENSITY = 45; // a notch under the local beam
+const FLASHLIGHT_DISTANCE = 38;
+const FLASHLIGHT_ANGLE = 0.36;
+const FLASHLIGHT_PENUMBRA = 0.45;
+const FLASHLIGHT_DECAY = 1.6;
+const FLASHLIGHT_CHEST_Y = 1.3;
+const FLASHLIGHT_FORWARD = 0.35;
+// Beam from yaw only (no remote pitch): 18m out, 2m down ≈ -0.12 rad.
+const FLASHLIGHT_BEAM_DIST = 18;
+const FLASHLIGHT_BEAM_DROP = 2;
 
 // Subtle per-player tint: lerp white toward a hashed palette color so the
 // model's authored palette still reads underneath.
@@ -102,6 +118,7 @@ interface PlayerPool {
   byId: Map<string, number>;
   free: number[];
   frame: number;
+  flashlights: THREE.SpotLight[];
 }
 
 function createPool(): PlayerPool {
@@ -119,8 +136,29 @@ function createPool(): PlayerPool {
     slots.push({ rig, label, appliedName: "", lastAttacking: false, accumDt: 0 });
     free.push(MAX_PLAYERS - 1 - i); // pop() hands out slot 0 first
   }
-  return { root, slots, byId: new Map(), free, frame: 0 };
+  const flashlights: THREE.SpotLight[] = [];
+  for (let i = 0; i < FLASHLIGHT_POOL_SIZE; i++) {
+    const light = new THREE.SpotLight(
+      FLASHLIGHT_COLOR,
+      FLASHLIGHT_INTENSITY,
+      FLASHLIGHT_DISTANCE,
+      FLASHLIGHT_ANGLE,
+      FLASHLIGHT_PENUMBRA,
+      FLASHLIGHT_DECAY,
+    );
+    light.castShadow = false; // perf: no shadow-map pass per beam
+    light.visible = false;
+    // Both the light and its target need a scene-graph parent for
+    // matrixWorld updates.
+    root.add(light);
+    root.add(light.target);
+    flashlights.push(light);
+  }
+  return { root, slots, byId: new Map(), free, frame: 0, flashlights };
 }
+
+// Reused per-frame scratch for flashlight assignment (cleared each frame).
+const flashCandidates: Array<{ view: RemotePlayerView; d2: number }> = [];
 
 export function RemotePlayers(): ReactElement {
   useCharacterModel("survivor");
@@ -179,12 +217,42 @@ export function RemotePlayers(): ReactElement {
       const distSq = dx * dx + dy * dy + dz * dz;
       slot.label.visible = distSq <= LABEL_MAX_DIST_SQ;
 
+      if (view.item === "flashlight" && distSq <= FLASHLIGHT_MAX_DIST_SQ) {
+        flashCandidates.push({ view, d2: distSq });
+      }
+
       // Mixer step — far rigs only every Nth frame, staggered by slot.
       slot.accumDt += dt;
       if (distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0) continue;
       slot.rig.update(slot.accumDt);
       slot.accumDt = 0;
     }
+
+    // Hand the spotlight pool to the nearest flashlight holders.
+    flashCandidates.sort((a, b) => a.d2 - b.d2);
+    for (let i = 0; i < pool.flashlights.length; i++) {
+      const light = pool.flashlights[i];
+      const candidate = i < flashCandidates.length ? flashCandidates[i] : null;
+      if (!candidate) {
+        light.visible = false;
+        continue;
+      }
+      const view = candidate.view;
+      const fx = -Math.sin(view.yaw); // forward: yaw 0 faces -Z
+      const fz = -Math.cos(view.yaw);
+      light.visible = true;
+      light.position.set(
+        view.x + fx * FLASHLIGHT_FORWARD,
+        view.y + FLASHLIGHT_CHEST_Y,
+        view.z + fz * FLASHLIGHT_FORWARD,
+      );
+      light.target.position.set(
+        light.position.x + fx * FLASHLIGHT_BEAM_DIST,
+        light.position.y - FLASHLIGHT_BEAM_DROP,
+        light.position.z + fz * FLASHLIGHT_BEAM_DIST,
+      );
+    }
+    flashCandidates.length = 0;
   });
 
   return <primitive object={pool.root} />;

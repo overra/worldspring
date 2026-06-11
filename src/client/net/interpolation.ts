@@ -7,9 +7,9 @@
 import { DAY_DURATION_S, INTERP_DELAY_MS, START_HOUR } from "@/shared/constants";
 import { angleLerp, clamp, lerp } from "@/shared/math";
 import { gameHours } from "@/shared/protocol";
-import type { ServerMsg, WirePlayer, WireZombie } from "@/shared/protocol";
+import type { ServerMsg, WireAnimal, WirePlayer, WireZombie } from "@/shared/protocol";
 import { clientWorld } from "@/client/runtime";
-import type { RemotePlayerView, ZombieView } from "@/client/runtime";
+import type { AnimalView, RemotePlayerView, ZombieView } from "@/client/runtime";
 
 export type SnapMsg = Extract<ServerMsg, { t: "snap" }>;
 
@@ -17,8 +17,11 @@ interface BufferedSnap {
   arrival: number; // performance.now() at receipt
   players: WirePlayer[];
   zombies: WireZombie[];
+  animals: WireAnimal[];
   playerById: Map<string, WirePlayer>;
   zombieById: Map<number, WireZombie>;
+  animalById: Map<number, WireAnimal>;
+  weather: number;
 }
 
 const MAX_BUFFERED_SNAPS = 12;
@@ -39,14 +42,26 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
   for (const p of snap.players) playerById.set(p.id, p);
   const zombieById = new Map<number, WireZombie>();
   for (const z of snap.zombies) zombieById.set(z.id, z);
+  const animalById = new Map<number, WireAnimal>();
+  for (const a of snap.animals) animalById.set(a.id, a);
 
-  buffer.push({ arrival: arrivalMs, players: snap.players, zombies: snap.zombies, playerById, zombieById });
+  buffer.push({
+    arrival: arrivalMs,
+    players: snap.players,
+    zombies: snap.zombies,
+    animals: snap.animals,
+    playerById,
+    zombieById,
+    animalById,
+    weather: snap.weather,
+  });
   if (buffer.length > MAX_BUFFERED_SNAPS) buffer.shift();
 
-  // Loot, corpses and fires are discrete — always show the newest set.
+  // Loot, corpses, fires and drops are discrete — always show the newest set.
   clientWorld.loot = snap.loot;
   clientWorld.corpses = snap.corpses;
   clientWorld.fires = snap.fires;
+  clientWorld.drops = snap.drops;
   setTimeBase(snap.time, arrivalMs);
 }
 
@@ -98,6 +113,28 @@ export function updateInterpolation(nowMs: number): void {
 
   interpolatePlayers(a, b, t);
   interpolateZombies(a, b, t);
+  interpolateAnimals(a, b, t);
+  clientWorld.weather = lerp(a.weather, b.weather, t);
+}
+
+function interpolateAnimals(a: BufferedSnap, b: BufferedSnap, t: number): void {
+  const views = clientWorld.animals;
+  for (const ab of b.animals) {
+    const aa = a.animalById.get(ab.id) ?? ab;
+    let view: AnimalView | undefined = views.get(ab.id);
+    if (view === undefined) {
+      view = { id: ab.id, x: ab.x, y: ab.y, z: ab.z, yaw: ab.yaw, state: ab.state };
+      views.set(ab.id, view);
+    }
+    view.x = lerp(aa.x, ab.x, t);
+    view.y = lerp(aa.y, ab.y, t);
+    view.z = lerp(aa.z, ab.z, t);
+    view.yaw = angleLerp(aa.yaw, ab.yaw, t);
+    view.state = ab.state;
+  }
+  for (const id of views.keys()) {
+    if (!b.animalById.has(id)) views.delete(id);
+  }
 }
 
 function interpolatePlayers(a: BufferedSnap, b: BufferedSnap, t: number): void {

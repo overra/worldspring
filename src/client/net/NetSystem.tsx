@@ -127,6 +127,15 @@ function updatePrompt(ui: UIState): void {
       bestLabel = corpse.kind === "player" ? `Scavenge ${corpse.name ?? "body"}` : "Scavenge corpse";
     }
   }
+  for (const drop of clientWorld.drops) {
+    if (drop.falling) continue; // not lootable until it lands
+    const d = dist2D(me.x, me.z, drop.x, drop.z);
+    if (d <= bestDist) {
+      bestDist = d;
+      bestId = drop.id;
+      bestLabel = "Supply Crate";
+    }
+  }
   clientWorld.promptLootId = bestId;
   ui.setPrompt(bestId === null ? null : bestLabel);
 }

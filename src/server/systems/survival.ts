@@ -10,6 +10,7 @@ import {
   FOOD_DECAY_PER_S,
   FREEZE_HP_PER_S,
   MAX_HP,
+  RAIN_TEMP_FALL_PER_S,
   REGEN_FOOD_MIN,
   REGEN_HP_PER_S,
   REGEN_WATER_MIN,
@@ -25,6 +26,7 @@ import {
 } from "@/shared/constants";
 import { distSq2D } from "@/shared/math";
 import { gameHours, type DeathRecap } from "@/shared/protocol";
+import type { World } from "@/shared/world";
 import { spawnPlayerCorpse } from "./loot";
 import { sendInventory } from "./players";
 import { broadcast, queueEvent, sendTo, type GameState, type ServerPlayer } from "./state";
@@ -102,9 +104,24 @@ function nearFire(state: GameState, x: number, z: number): boolean {
   return false;
 }
 
+/** Inside any building footprint (rain shelter). ~36 buildings: a linear
+ * scan per player per tick is well inside budget. */
+function insideBuilding(world: World, x: number, z: number): boolean {
+  for (const building of world.buildings) {
+    if (
+      Math.abs(x - building.cx) <= building.halfW &&
+      Math.abs(z - building.cz) <= building.halfD
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function tickSurvival(state: GameState, dt: number): void {
   const hour = gameHours(state.time, DAY_DURATION_S, START_HOUR);
   const ambientWarm = hour >= AMBIENT_WARM_HOUR_START && hour < AMBIENT_WARM_HOUR_END;
+  const raining = state.weather > 0.5;
 
   for (const player of state.players.values()) {
     if (!player.alive) continue;
@@ -116,8 +133,18 @@ export function tickSurvival(state: GameState, dt: number): void {
     v.water = Math.max(0, v.water - WATER_DECAY_PER_S * mult * dt);
 
     // Body temperature: warm hours or a nearby campfire pull you up toward
-    // normal; otherwise exposure pulls you down toward the minimum.
-    if (ambientWarm || nearFire(state, player.core.x, player.core.z)) {
+    // normal; otherwise exposure pulls you down toward the minimum. While it
+    // rains, exposed players cool even during warm hours (scaled by
+    // intensity, on top of the night fall) — sheltered players (inside a
+    // building footprint or near a fire) keep the existing rules.
+    const fireNear = nearFire(state, player.core.x, player.core.z);
+    const rainExposed =
+      raining && !fireNear && !insideBuilding(state.world, player.core.x, player.core.z);
+    if (rainExposed) {
+      let fall = RAIN_TEMP_FALL_PER_S * state.weather;
+      if (!ambientWarm) fall += TEMP_FALL_PER_S;
+      v.temp = Math.max(TEMP_MIN, v.temp - fall * dt);
+    } else if (ambientWarm || fireNear) {
       v.temp = Math.min(TEMP_NORMAL, v.temp + TEMP_RISE_PER_S * dt);
     } else {
       v.temp = Math.max(TEMP_MIN, v.temp - TEMP_FALL_PER_S * dt);

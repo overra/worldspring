@@ -5,6 +5,7 @@ import {
   CAMPFIRE_BURN_S,
   CAMPFIRE_PLACE_DIST,
   DROPPED_LOOT_TTL_S,
+  FIRE_WARMTH_RADIUS,
   INPUT_BUDGET_CAP_S,
   INVENTORY_SLOTS,
   MAX_CAMPFIRES,
@@ -16,7 +17,7 @@ import {
   PICKUP_RANGE,
   TEMP_NORMAL,
 } from "@/shared/constants";
-import { ITEM_DEFS, type ItemStack, type ItemType } from "@/shared/items";
+import { ITEM_DEFS, RAW_VENISON_HP_PENALTY, type ItemStack, type ItemType } from "@/shared/items";
 import { clamp, distSq2D, yawToDir } from "@/shared/math";
 import { stepPlayer } from "@/shared/movement";
 import type { InputCmd, PlayerCore } from "@/shared/protocol";
@@ -287,6 +288,32 @@ export function consumeFromSlot(inv: (ItemStack | null)[], slot: number): void {
   if (stack.count <= 0) inv[slot] = null;
 }
 
+/** Within campfire warmth (duplicated from survival.ts's private nearFire to
+ * avoid a players <-> survival import cycle — survival already imports us). */
+function nearFire(state: GameState, x: number, z: number): boolean {
+  const rSq = FIRE_WARMTH_RADIUS * FIRE_WARMTH_RADIUS;
+  for (const fire of state.fires) {
+    if (distSq2D(x, z, fire.x, fire.z) <= rSq) return true;
+  }
+  return false;
+}
+
+/** Drop a stack on the ground at the player's feet (inventory overflow). */
+function dropAtFeet(state: GameState, player: ServerPlayer, type: ItemType, count: number): void {
+  const { x, z } = player.core;
+  const id = state.nextEntityId++;
+  state.loot.set(id, {
+    id,
+    type,
+    count,
+    x,
+    y: state.world.groundHeight(x, z),
+    z,
+    spawnId: null,
+    ttl: DROPPED_LOOT_TTL_S,
+  });
+}
+
 /** Use a consumable or place a campfire kit from the given slot. */
 export function useItem(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
@@ -295,6 +322,26 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
   if (!stack) return;
   const def = ITEM_DEFS[stack.type];
   const vitals = player.vitals;
+
+  // Raw venison: near a campfire it COOKS (one raw -> one cooked) instead of
+  // being eaten; away from fire it can be eaten desperate — small food gain,
+  // hp penalty (never lethal: eating cannot take you below 1 hp).
+  if (stack.type === "raw_venison") {
+    if (nearFire(state, player.core.x, player.core.z)) {
+      consumeFromSlot(player.inventory, slot);
+      const leftover = addToInventory(player.inventory, "cooked_venison", 1);
+      if (leftover > 0) dropAtFeet(state, player, "cooked_venison", leftover);
+      sendTo(state, player.id, { t: "notice", msg: "venison cooked" });
+    } else {
+      vitals.food = clamp(vitals.food + def.power, 0, MAX_FOOD);
+      // Floor at 1 hp, but never raise hp that was already below 1.
+      vitals.hp = Math.max(Math.min(vitals.hp, 1), vitals.hp - RAW_VENISON_HP_PENALTY);
+      consumeFromSlot(player.inventory, slot);
+    }
+    sendInventory(state, player);
+    return;
+  }
+
   switch (def.kind) {
     case "food":
       vitals.food = clamp(vitals.food + def.power, 0, MAX_FOOD);
@@ -336,10 +383,12 @@ export function equipSlot(state: GameState, player: ServerPlayer, slot: number):
 }
 
 /**
- * Pick up a loot entity or scavenge a corpse within PICKUP_RANGE (the two
- * share the entity id space). Plain items support partial pickup (leftover
- * stays in the world). Corpses transfer as many stacks as fit, keep the
- * remainder, and the body itself persists until its TTL even when emptied.
+ * Pick up a loot entity, scavenge a corpse, or loot a landed airdrop crate
+ * within PICKUP_RANGE (all three share the entity id space). Plain items
+ * support partial pickup (leftover stays in the world). Corpses transfer as
+ * many stacks as fit, keep the remainder, and the body itself persists until
+ * its TTL even when emptied. Crates work like corpses except the crate is
+ * REMOVED once fully emptied (no husk).
  */
 export function pickupLoot(state: GameState, player: ServerPlayer, lootId: number): void {
   if (!player.alive) return;
@@ -360,16 +409,35 @@ export function pickupLoot(state: GameState, player: ServerPlayer, lootId: numbe
   }
 
   const corpse = state.corpses.get(lootId);
-  if (!corpse) return;
-  if (distSq2D(player.core.x, player.core.z, corpse.x, corpse.z) > rangeSq) return;
+  if (corpse) {
+    if (distSq2D(player.core.x, player.core.z, corpse.x, corpse.z) > rangeSq) return;
+    let tookAny = false;
+    const remaining: ItemStack[] = [];
+    for (const stack of corpse.contents) {
+      const leftover = addToInventory(player.inventory, stack.type, stack.count);
+      if (leftover < stack.count) tookAny = true;
+      if (leftover > 0) remaining.push({ type: stack.type, count: leftover });
+    }
+    corpse.contents = remaining;
+    if (tookAny) sendInventory(state, player);
+    return;
+  }
+
+  // Airdrop crate: lootable only once landed; transfers stacks like a corpse
+  // but the crate disappears as soon as it's empty.
+  const drop = state.drops.get(lootId);
+  if (!drop) return;
+  if (state.time < drop.landsAt) return; // still on the chute
+  if (distSq2D(player.core.x, player.core.z, drop.x, drop.z) > rangeSq) return;
   let tookAny = false;
   const remaining: ItemStack[] = [];
-  for (const stack of corpse.contents) {
+  for (const stack of drop.contents) {
     const leftover = addToInventory(player.inventory, stack.type, stack.count);
     if (leftover < stack.count) tookAny = true;
     if (leftover > 0) remaining.push({ type: stack.type, count: leftover });
   }
-  corpse.contents = remaining;
+  drop.contents = remaining;
+  if (remaining.length === 0) state.drops.delete(drop.id);
   if (tookAny) sendInventory(state, player);
 }
 

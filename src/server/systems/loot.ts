@@ -16,10 +16,15 @@ import { distSq2D } from "@/shared/math";
 import type { LootSpawn } from "@/shared/world";
 import type { GameState, ServerPlayer, Zombie } from "./state";
 
-type WeightedTable = Array<{ type: ItemStack["type"]; weight: number; min: number; max: number }>;
+export type WeightedTable = Array<{
+  type: ItemStack["type"];
+  weight: number;
+  min: number;
+  max: number;
+}>;
 
-/** Weighted roll with a random count in [min, max]. */
-function rollFromTable(table: WeightedTable): ItemStack {
+/** Weighted roll with a random count in [min, max]. Exported for airdrops. */
+export function rollFromTable(table: WeightedTable): ItemStack {
   const total = table.reduce((sum, entry) => sum + entry.weight, 0);
   let r = Math.random() * total;
   for (const entry of table) {

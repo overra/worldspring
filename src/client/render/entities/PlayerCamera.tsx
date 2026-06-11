@@ -11,6 +11,7 @@ import { useEffect, useMemo } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { PLAYER_EYE_HEIGHT } from "@/shared/constants";
+import { lookDir } from "@/shared/math";
 import { clientWorld, inputState, localPlayerAnim } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { createCharacterRig, overlayForItem, useCharacterModel } from "./CharacterRig";
@@ -24,6 +25,17 @@ const LOOK_AHEAD = 3; // lookAt target this far ahead of the eye
 // Subtle blue tint distinguishing the local body (mirrors the old blue shirt).
 const LOCAL_TINT = new THREE.Color(1, 1, 1).lerp(new THREE.Color("#3f5d8a"), 0.35);
 const MAX_FRAME_DT = 0.1;
+
+// Flashlight beam (always on while the flashlight is the equipped item).
+const FLASHLIGHT_COLOR = "#ffe9b0";
+const FLASHLIGHT_INTENSITY = 60;
+const FLASHLIGHT_DISTANCE = 38;
+const FLASHLIGHT_ANGLE = 0.36;
+const FLASHLIGHT_PENUMBRA = 0.45;
+const FLASHLIGHT_DECAY = 1.6;
+const FLASHLIGHT_TARGET_DIST = 20;
+const FLASHLIGHT_CHEST_Y = 1.3; // third person: beam from the chest…
+const FLASHLIGHT_FORWARD = 0.35; // …slightly in front of the body
 
 // Reused frame temps — zero allocations per frame.
 const EYE = new THREE.Vector3();
@@ -41,13 +53,34 @@ export function PlayerCamera(): null {
   // Frame-rate mutable tracking, deliberately outside React state.
   const anim = useMemo(() => ({ lastAttackUntil: 0 }), []);
 
+  // Local flashlight beam. castShadow stays false on purpose (perf): a
+  // shadow-casting spotlight would re-render a depth map every frame.
+  const flashlight = useMemo(() => {
+    const light = new THREE.SpotLight(
+      FLASHLIGHT_COLOR,
+      FLASHLIGHT_INTENSITY,
+      FLASHLIGHT_DISTANCE,
+      FLASHLIGHT_ANGLE,
+      FLASHLIGHT_PENUMBRA,
+      FLASHLIGHT_DECAY,
+    );
+    light.castShadow = false;
+    light.visible = false;
+    return light;
+  }, []);
+
   useEffect(() => {
     rig.root.visible = false;
     scene.add(rig.root);
+    // The target must be in the scene graph for its matrixWorld to update.
+    scene.add(flashlight);
+    scene.add(flashlight.target);
     return () => {
+      scene.remove(flashlight.target);
+      scene.remove(flashlight);
       scene.remove(rig.root);
     };
-  }, [scene, rig]);
+  }, [scene, rig, flashlight]);
 
   useFrame((state, delta) => {
     const me = clientWorld.me;
@@ -55,6 +88,11 @@ export function PlayerCamera(): null {
     const pitch = inputState.pitch;
     const cam = state.camera;
     const eyeY = me.y + PLAYER_EYE_HEIGHT;
+
+    // Equipped item — drives both the rig's held prop and the flashlight beam.
+    const ui = useUIStore.getState();
+    const stack = ui.inventory[ui.selectedSlot] ?? null;
+    const item = stack ? stack.type : null;
 
     // Look direction from yaw/pitch (yaw 0 faces -Z, see @/shared/math lookDir).
     const cp = Math.cos(pitch);
@@ -108,11 +146,30 @@ export function PlayerCamera(): null {
         inputState.right ||
         analogMag > 0.05;
       rig.setLocomotion(moving ? (inputState.sprint ? "run" : "walk") : "idle");
-      const ui = useUIStore.getState();
-      const stack = ui.inventory[ui.selectedSlot] ?? null;
-      const item = stack ? stack.type : null;
       rig.setHeldItem(item);
       if (attackTriggered) rig.playOverlay(overlayForItem(item));
+    }
+
+    // Flashlight: lit whenever it's the equipped item and we're alive — no
+    // toggle. First person beams from the eye; third person from the chest.
+    const flashOn = item === "flashlight" && ui.phase === "playing";
+    flashlight.visible = flashOn;
+    if (flashOn) {
+      if (inputState.firstPerson) {
+        flashlight.position.set(me.x, eyeY, me.z);
+      } else {
+        flashlight.position.set(
+          me.x - Math.sin(yaw) * FLASHLIGHT_FORWARD,
+          me.y + FLASHLIGHT_CHEST_Y,
+          me.z - Math.cos(yaw) * FLASHLIGHT_FORWARD,
+        );
+      }
+      const look = lookDir(yaw, pitch);
+      flashlight.target.position.set(
+        flashlight.position.x + look.x * FLASHLIGHT_TARGET_DIST,
+        flashlight.position.y + look.y * FLASHLIGHT_TARGET_DIST,
+        flashlight.position.z + look.z * FLASHLIGHT_TARGET_DIST,
+      );
     }
     // Mixer runs in both modes so the pose stays coherent across toggles.
     rig.update(Math.min(delta, MAX_FRAME_DT));

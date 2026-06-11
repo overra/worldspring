@@ -44,6 +44,19 @@ const FOG_FAR_DAY = 320;
 const FOG_NEAR_NIGHT = 20;
 const FOG_FAR_NIGHT = 140;
 
+// Weather (rain) modulation — applied as a post-step over the clear-sky
+// values so the palette math above stays untouched. clientWorld.weather is
+// the server's ramped 0..1 rain intensity.
+const OVERCAST_DAY = new THREE.Color("#7a8087"); // desaturated rain grey
+const OVERCAST_NIGHT = new THREE.Color("#0c0f15"); // night stays dark, just flatter
+const RAIN_GREY_MAX = 0.85; // how far sky/fog shift toward overcast at weather 1
+const RAIN_FOG_NEAR_MULT = 0.5; // fog tightens toward (near*0.5, far*0.45)
+const RAIN_FOG_FAR_MULT = 0.45;
+const RAIN_SUN_CUT = 0.65; // sun/moon intensity scale = 1 - weather * this
+const RAIN_AMBIENT_LIFT = 0.3; // ambient up so rain reads overcast, not dark
+const RAIN_STARS_CUTOFF = 0.35; // cloud cover hides stars past this
+const overcastTmp = new THREE.Color();
+
 const SUN_MAX_INTENSITY = 1.6;
 const MOON_INTENSITY = 0.12;
 const STARS_SHOW_ELEVATION = -0.16; // sky is already near-black here — no pop
@@ -315,6 +328,28 @@ export function SkyAndLighting(): ReactElement | null {
 
     const stars = starsRef.current;
     if (stars) stars.visible = elev < STARS_SHOW_ELEVATION;
+
+    // Weather post-step: rain greys and tightens everything computed above.
+    // Runs last on purpose — the clear-sky values are the baseline it lerps
+    // away from, so the existing time-of-day curves keep working untouched.
+    const weather = clamp(clientWorld.weather, 0, 1);
+    if (weather > 0.001) {
+      overcastTmp.copy(OVERCAST_NIGHT).lerp(OVERCAST_DAY, dayF);
+      const grey = weather * RAIN_GREY_MAX;
+      background.lerp(overcastTmp, grey);
+      fog.color.lerp(overcastTmp, grey);
+      sky.horizonColor.lerp(overcastTmp, grey);
+      sky.zenithColor.lerp(overcastTmp, grey * 0.85);
+      fog.near = lerp(fog.near, fog.near * RAIN_FOG_NEAR_MULT, weather);
+      fog.far = lerp(fog.far, fog.far * RAIN_FOG_FAR_MULT, weather);
+      if (sun) sun.intensity *= 1 - weather * RAIN_SUN_CUT;
+      if (moon) moon.intensity *= 1 - weather * RAIN_SUN_CUT;
+      if (ambient) ambient.intensity *= 1 + weather * RAIN_AMBIENT_LIFT;
+      // Cloud cover swallows the celestial discs and the stars.
+      sky.sunDiscMaterial.opacity *= 1 - weather;
+      sky.moonDiscMaterial.opacity *= 1 - weather;
+      if (stars) stars.visible = stars.visible && weather < RAIN_STARS_CUTOFF;
+    }
   });
 
   return (

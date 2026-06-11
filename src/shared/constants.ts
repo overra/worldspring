@@ -129,6 +129,35 @@ export const DROPPED_LOOT_TTL_S = 600; // player-dropped items despawn after thi
 // --- Respawn ---
 export const RESPAWN_DELAY_S = 4;
 
+// --- Airdrops ---
+export const AIRDROP_INTERVAL_MIN_S = 15 * 60; // game-seconds between drops
+export const AIRDROP_INTERVAL_MAX_S = 25 * 60;
+export const AIRDROP_FALL_DELAY_S = 30; // announce -> crate lands
+export const AIRDROP_TTL_S = 10 * 60; // crate despawns (smoke stops earlier)
+export const AIRDROP_SMOKE_S = 5 * 60; // smoke column duration after landing
+export const AIRDROP_MIN_TERRAIN_H = 3; // inland only
+
+// --- Weather ---
+export const WEATHER_CLEAR_MIN_S = 4 * 60; // clear spell between fronts
+export const WEATHER_CLEAR_MAX_S = 9 * 60;
+export const WEATHER_RAIN_MIN_S = 2 * 60; // rain duration
+export const WEATHER_RAIN_MAX_S = 4 * 60;
+export const WEATHER_RAMP_S = 20; // seconds to fade in/out
+/** While raining, exposed players cool even during warm hours. Sheltered =
+ * inside a building footprint or near a campfire. */
+export const RAIN_TEMP_FALL_PER_S = 0.02;
+
+// --- Wildlife ---
+export const DEER_COUNT = 10;
+export const DEER_HP = 25;
+export const DEER_FLEE_RADIUS = 22;
+export const DEER_FLEE_SPEED = 8.5; // faster than sprint — you need a gun
+export const DEER_WANDER_SPEED = 1.2;
+export const DEER_RESPAWN_S = 120;
+export const VENISON_PER_DEER_MIN = 2;
+export const VENISON_PER_DEER_MAX = 3;
+export const DEER_CORPSE_TTL_S = 180;
+
 // --- Persistence ---
 /** A disconnected (alive) body stays in the world this long, defenseless. */
 export const LOGOUT_LINGER_S = 60;

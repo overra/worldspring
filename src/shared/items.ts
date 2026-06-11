@@ -9,9 +9,20 @@ export type ItemType =
   | "ammo_762"
   | "shells"
   | "axe"
-  | "campfire_kit";
+  | "campfire_kit"
+  | "flashlight"
+  | "raw_venison"
+  | "cooked_venison";
 
-export type ItemKind = "food" | "drink" | "heal" | "melee" | "ranged" | "ammo" | "placeable";
+export type ItemKind =
+  | "food"
+  | "drink"
+  | "heal"
+  | "melee"
+  | "ranged"
+  | "ammo"
+  | "placeable"
+  | "tool";
 
 /** Firing behavior for kind === "ranged" weapons. */
 export interface RangedConfig {
@@ -78,7 +89,27 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   shells: { type: "shells", name: "Shotgun Shells", kind: "ammo", stack: 12, color: "#b03a2e", power: 0 },
   axe: { type: "axe", name: "Fire Axe", kind: "melee", stack: 1, color: "#a33327", power: 35 },
   campfire_kit: { type: "campfire_kit", name: "Campfire Kit", kind: "placeable", stack: 2, color: "#7a5230", power: 0 },
+  flashlight: { type: "flashlight", name: "Flashlight", kind: "tool", stack: 1, color: "#c8c23a", power: 0 },
+  // Raw venison restores little and costs hp (eat it desperate or cook it:
+  // using it within FIRE_WARMTH_RADIUS of a campfire converts the stack).
+  raw_venison: { type: "raw_venison", name: "Raw Venison", kind: "food", stack: 3, color: "#9e4a4a", power: 15 },
+  cooked_venison: { type: "cooked_venison", name: "Cooked Venison", kind: "food", stack: 3, color: "#7a4a2e", power: 65 },
 };
+
+/** HP penalty for eating venison raw (power still applies to food). */
+export const RAW_VENISON_HP_PENALTY = 8;
+
+/** Airdrop crates roll this many stacks from this table. */
+export const AIRDROP_ROLLS = 5;
+export const AIRDROP_TABLE: LootTableEntry[] = [
+  { type: "rifle", weight: 16, min: 1, max: 1 },
+  { type: "shotgun", weight: 14, min: 1, max: 1 },
+  { type: "ammo_762", weight: 22, min: 8, max: 16 },
+  { type: "shells", weight: 16, min: 6, max: 10 },
+  { type: "bandage", weight: 16, min: 2, max: 4 },
+  { type: "flashlight", weight: 8, min: 1, max: 1 },
+  { type: "cooked_venison", weight: 8, min: 1, max: 2 },
+];
 
 export interface ItemStack {
   type: ItemType;
@@ -116,7 +147,8 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "ammo_9mm", weight: 12, min: 6, max: 14 },
     { type: "axe", weight: 8, min: 1, max: 1 },
     { type: "pistol", weight: 6, min: 1, max: 1 },
-    { type: "campfire_kit", weight: 10, min: 1, max: 1 },
+    { type: "campfire_kit", weight: 9, min: 1, max: 1 },
+    { type: "flashlight", weight: 6, min: 1, max: 1 },
   ],
   inland: [
     { type: "beans", weight: 18, min: 1, max: 2 },
@@ -125,8 +157,9 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "ammo_9mm", weight: 14, min: 8, max: 16 },
     { type: "axe", weight: 10, min: 1, max: 1 },
     { type: "pistol", weight: 9, min: 1, max: 1 },
-    { type: "campfire_kit", weight: 9, min: 1, max: 1 },
+    { type: "campfire_kit", weight: 8, min: 1, max: 1 },
     { type: "shells", weight: 4, min: 3, max: 6 },
+    { type: "flashlight", weight: 7, min: 1, max: 1 },
   ],
   military: [
     { type: "rifle", weight: 9, min: 1, max: 1 },

@@ -8,9 +8,11 @@
 //   - render components READ both; they never write.
 
 import type {
+  AnimalState,
   GameEvent,
   PlayerCore,
   WireCorpse,
+  WireDrop,
   WireFire,
   WireLoot,
   ZombieState,
@@ -119,6 +121,15 @@ export interface ZombieView {
   mil: boolean;
 }
 
+export interface AnimalView {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  state: AnimalState;
+}
+
 export interface ClientWorldState {
   /** True once the welcome message arrived and `world` is built. */
   ready: boolean;
@@ -133,7 +144,13 @@ export interface ClientWorldState {
   loot: WireLoot[];
   corpses: WireCorpse[];
   fires: WireFire[];
-  /** Loot/corpse id in scavenge range (shared id space; drives prompt + E key). */
+  /** Airdrop crates — island-wide, never interest-filtered. */
+  drops: WireDrop[];
+  /** Interpolated wildlife, keyed by id. */
+  animals: Map<number, AnimalView>;
+  /** Rain intensity 0..1, lerped between snapshots. */
+  weather: number;
+  /** Loot/corpse/crate id in pickup range (shared id space; prompt + E key). */
   promptLootId: number | null;
   /** VFX queue: net layer pushes, render effects drain via drainEvents(). */
   events: GameEvent[];
@@ -153,6 +170,9 @@ export const clientWorld: ClientWorldState = {
   loot: [],
   corpses: [],
   fires: [],
+  drops: [],
+  animals: new Map(),
+  weather: 0,
   promptLootId: null,
   events: [],
   audioEvents: [],
@@ -202,6 +222,9 @@ export function resetClientWorld(): void {
   clientWorld.loot = [];
   clientWorld.corpses = [];
   clientWorld.fires = [];
+  clientWorld.drops = [];
+  clientWorld.animals.clear();
+  clientWorld.weather = 0;
   clientWorld.promptLootId = null;
   clientWorld.events = [];
   clientWorld.audioEvents = [];

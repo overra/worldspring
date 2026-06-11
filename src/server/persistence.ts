@@ -18,6 +18,7 @@ import { LEADERBOARD_MAX, WORLD_SEED } from "@/shared/constants";
 import type { ItemStack } from "@/shared/items";
 import type { DeathRecap, LeaderboardEntry, PlayerCore, Vitals } from "@/shared/protocol";
 import type {
+  Airdrop,
   Campfire,
   Corpse,
   GameState,
@@ -145,9 +146,20 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
         JSON.stringify(timer),
       );
     }
+    // Airdrop crates survive restarts (their timestamps are game-time, which
+    // is itself persisted, so landsAt/expiresAt stay coherent). Deer are NOT
+    // persisted — like zombies they respawn fresh on boot.
+    for (const drop of game.drops.values()) {
+      sql.exec("INSERT INTO world_state (kind, payload) VALUES ('drop', ?)", JSON.stringify(drop));
+    }
     setMeta(sql, "game_time", String(game.time));
     setMeta(sql, "game_tick", String(game.tick));
     setMeta(sql, "next_entity_id", String(game.nextEntityId));
+    // Weather phase + scheduling so a restart doesn't snap rain to clear sky.
+    setMeta(sql, "weather", String(game.weather));
+    setMeta(sql, "weather_next_at", String(game.weatherNextAt));
+    setMeta(sql, "weather_raining", game.weatherRaining ? "1" : "0");
+    setMeta(sql, "airdrop_next_at", String(game.airdropNextAt));
     setMeta(sql, "world_saved", "1");
   });
 }
@@ -198,6 +210,12 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
         game.lootRespawns.push(JSON.parse(row.payload) as LootRespawnTimer);
         break;
       }
+      case "drop": {
+        const drop = JSON.parse(row.payload) as Airdrop;
+        game.drops.set(drop.id, drop);
+        maxId = Math.max(maxId, drop.id);
+        break;
+      }
     }
     } catch (err) {
       // One corrupt row must never brick the whole world load — skip it.
@@ -211,6 +229,15 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   if (Number.isFinite(tick)) game.tick = tick;
   const nextId = Number(getMeta(sql, "next_entity_id"));
   game.nextEntityId = Math.max(Number.isFinite(nextId) ? nextId : 1, maxId + 1, 1);
+  // Weather/airdrop scheduling — additive meta rows; snapshots written before
+  // these existed leave the defaults (0 = "initialize on first tick").
+  const weather = Number(getMeta(sql, "weather"));
+  if (Number.isFinite(weather)) game.weather = Math.min(1, Math.max(0, weather));
+  const weatherNextAt = Number(getMeta(sql, "weather_next_at"));
+  if (Number.isFinite(weatherNextAt)) game.weatherNextAt = weatherNextAt;
+  game.weatherRaining = getMeta(sql, "weather_raining") === "1";
+  const airdropNextAt = Number(getMeta(sql, "airdrop_next_at"));
+  if (Number.isFinite(airdropNextAt)) game.airdropNextAt = airdropNextAt;
   return true;
 }
 
