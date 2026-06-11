@@ -3,7 +3,12 @@
 // functions are exported; snapshot routing into prediction/interpolation and
 // the UI store happens here at message rate.
 
-import { DAY_DURATION_S, MAX_NAME_LENGTH, START_HOUR } from "@/shared/constants";
+import {
+  CHAT_MAX_LENGTH,
+  DAY_DURATION_S,
+  MAX_NAME_LENGTH,
+  START_HOUR,
+} from "@/shared/constants";
 import { ITEM_DEFS } from "@/shared/items";
 import { gameHours } from "@/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@/shared/protocol";
@@ -99,6 +104,8 @@ export function disconnect(): void {
   const ui = useUIStore.getState();
   ui.setRecap(null);
   ui.setDeathCause(null);
+  ui.closeChat();
+  ui.clearChatLog(); // stale chatOpen would pop the input open on the next join
   if (ui.phase !== "menu") ui.setPhase("menu");
 }
 
@@ -143,6 +150,14 @@ export function doRespawn(): void {
   sendMsg({ t: "respawn" });
 }
 
+/** Send a proximity-chat line; a no-op when the socket is closed (sendMsg).
+ * The input enforces CHAT_MAX_LENGTH already — the slice is paste-proofing. */
+export function sendChat(text: string): void {
+  const trimmed = text.trim().slice(0, CHAT_MAX_LENGTH);
+  if (trimmed.length === 0) return;
+  sendMsg({ t: "chat", text: trimmed });
+}
+
 // --- Internals ---
 
 function startPing(): void {
@@ -169,6 +184,8 @@ function handleClosed(): void {
   resetClientWorld();
   ui.setRecap(null);
   ui.setDeathCause(null);
+  ui.closeChat();
+  ui.clearChatLog();
   if (phase === "playing" || phase === "dead") {
     ui.setError("Connection lost");
   } else if (phase === "connecting") {
@@ -198,9 +215,13 @@ function handleMessage(data: unknown): void {
     case "inv":
       ui.setInventory(msg.slots, msg.selected);
       return;
+    case "chat":
+      ui.pushChat(msg.name, msg.text);
+      return;
     case "death":
       ui.setDeathCause(msg.by);
       ui.setRecap(msg.recap);
+      ui.closeChat(); // a half-typed line must not sit over the death screen
       ui.setPhase("dead"); // socket stays open; respawn reuses it
       return;
     case "notice":

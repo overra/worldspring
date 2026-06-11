@@ -1046,3 +1046,130 @@
   width: 22px;
   height: 22px;
 }
+
+/* ============================ Proximity chat ============================ */
+/* ChatPanel.tsx — log bottom-left above the vitals; input row while open.
+   Lines fade via the opacity transition once ChatPanel's 1s tick applies
+   .chat-line--faded (8s after receipt). */
+
+/* Full-screen catcher while the input is open: tap/click outside closes
+   without sending (same pattern as .hud-inv-backdrop). */
+.chat-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
+
+.hud-chat {
+  position: absolute;
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  bottom: calc(124px + env(safe-area-inset-bottom, 0px)); /* above the vitals */
+  width: min(340px, calc(100vw - 200px));
+  display: flex;
+  flex-direction: column;
+}
+
+/* The open panel paints above the backdrop (later sibling), so clicks on the
+   log/input land here instead of close-through. Closed, it stays inert. */
+.hud-chat--open {
+  pointer-events: auto;
+}
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chat-line {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere; /* a 120-char token must wrap, not overflow */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  opacity: 1;
+  transition: opacity 0.9s ease;
+}
+
+.chat-line--faded {
+  opacity: 0;
+}
+
+.chat-name {
+  color: var(--ui-dim);
+}
+
+.chat-name::after {
+  content: ":";
+}
+
+.chat-text {
+  color: var(--ui-text);
+}
+
+.chat-input-row {
+  margin-top: 5px;
+  pointer-events: auto;
+}
+
+.chat-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  outline: none;
+  user-select: text; /* .hud sets user-select: none */
+  -webkit-user-select: text;
+}
+
+.chat-input:focus {
+  border-color: var(--ui-accent);
+}
+
+.chat-input::placeholder {
+  color: var(--ui-dim);
+  opacity: 0.7;
+}
+
+/* ≤980px lifts the hotbar to bottom 140px — keep the chat clear of it. */
+@media (max-width: 980px) {
+  .hud-chat {
+    bottom: calc(196px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Touch layout: the bottom-left belongs to the joystick and the portrait
+   hotbar sits at ~216px — park the log above both. Lines grow upward. */
+@media (pointer: coarse) {
+  .hud-chat {
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    bottom: calc(266px + env(safe-area-inset-bottom, 0px));
+    width: min(300px, calc(100vw - 230px));
+  }
+
+  .chat-line {
+    font-size: 11px;
+  }
+}
+
+/* Landscape: the hotbar drops to the bottom strip, so the log can sit just
+   above the joystick zone (ends ~172px). */
+@media (pointer: coarse) and (orientation: landscape) {
+  .hud-chat {
+    bottom: calc(186px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Touch chat button (TouchControls): top-left area, right of the relocated
+   vitals (left 12px + 160px wide), under no other control. */
+.tc-btn--chat {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(180px + env(safe-area-inset-left, 0px));
+  width: 48px;
+  height: 48px;
+}

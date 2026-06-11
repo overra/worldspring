@@ -1,10 +1,13 @@
-// Static building shells: every wall AABB from world gen becomes a box mesh
-// (door gaps are already encoded in the wall layout), plus a floor slab and a
-// roof slab per building. ~36 buildings x ~7 boxes — plain meshes are fine.
+// Static building shells: every wall AABB from world gen becomes a box (door
+// gaps are already encoded in the wall layout), plus a floor slab and a roof
+// slab per building, plus the military perimeter. That is ~300 boxes; they
+// never move, so all boxes sharing a material are merged into a single
+// BufferGeometry — 8 draw calls total instead of ~300 individual meshes.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Aabb } from "@/shared/math";
 import type { BuildingKind, World } from "@/shared/world";
 import { clientWorld } from "@/client/runtime";
@@ -29,15 +32,13 @@ const FLOOR_INSET = 0.36;
 type MaterialKey = BuildingKind | "roof" | "floor" | "milwall";
 
 interface BoxSpec {
-  key: string;
   material: MaterialKey;
   position: [number, number, number];
   scale: [number, number, number];
 }
 
-function aabbToBox(key: string, material: MaterialKey, box: Aabb): BoxSpec {
+function aabbToBox(material: MaterialKey, box: Aabb): BoxSpec {
   return {
-    key,
     material,
     position: [(box.minX + box.maxX) / 2, (box.y0 + box.y1) / 2, (box.minZ + box.maxZ) / 2],
     scale: [box.maxX - box.minX, box.y1 - box.y0, box.maxZ - box.minZ],
@@ -47,32 +48,72 @@ function aabbToBox(key: string, material: MaterialKey, box: Aabb): BoxSpec {
 function buildBoxes(world: World): BoxSpec[] {
   const boxes: BoxSpec[] = [];
   for (const b of world.buildings) {
-    b.walls.forEach((wall, i) => {
-      boxes.push(aabbToBox(`b${b.id}-w${i}`, b.kind, wall));
-    });
-    boxes.push(aabbToBox(`b${b.id}-roof`, "roof", b.roof));
+    for (const wall of b.walls) {
+      boxes.push(aabbToBox(b.kind, wall));
+    }
+    boxes.push(aabbToBox("roof", b.roof));
     boxes.push({
-      key: `b${b.id}-floor`,
       material: "floor",
       position: [b.cx, b.floorY - FLOOR_THICKNESS / 2, b.cz],
       scale: [b.halfW * 2 - FLOOR_INSET * 2, FLOOR_THICKNESS, b.halfD * 2 - FLOOR_INSET * 2],
     });
   }
   // Military compound perimeter (walls + corner towers). Already colliders in
-  // world gen — this is rendering only. Plain boxes in the same static group.
-  world.militaryWalls.forEach((wall, i) => {
-    boxes.push(aabbToBox(`mw${i}`, "milwall", wall));
-  });
+  // world gen — this is rendering only. Merged like everything else.
+  for (const wall of world.militaryWalls) {
+    boxes.push(aabbToBox("milwall", wall));
+  }
   return boxes;
+}
+
+/**
+ * One mesh per material: every box sharing a material is baked (scaled +
+ * translated unit cube) into a single merged BufferGeometry. Exact positions,
+ * dimensions and colors match the old per-box meshes — only the draw-call
+ * count changes (~300 -> 8).
+ */
+function buildMergedMeshes(
+  world: World,
+  materials: Record<MaterialKey, THREE.MeshStandardMaterial>,
+): THREE.Mesh[] {
+  const byMaterial = new Map<MaterialKey, BoxSpec[]>();
+  for (const box of buildBoxes(world)) {
+    const list = byMaterial.get(box.material);
+    if (list) list.push(box);
+    else byMaterial.set(box.material, [box]);
+  }
+
+  const unit = new THREE.BoxGeometry(1, 1, 1);
+  const matrix = new THREE.Matrix4();
+  const meshes: THREE.Mesh[] = [];
+  for (const [key, specs] of byMaterial) {
+    const parts = specs.map((spec) => {
+      const part = unit.clone();
+      matrix
+        .makeScale(spec.scale[0], spec.scale[1], spec.scale[2])
+        .setPosition(spec.position[0], spec.position[1], spec.position[2]);
+      part.applyMatrix4(matrix);
+      return part;
+    });
+    const merged: THREE.BufferGeometry | null = mergeGeometries(parts);
+    for (const part of parts) part.dispose();
+    if (!merged) continue; // identical attribute layouts — should not happen
+
+    const mesh = new THREE.Mesh(merged, materials[key]);
+    mesh.name = `buildings-${key}`;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    meshes.push(mesh);
+  }
+  unit.dispose();
+  return meshes;
 }
 
 export function Buildings(): ReactElement | null {
   const world = clientWorld.world;
-  const boxes = useMemo(() => (world ? buildBoxes(world) : null), [world]);
 
-  const shared = useMemo(() => {
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const materials: Record<MaterialKey, THREE.MeshStandardMaterial> = {
+  const materials = useMemo<Record<MaterialKey, THREE.MeshStandardMaterial>>(
+    () => ({
       house: new THREE.MeshStandardMaterial({ color: WALL_COLORS.house, flatShading: true }),
       shed: new THREE.MeshStandardMaterial({ color: WALL_COLORS.shed, flatShading: true }),
       barn: new THREE.MeshStandardMaterial({ color: WALL_COLORS.barn, flatShading: true }),
@@ -81,30 +122,33 @@ export function Buildings(): ReactElement | null {
       milwall: new THREE.MeshStandardMaterial({ color: MILWALL_COLOR, flatShading: true }),
       roof: new THREE.MeshStandardMaterial({ color: ROOF_COLOR, flatShading: true }),
       floor: new THREE.MeshStandardMaterial({ color: FLOOR_COLOR, flatShading: true }),
-    };
-    return { geometry, materials };
-  }, []);
+    }),
+    [],
+  );
+
+  const meshes = useMemo(
+    () => (world ? buildMergedMeshes(world, materials) : null),
+    [world, materials],
+  );
 
   useEffect(() => {
     return () => {
-      shared.geometry.dispose();
-      for (const mat of Object.values(shared.materials)) mat.dispose();
+      for (const mat of Object.values(materials)) mat.dispose();
     };
-  }, [shared]);
+  }, [materials]);
 
-  if (!boxes) return null;
+  useEffect(() => {
+    if (!meshes) return;
+    return () => {
+      for (const mesh of meshes) mesh.geometry.dispose();
+    };
+  }, [meshes]);
+
+  if (!meshes) return null;
   return (
     <group>
-      {boxes.map((box) => (
-        <mesh
-          key={box.key}
-          geometry={shared.geometry}
-          material={shared.materials[box.material]}
-          position={box.position}
-          scale={box.scale}
-          castShadow
-          receiveShadow
-        />
+      {meshes.map((mesh) => (
+        <primitive key={mesh.name} object={mesh} />
       ))}
     </group>
   );

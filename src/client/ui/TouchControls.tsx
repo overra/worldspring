@@ -35,7 +35,7 @@ const PITCH_LIMIT = 1.45; // rad — same clamp as InputController
 /** Same gate as NetSystem/InputController: no gameplay input through UI. */
 function gameplayBlocked(): boolean {
   const ui = useUIStore.getState();
-  return ui.invOpen || ui.menuOpen || ui.phase !== "playing";
+  return ui.invOpen || ui.menuOpen || ui.chatOpen || ui.phase !== "playing";
 }
 
 export function TouchControls(): ReactElement | null {
@@ -153,11 +153,16 @@ export function TouchControls(): ReactElement | null {
           return;
         }
         case "bag":
-          if (ui.menuOpen || ui.phase !== "playing") return;
+          if (ui.menuOpen || ui.chatOpen || ui.phase !== "playing") return;
           ui.setInvOpen(!ui.invOpen);
           return;
+        case "chat":
+          if (ui.menuOpen || ui.chatOpen || ui.phase !== "playing") return;
+          if (ui.invOpen) ui.setInvOpen(false); // chat replaces the bag panel
+          ui.openChat();
+          return;
         case "menu":
-          if (ui.menuOpen || ui.phase !== "playing") return;
+          if (ui.menuOpen || ui.chatOpen || ui.phase !== "playing") return;
           ui.setMenuOpen(true);
           return;
         default:
@@ -272,6 +277,12 @@ export function TouchControls(): ReactElement | null {
           BAG
         </button>
       </div>
+
+      {/* Top-left, just right of the relocated vitals — clear of the
+          joystick, cluster and the top-right status/menu stack. */}
+      <button type="button" data-tc="chat" aria-label="Chat" className="tc-btn tc-btn--chat">
+        CHAT
+      </button>
 
       <button type="button" data-tc="menu" aria-label="Menu" className="tc-btn tc-btn--menu">
         ⚙

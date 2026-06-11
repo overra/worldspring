@@ -4,7 +4,9 @@
 
 import { createNoise2D, type NoiseFunction2D } from "simplex-noise";
 import {
+  STEP_UP_MAX,
   CABIN_COUNT,
+  ROCK_COUNT,
   TERRAIN_MAX_HEIGHT,
   TOWN_COUNT,
   TREE_COUNT,
@@ -69,6 +71,17 @@ export interface MilitaryZone {
   radius: number;
 }
 
+/** Deterministic set-dressing scatter: rocks island-wide, defensive props
+ * inside the military compound. rock_a is walk-through; everything else
+ * carries a collision AABB in the statics grid. */
+export interface WorldProp {
+  kind: "rock_a" | "rock_b" | "rock_c" | "sandbag_wall" | "barrier" | "tent";
+  x: number;
+  z: number;
+  yaw: number;
+  scale: number;
+}
+
 export interface StaticsQuery {
   walls: Aabb[];
   trees: Tree[];
@@ -85,6 +98,9 @@ export interface World {
    * (already inserted into the static grid; exposed for rendering). */
   military: MilitaryZone;
   militaryWalls: Aabb[];
+  /** Set-dressing scatter (rocks + military props). Solid kinds are already
+   * inserted into the static collision grid; exposed for rendering. */
+  props: WorldProp[];
   trees: Tree[];
   lootSpawns: LootSpawn[];
   spawnPoints: Array<{ x: number; z: number }>;
@@ -137,6 +153,24 @@ const MIL_WALL_THICKNESS = 0.45;
 const MIL_GATE_WIDTH = 4.5;
 const MIL_TOWER_HALF = 2;
 const MIL_TOWER_HEIGHT = 7.5;
+
+/** Collision footprints for solid set-dressing props (full width x depth in
+ * local space + height), scaled by prop.scale. rock_a is deliberately absent
+ * — small rocks are walk-through. */
+const PROP_FOOTPRINTS = {
+  rock_b: { w: 1.2, d: 1.2, h: 1.0 },
+  rock_c: { w: 2.2, d: 2.2, h: 1.8 },
+  sandbag_wall: { w: 1.2, d: 0.45, h: 0.9 },
+  barrier: { w: 1.5, d: 0.4, h: 0.8 },
+  tent: { w: 2.0, d: 1.6, h: 1.6 },
+} as const;
+
+const ROCK_MIN_TERRAIN_H = 0.8;
+/** Rectangle inflation past each building's footprint when placing rocks.
+ * Must exceed the largest rotated rock half-extent (rock_c at max scale:
+ * 1.1 * 1.2 * sqrt(2) ~= 1.87m) so no rock can touch a wall or block a door. */
+const ROCK_BUILDING_MARGIN = 4;
+const PROP_LOOTPOINT_CLEARANCE = 1.5; // military props keep loot spawns reachable
 
 function makeHeightFn(noise: NoiseFunction2D): (x: number, z: number) => number {
   return (x: number, z: number): number => {
@@ -313,6 +347,15 @@ export function createWorld(seed: number): World {
         doorSide = c.side;
       }
     }
+    // The floor must be climbable from the door side: on steep ground the
+    // highest-corner rule can lift it past STEP_UP_MAX, stranding the
+    // building's loot (seen at seed 1337: a hangar whose 4 spawns were
+    // unreachable). Clamp to a comfortable step; the uphill corner poking
+    // through the slab is the accepted cosmetic cost. No RNG draws here —
+    // existing worldgen streams are unaffected.
+    const doorC = doorCandidates[doorSide];
+    const doorGround = heightAt(px + doorC.dx, pz + doorC.dz);
+    floorY = Math.min(floorY, doorGround + STEP_UP_MAX - 0.15);
     const base = {
       cx: px,
       cz: pz,
@@ -477,6 +520,139 @@ export function createWorld(seed: number): World {
     }
   }
 
+  // --- Set-dressing props: rocks island-wide + military compound dressing ---
+  // DETERMINISM: these use NEW rng streams (fresh xor constants). The existing
+  // streams above (mil/town/building/loot/tree) must not gain or lose a single
+  // draw, so nothing here touches rng/milRng/townRng/bRng/lRng/tRng.
+  const props: WorldProp[] = [];
+  const propBoxes: Aabb[] = [];
+
+  /** Conservative collision AABB for a yaw-rotated prop footprint: the exact
+   * bounding rectangle of the rotated box (never smaller than the prop). */
+  const propAabb = (
+    x: number,
+    z: number,
+    yaw: number,
+    kind: keyof typeof PROP_FOOTPRINTS,
+    scale: number,
+  ): Aabb => {
+    const fp = PROP_FOOTPRINTS[kind];
+    const hw = (fp.w / 2) * scale;
+    const hd = (fp.d / 2) * scale;
+    const c = Math.abs(Math.cos(yaw));
+    const s = Math.abs(Math.sin(yaw));
+    const ex = c * hw + s * hd;
+    const ez = s * hw + c * hd;
+    const g = heightAt(x, z);
+    // Skirt below ground like building walls — y-aware collision ignores it.
+    return { minX: x - ex, minZ: z - ez, maxX: x + ex, maxZ: z + ez, y0: g - 1.5, y1: g + fp.h * scale };
+  };
+
+  const addProp = (kind: WorldProp["kind"], x: number, z: number, yaw: number, scale: number): void => {
+    props.push({ kind, x, z, yaw, scale });
+    if (kind === "rock_a") return; // walk-through
+    propBoxes.push(propAabb(x, z, yaw, kind, scale));
+  };
+
+  // Rocks: rejection-sampled island-wide. Dry land only, outside towns and
+  // the compound, clear of every building's footprint rectangle (which also
+  // keeps interior loot points clear — those all sit inside buildings). The
+  // rectangle test (not town/compound radius) is what guarantees clearance:
+  // edge buildings extend beyond their area's exclusion circle.
+  const rockRng = createRng((seed ^ 0x6a09e6) >>> 0);
+  for (let attempt = 0, placed = 0; attempt < 8000 && placed < ROCK_COUNT; attempt++) {
+    const x = rockRng.range(-WORLD_SIZE * 0.48, WORLD_SIZE * 0.48);
+    const z = rockRng.range(-WORLD_SIZE * 0.48, WORLD_SIZE * 0.48);
+    if (heightAt(x, z) < ROCK_MIN_TERRAIN_H) continue;
+    if (towns.some((t) => distSq2D(x, z, t.cx, t.cz) < t.radius ** 2)) continue;
+    if (distSq2D(x, z, military.cx, military.cz) < military.radius ** 2) continue;
+    if (
+      buildings.some(
+        (b) =>
+          Math.abs(b.cx - x) < b.halfW + ROCK_BUILDING_MARGIN &&
+          Math.abs(b.cz - z) < b.halfD + ROCK_BUILDING_MARGIN,
+      )
+    ) {
+      continue;
+    }
+    const roll = rockRng.next();
+    const kind = roll < 0.5 ? "rock_a" : roll < 0.85 ? "rock_b" : "rock_c";
+    const scale =
+      kind === "rock_a"
+        ? rockRng.range(0.8, 1.3)
+        : kind === "rock_b"
+          ? rockRng.range(0.9, 1.4)
+          : rockRng.range(0.9, 1.2);
+    addProp(kind, x, z, rockRng.range(0, Math.PI * 2), scale);
+    placed++;
+  }
+
+  // Military set dressing: authored offsets relative to the compound center,
+  // with a touch of seeded jitter on yaw (its own "props" stream).
+  {
+    const propRng = createRng((seed ^ 0x1d872b) >>> 0);
+    const { cx, cz } = military;
+    const milBuildings = buildings.filter((b) => b.area === "military");
+    // The interior layout (barracks/hangar/shed) is seed-dependent, so every
+    // authored spot is checked against the placed footprints and loot points;
+    // a conflicting prop is dropped rather than nudged (deterministic).
+    const placeable = (x: number, z: number, clearance: number): boolean => {
+      if (
+        milBuildings.some(
+          (b) => Math.abs(x - b.cx) < b.halfW + clearance && Math.abs(z - b.cz) < b.halfD + clearance,
+        )
+      ) {
+        return false;
+      }
+      return !lootSpawns.some((p) => distSq2D(x, z, p.x, p.z) < PROP_LOOTPOINT_CLEARANCE ** 2);
+    };
+    const place = (kind: WorldProp["kind"], x: number, z: number, yaw: number): void => {
+      if (!placeable(x, z, 1)) return;
+      addProp(kind, x, z, yaw, 1);
+    };
+
+    // Sandbag nests just inside the two gates (+Z and -Z walls): a pair
+    // flanking the lane angled toward the opening, plus a center line-blocker
+    // set further back. 6 authored, each may drop if the interior layout
+    // landed a building on top of it.
+    for (const gate of [1, -1] as const) {
+      const gz = cz + gate * (MIL_HALF - 4.5);
+      place("sandbag_wall", cx - 3.6, gz, gate * 0.55 + propRng.range(-0.08, 0.08));
+      place("sandbag_wall", cx + 3.6, gz, -gate * 0.55 + propRng.range(-0.08, 0.08));
+      place("sandbag_wall", cx, cz + gate * (MIL_HALF - 7.5), propRng.range(-0.06, 0.06));
+    }
+
+    // Barriers staggered along the main N-S lane between the gates.
+    const lane: ReadonlyArray<readonly [number, number, number]> = [
+      [-2.2, -24, 0.35],
+      [2.2, -8, -0.3],
+      [-2.2, 8, 0.3],
+      [2.2, 24, -0.35],
+    ];
+    for (const [dx, dz, yaw] of lane) {
+      place("barrier", cx + dx, cz + dz, yaw + propRng.range(-0.1, 0.1));
+    }
+
+    // Two tents in the first corner (fixed scan order) clear of the
+    // barracks/hangar layout; doors face the compound center.
+    for (const [sx, sz] of [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ] as const) {
+      const ax = cx + sx * 31.5;
+      const az = cz + sz * 31.5;
+      const bx = cx + sx * 27;
+      const bz = cz + sz * 32;
+      if (!placeable(ax, az, 2) || !placeable(bx, bz, 2)) continue;
+      const inward = Math.atan2(sx, sz); // forward (-sin,-cos) points at center
+      place("tent", ax, az, inward + propRng.range(-0.15, 0.15));
+      place("tent", bx, bz, inward + propRng.range(-0.15, 0.15));
+      break;
+    }
+  }
+
   // --- Spatial grid for static colliders ---
   const grid = new Map<number, StaticsQuery>();
   const cellKey = (ix: number, iz: number): number => (ix + 512) * 4096 + (iz + 512);
@@ -500,6 +676,14 @@ export function createWorld(seed: number): World {
     }
   }
   for (const w of militaryWalls) {
+    for (let ix = cellOf(w.minX); ix <= cellOf(w.maxX); ix++) {
+      for (let iz = cellOf(w.minZ); iz <= cellOf(w.maxZ); iz++) {
+        cellAt(ix, iz).walls.push(w);
+      }
+    }
+  }
+  // Solid set-dressing props collide exactly like military walls.
+  for (const w of propBoxes) {
     for (let ix = cellOf(w.minX); ix <= cellOf(w.maxX); ix++) {
       for (let iz = cellOf(w.minZ); iz <= cellOf(w.maxZ); iz++) {
         cellAt(ix, iz).walls.push(w);
@@ -606,6 +790,7 @@ export function createWorld(seed: number): World {
     buildings,
     military,
     militaryWalls,
+    props,
     trees,
     lootSpawns,
     spawnPoints,

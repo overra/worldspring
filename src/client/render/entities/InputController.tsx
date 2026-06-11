@@ -30,6 +30,12 @@ export function InputController(): null {
       const ui = useUIStore.getState();
       if (ui.phase !== "playing") return;
 
+      // While the chat input is open it owns the keyboard outright — every
+      // game binding below (movement, Tab, hotbar, E/G/V…) is gated off.
+      // The input's own keydown handles Enter/Escape and stops propagation;
+      // this gate covers keys when focus strays from the input.
+      if (ui.chatOpen) return;
+
       if (e.code === "Tab") {
         e.preventDefault();
         if (e.repeat) return;
@@ -78,6 +84,15 @@ export function InputController(): null {
         case "KeyV":
           inputState.firstPerson = !inputState.firstPerson;
           return;
+        case "Enter":
+        case "NumpadEnter":
+          // Open chat only from live gameplay — same gate as movement
+          // (mouselook or touch mode, no inventory/menu). The store
+          // subscription below releases the pointer, mirroring inventory.
+          if (!canMove) return;
+          e.preventDefault();
+          ui.openChat();
+          return;
         case "KeyE": {
           const lootId = clientWorld.promptLootId;
           if (lootId !== null) doPickup(lootId);
@@ -125,7 +140,7 @@ export function InputController(): null {
       if (e.button !== 0) return;
       if (!inputState.pointerLocked) return;
       const ui = useUIStore.getState();
-      if (ui.invOpen || ui.phase !== "playing") return;
+      if (ui.invOpen || ui.chatOpen || ui.phase !== "playing") return;
       triggerLocalAttackAnim();
       doAttack();
     };
@@ -165,10 +180,11 @@ export function InputController(): null {
       clearMovementKeys();
       // An unlock mid-play that no UI asked for means the user pressed Esc —
       // surface the escape menu. Intentional unlocks are excluded: inventory
-      // sets invOpen first, and death flips phase before exitLock runs.
+      // sets invOpen first, chat sets chatOpen first, and death flips phase
+      // before exitLock runs.
       if (!wasLocked || inputState.touchMode) return;
       const ui = useUIStore.getState();
-      if (ui.phase !== "playing" || ui.invOpen || ui.menuOpen) return;
+      if (ui.phase !== "playing" || ui.invOpen || ui.menuOpen || ui.chatOpen) return;
       ui.setMenuOpen(true);
     };
 
@@ -191,6 +207,12 @@ export function InputController(): null {
         clearMovementKeys();
         exitLock();
       }
+      // Chat opening releases the mouse the same way: the input needs focus
+      // and clicks, and a locked pointer would swallow both.
+      if (state.chatOpen && !prev.chatOpen) {
+        clearMovementKeys();
+        exitLock();
+      }
       if (state.phase === "dead" && prev.phase !== "dead") exitLock();
 
       // Re-lock when a blocking UI closes mid-play. Zustand notifies
@@ -200,11 +222,13 @@ export function InputController(): null {
       // Esc), requestLock's catch swallows it and a canvas click re-locks.
       const invClosed = !state.invOpen && prev.invOpen;
       const menuClosed = !state.menuOpen && prev.menuOpen;
+      const chatClosed = !state.chatOpen && prev.chatOpen;
       if (
-        (invClosed || menuClosed) &&
+        (invClosed || menuClosed || chatClosed) &&
         state.phase === "playing" &&
         !state.invOpen &&
         !state.menuOpen &&
+        !state.chatOpen &&
         !inputState.touchMode
       ) {
         requestLock();

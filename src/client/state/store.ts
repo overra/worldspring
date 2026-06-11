@@ -14,6 +14,17 @@ export interface Notice {
   ts: number;
 }
 
+export interface ChatLine {
+  id: number;
+  name: string;
+  text: string;
+  /** performance.now() at receipt — drives the panel's fade-out. */
+  at: number;
+}
+
+/** Rolling chat log cap — oldest lines drop past this. */
+const CHAT_LOG_MAX = 50;
+
 export interface UIState {
   phase: GamePhase;
   error: string | null;
@@ -35,6 +46,10 @@ export interface UIState {
   invOpen: boolean;
   /** Escape menu (resume/settings/leave). Gates gameplay input like invOpen. */
   menuOpen: boolean;
+  /** Proximity-chat input row open. Gates gameplay input like invOpen. */
+  chatOpen: boolean;
+  /** Rolling proximity-chat log, newest last, capped at CHAT_LOG_MAX. */
+  chatLog: ChatLine[];
 
   setPhase(phase: GamePhase): void;
   setError(error: string | null): void;
@@ -51,9 +66,15 @@ export interface UIState {
   setPingMs(ms: number): void;
   setInvOpen(open: boolean): void;
   setMenuOpen(open: boolean): void;
+  openChat(): void;
+  closeChat(): void;
+  pushChat(name: string, text: string): void;
+  /** Wipe the log (disconnect/rejoin — a new identity must not see old lines). */
+  clearChatLog(): void;
 }
 
 let noticeId = 0;
+let chatLineId = 0;
 
 export const useUIStore = create<UIState>((set) => ({
   phase: "menu",
@@ -71,6 +92,8 @@ export const useUIStore = create<UIState>((set) => ({
   pingMs: 0,
   invOpen: false,
   menuOpen: false,
+  chatOpen: false,
+  chatLog: [],
 
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error }),
@@ -91,4 +114,14 @@ export const useUIStore = create<UIState>((set) => ({
   setPingMs: (pingMs) => set({ pingMs }),
   setInvOpen: (invOpen) => set({ invOpen }),
   setMenuOpen: (menuOpen) => set({ menuOpen }),
+  openChat: () => set((s) => (s.chatOpen ? s : { chatOpen: true })),
+  clearChatLog: () => set((s) => (s.chatLog.length === 0 ? s : { chatLog: [] })),
+  closeChat: () => set((s) => (s.chatOpen ? { chatOpen: false } : s)),
+  pushChat: (name, text) =>
+    set((s) => ({
+      chatLog: [
+        ...s.chatLog.slice(-(CHAT_LOG_MAX - 1)),
+        { id: chatLineId++, name, text, at: performance.now() },
+      ],
+    })),
 }));

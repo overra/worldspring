@@ -158,6 +158,14 @@ export const VENISON_PER_DEER_MIN = 2;
 export const VENISON_PER_DEER_MAX = 3;
 export const DEER_CORPSE_TTL_S = 180;
 
+// --- Chat ---
+export const CHAT_RADIUS = 40; // meters — proximity text chat delivery
+export const CHAT_MAX_LENGTH = 120;
+export const CHAT_COOLDOWN_S = 0.8; // min seconds between messages per player
+
+// --- World scatter (set dressing) ---
+export const ROCK_COUNT = 70;
+
 // --- Persistence ---
 /** A disconnected (alive) body stays in the world this long, defenseless. */
 export const LOGOUT_LINGER_S = 60;

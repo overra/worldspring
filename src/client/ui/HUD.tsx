@@ -15,6 +15,7 @@ import { ITEM_DEFS } from "@/shared/items";
 import type { ItemKind, ItemStack } from "@/shared/items";
 import { doDrop, doEquip, doUse } from "@/client/net/connection";
 import { useUIStore } from "@/client/state/store";
+import { ChatPanel } from "./ChatPanel";
 import { RecapStats } from "./DeathScreen";
 import "./ui.css";
 
@@ -281,6 +282,7 @@ export function HUD(): ReactElement {
       <div className="hud-crosshair" />
       <PickupPrompt />
       <VitalsPanel />
+      <ChatPanel />
       <Hotbar />
       <InventoryPanel />
     </div>

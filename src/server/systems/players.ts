@@ -30,9 +30,21 @@ const INPUT_QUEUE_CAP = 60;
 /** Sanity clamp for client-supplied pitch (client clamps to ±1.45 itself). */
 const PITCH_LIMIT = 1.6;
 
-/** Trim, strip control chars, cap length, default, and de-duplicate a name. */
+/**
+ * Characters stripped from all player-supplied text (names, chat): C0
+ * controls, DEL + C1 controls, zero-width chars (ZWSP/ZWNJ/ZWJ U+200B-D,
+ * word joiner + invisible operators U+2060-2064), bidi controls (LRM/RLM,
+ * embeddings/overrides U+202A-E, isolates U+2066-2069), and BOM U+FEFF.
+ * Zero-width chars defeat empty-string guards (\s does not match U+200B);
+ * bidi overrides visually reverse rendered text in recipients' clients.
+ */
+export const STRIP_TEXT_RE =
+  // eslint-disable-next-line no-control-regex
+  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+
+/** Trim, strip control/invisible chars, cap length, default, de-duplicate. */
 export function sanitizeName(raw: string, state: GameState): string {
-  let base = [...raw.replace(/[\u0000-\u001f\u007f]/g, "").trim()]
+  let base = [...raw.replace(STRIP_TEXT_RE, "").trim()]
     .slice(0, MAX_NAME_LENGTH)
     .join("")
     .trim();
@@ -111,6 +123,7 @@ export function createPlayer(
     lastAck: 0,
     inputBudget: INPUT_BUDGET_CAP_S,
     wantsAttack: false,
+    lastChatAt: -Infinity,
     attackCooldown: 0,
     attackAnimT: 0,
     sprinting: false,
@@ -157,6 +170,7 @@ export function restorePlayer(
     lastAck: 0,
     inputBudget: INPUT_BUDGET_CAP_S,
     wantsAttack: false,
+    lastChatAt: -Infinity,
     attackCooldown: 0,
     attackAnimT: 0,
     sprinting: false,

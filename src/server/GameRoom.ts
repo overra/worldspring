@@ -13,6 +13,9 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   AIRDROP_SMOKE_S,
+  CHAT_COOLDOWN_S,
+  CHAT_MAX_LENGTH,
+  CHAT_RADIUS,
   INPUT_BUDGET_CAP_S,
   INTEREST_RADIUS,
   LOGOUT_LINGER_S,
@@ -72,9 +75,10 @@ import {
   respawnPlayer,
   restorePlayer,
   sanitizeName,
+  STRIP_TEXT_RE,
   useItem,
 } from "./systems/players";
-import { createGameState, type GameState, type ServerPlayer } from "./systems/state";
+import { createGameState, sendTo, type GameState, type ServerPlayer } from "./systems/state";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -245,8 +249,43 @@ export class GameRoom extends DurableObject<Env> {
           this.persistAll(game);
         }
         break;
+      case "chat":
+        this.handleChat(game, player, msg.text);
+        break;
     }
     this.flushOutbox(game);
+  }
+
+  /**
+   * Proximity text chat: sanitize, rate-limit per player (CHAT_COOLDOWN_S of
+   * game time), then queue the line for every ONLINE player within
+   * CHAT_RADIUS (2D) of the sender — including the sender, whose echo
+   * confirms delivery. Lingering offline bodies never receive (no socket)
+   * and never send (their socket is gone, but the guard is explicit).
+   */
+  private handleChat(game: GameState, sender: ServerPlayer, raw: string): void {
+    if (!sender.alive || sender.offline) return;
+    if (game.time - sender.lastChatAt < CHAT_COOLDOWN_S) return;
+    // Strip control/zero-width/bidi chars to spaces (shared class with name
+    // sanitization), collapse whitespace runs, trim, then cap by code points
+    // (never splits a surrogate pair) and re-trim the cut edge.
+    const text = [
+      ...raw
+        .replace(STRIP_TEXT_RE, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
+    ]
+      .slice(0, CHAT_MAX_LENGTH)
+      .join("")
+      .trim();
+    if (text.length === 0) return;
+    sender.lastChatAt = game.time;
+    const radiusSq = CHAT_RADIUS * CHAT_RADIUS;
+    for (const other of game.players.values()) {
+      if (other.offline) continue;
+      if (distSq2D(sender.core.x, sender.core.z, other.core.x, other.core.z) > radiusSq) continue;
+      sendTo(game, other.id, { t: "chat", name: sender.name, text });
+    }
   }
 
   override webSocketClose(ws: WebSocket): void {

@@ -50,6 +50,7 @@ export type ClientMsg =
   | { t: "pickup"; id: number }
   | { t: "drop"; slot: number }
   | { t: "respawn" }
+  | { t: "chat"; text: string }
   | { t: "ping"; ts: number };
 
 // --- Server -> Client ---
@@ -220,6 +221,8 @@ export type ServerMsg =
       count: number; // players online
     }
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
+  /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
+  | { t: "chat"; name: string; text: string }
   | { t: "death"; by: string; recap: DeathRecap }
   | { t: "notice"; msg: string }
   | { t: "pong"; ts: number }
@@ -296,6 +299,11 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       return isFiniteNum(m.slot) ? { t: "drop", slot: m.slot | 0 } : null;
     case "respawn":
       return { t: "respawn" };
+    case "chat":
+      // Length is a transport sanity cap; the server trims/sanitizes to
+      // CHAT_MAX_LENGTH and rate-limits before delivery.
+      if (typeof m.text !== "string" || m.text.length === 0 || m.text.length > 512) return null;
+      return { t: "chat", text: m.text };
     case "ping":
       return isFiniteNum(m.ts) ? { t: "ping", ts: m.ts } : null;
     default:

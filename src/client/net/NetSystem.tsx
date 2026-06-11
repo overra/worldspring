@@ -45,9 +45,12 @@ export function NetSystem(): null {
     // --- Build this frame's input cmds ---
     const jumpEdge = inputState.jump;
     inputState.jump = false;
+    // chatOpen must be here explicitly: on desktop the pointer unlock already
+    // blocks, but in touchMode there is no pointer lock to lose.
     const blocked =
       ui.invOpen ||
       ui.menuOpen ||
+      ui.chatOpen ||
       (!inputState.pointerLocked && !inputState.touchMode);
     let mx = 0;
     let mz = 0;

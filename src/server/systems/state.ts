@@ -56,6 +56,9 @@ export interface ServerPlayer {
   inputBudget: number;
   /** Attack requested this tick; resolved after movement applies. */
   wantsAttack: boolean;
+  /** Game-time seconds of the last accepted chat message (rate limit).
+   * Transient — never persisted; -Infinity until the first message. */
+  lastChatAt: number;
   /** Seconds remaining until the next attack is allowed. */
   attackCooldown: number;
   /** Seconds remaining of the ANIM_ATTACKING flag. */
