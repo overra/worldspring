@@ -4,7 +4,8 @@
 // SkeletonUtils.clone of that scene with per-rig cloned materials (shared
 // geometry), an AnimationMixer, a locomotion crossfade state machine, and
 // one-shot attack/hit overlays. Held weapons attach to the `handslot.r`
-// bone ("handslotr" after three.js name sanitization strips the dot).
+// bone ("handslotr" after three.js name sanitization strips the dot) and
+// are clones of the per-ItemType nodes in items.glb (see HELD_TEMPLATES).
 
 import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
@@ -101,12 +102,15 @@ export function overlayForItem(item: ItemType | null): OverlayKind {
 }
 
 // --- Held-item grip transforms (ONE tunable place) ---
-// Weapon meshes are authored barrel/business-end toward -Z with the grip at
-// the origin (handle up +Y for the axe). The KayKit hand slot basis (measured
-// in-game during the 1H_Ranged_Shoot aim pose): +X = aim/strike direction,
-// +Y = blade-up, +Z = lateral. So guns and the axe rotate Y-90° to map their
-// -Z onto slot +X. Positions are in meters at world scale (the wrapper
-// cancels the rig scale).
+// items.glb nodes are authored business-end (muzzle/axe-head/lens) toward +Z
+// with the grip near the origin and the base resting on y=0. The KayKit hand
+// slot basis (measured in-game during the 1H_Ranged_Shoot aim pose): +X =
+// aim/strike direction, +Y = blade-up, +Z = lateral. Baseline mapping is
+// therefore rotDeg [0, 90, 0] (+Z → +X; the old -Z-built boxes used -90).
+// The axe instead pitches up with rotDeg [-90, 0, 0] so its handle runs +Y
+// and the blade leads +X, matching the old vertical box build. Y offsets
+// sink each base-origin model into the fist. Positions are meters at world
+// scale (the wrapper cancels the rig scale); models are real-scale → 1.
 
 export interface GripTransform {
   pos: readonly [number, number, number];
@@ -118,19 +122,27 @@ export interface GripTransform {
 const DEFAULT_GRIP: GripTransform = { pos: [0, 0, 0], rotDeg: [0, 0, 0], scale: 1 };
 
 export const GRIP_TRANSFORMS: Partial<Record<ItemType, GripTransform>> = {
-  pistol: { pos: [0, 0.03, 0], rotDeg: [0, -90, 0], scale: 1 },
-  rifle: { pos: [0, 0.05, 0], rotDeg: [0, -90, 0], scale: 1 },
-  shotgun: { pos: [0, 0.04, 0], rotDeg: [0, -90, 0], scale: 1 },
-  axe: { pos: [0, 0, 0], rotDeg: [0, -90, 0], scale: 1 },
+  beans: { pos: [0, -0.06, 0], rotDeg: [0, 90, 0], scale: 1 },
+  water_bottle: { pos: [0, -0.08, 0], rotDeg: [0, 90, 0], scale: 1 },
+  bandage: { pos: [0, -0.04, 0], rotDeg: [0, 90, 0], scale: 1 },
+  pistol: { pos: [0, -0.07, 0], rotDeg: [0, 90, 0], scale: 1 },
+  rifle: { pos: [0, 0, 0], rotDeg: [0, 90, 0], scale: 1 },
+  shotgun: { pos: [0, 0, 0], rotDeg: [0, 90, 0], scale: 1 },
+  ammo_9mm: { pos: [0, -0.02, 0], rotDeg: [0, 90, 0], scale: 1 },
+  ammo_762: { pos: [0, -0.03, 0], rotDeg: [0, 90, 0], scale: 1 },
+  shells: { pos: [0, -0.04, 0], rotDeg: [0, 90, 0], scale: 1 },
+  axe: { pos: [0, -0.12, 0], rotDeg: [-90, 0, 0], scale: 1 },
+  campfire_kit: { pos: [0, -0.06, 0], rotDeg: [0, 90, 0], scale: 1 },
+  flashlight: { pos: [0, -0.03, 0], rotDeg: [0, 90, 0], scale: 1 },
+  raw_venison: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
+  cooked_venison: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
 };
 
-// --- Held-item mesh builders (carried over from the old box Humanoid) ---
+// --- Held-item meshes (clones of the items.glb templates) ---
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
-const AXE_HANDLE_COLOR = "#6b4a2f";
-const GUN_METAL_COLOR = "#2e2e32";
 
-// Held-item materials are identical across rigs — cache by color.
+// Fallback-box materials are identical across rigs — cache by color.
 const heldMaterialCache = new Map<string, THREE.MeshLambertMaterial>();
 
 function heldMaterial(color: string): THREE.MeshLambertMaterial {
@@ -147,60 +159,33 @@ function heldBox(color: string): THREE.Mesh {
   return mesh;
 }
 
+/** Source nodes from items.glb keyed by ItemType, registered once by
+ * useCharacterModel. Clones share geometry + materials (held items are
+ * never tinted — setTint only touches the rig's own material clones). */
+const HELD_TEMPLATES = new Map<ItemType, THREE.Object3D>();
+let heldTemplatesRegistered = false;
+
+function registerHeldItemTemplates(scene: THREE.Group): void {
+  if (heldTemplatesRegistered) return;
+  heldTemplatesRegistered = true;
+  for (const type of Object.keys(ITEM_DEFS) as ItemType[]) {
+    const node = scene.getObjectByName(type);
+    if (!node) continue;
+    // Clones inherit castShadow, so flag the source meshes once here.
+    node.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) obj.castShadow = true;
+    });
+    HELD_TEMPLATES.set(type, node);
+  }
+}
+
 function buildHeldItem(type: ItemType): THREE.Object3D {
-  const def = ITEM_DEFS[type];
-  if (type === "pistol") {
-    // Dark two-box "L": slide pointing -Z plus a grip.
-    const g = new THREE.Group();
-    const slide = heldBox(def.color);
-    slide.scale.set(0.05, 0.07, 0.26);
-    slide.position.set(0, 0.02, -0.1);
-    const grip = heldBox(def.color);
-    grip.scale.set(0.045, 0.14, 0.06);
-    grip.position.set(0, -0.06, 0.02);
-    g.add(slide, grip);
-    return g;
-  }
-  if (type === "rifle") {
-    // Long thin bolt-action silhouette (~0.9m): metal barrel forward, wooden
-    // stock (item color) at the shoulder end.
-    const g = new THREE.Group();
-    const barrel = heldBox(GUN_METAL_COLOR);
-    barrel.scale.set(0.05, 0.06, 0.56);
-    barrel.position.set(0, 0.03, -0.4);
-    const stock = heldBox(def.color);
-    stock.scale.set(0.06, 0.09, 0.34);
-    stock.position.set(0, 0, 0.05);
-    g.add(barrel, stock);
-    return g;
-  }
-  if (type === "shotgun") {
-    // Slightly shorter (~0.7m), twin-tone: stubby metal barrels + wooden
-    // stock/forend in the item color.
-    const g = new THREE.Group();
-    const barrels = heldBox(GUN_METAL_COLOR);
-    barrels.scale.set(0.08, 0.05, 0.42);
-    barrels.position.set(0, 0.03, -0.27);
-    const stock = heldBox(def.color);
-    stock.scale.set(0.07, 0.1, 0.28);
-    stock.position.set(0, 0, 0.08);
-    g.add(barrels, stock);
-    return g;
-  }
-  if (type === "axe") {
-    // Wooden stick + red head box near the top.
-    const g = new THREE.Group();
-    const handle = heldBox(AXE_HANDLE_COLOR);
-    handle.scale.set(0.05, 0.55, 0.05);
-    handle.position.y = 0.18;
-    const head = heldBox(def.color);
-    head.scale.set(0.22, 0.12, 0.06);
-    head.position.set(0, 0.42, -0.06);
-    g.add(handle, head);
-    return g;
-  }
-  // Generic prop: small tinted box.
-  const m = heldBox(def.color);
+  // GLB template + an authored grip entry → real model. Anything else
+  // (future ItemType, missing GLB node) → generic tinted box, which is
+  // rotation-agnostic so a missing grip entry can't point it backward.
+  const template = HELD_TEMPLATES.get(type);
+  if (template && GRIP_TRANSFORMS[type]) return template.clone();
+  const m = heldBox(ITEM_DEFS[type].color);
   m.scale.set(0.16, 0.16, 0.16);
   return m;
 }
@@ -211,6 +196,8 @@ const MODEL_URLS: Record<CharacterKind, string> = {
   survivor: "/models/survivor.glb",
   zombie: "/models/zombie.glb",
 };
+
+const ITEMS_MODEL_URL = "/models/items.glb";
 
 interface GltfLike {
   scene: THREE.Group;
@@ -278,15 +265,21 @@ function buildSource(gltf: GltfLike): CharacterSource {
 
 useGLTF.preload(MODEL_URLS.survivor);
 useGLTF.preload(MODEL_URLS.zombie);
+useGLTF.preload(ITEMS_MODEL_URL);
 
 /**
- * Suspends until the GLB for `kind` is loaded (drei cache, meshopt decoder
- * enabled by default) and registers it for createCharacterRig. Call at the
- * top of any component whose pool creates rigs of that kind.
+ * Suspends until the GLB for `kind` AND items.glb are loaded (drei cache,
+ * meshopt decoder enabled by default) and registers them for
+ * createCharacterRig / setHeldItem. Call at the top of any component whose
+ * pool creates rigs of that kind. items.glb rides along so every rig-creating
+ * component gets held-item templates with no extra wiring (it shares the
+ * drei cache entry with LootItems).
  */
 export function useCharacterModel(kind: CharacterKind): void {
   const gltf = useGLTF(MODEL_URLS[kind]);
+  const items = useGLTF(ITEMS_MODEL_URL);
   if (!SOURCES.has(kind)) SOURCES.set(kind, buildSource(gltf));
+  registerHeldItemTemplates(items.scene);
 }
 
 // --- Rig factory ---
