@@ -24,7 +24,7 @@ const LOOK_AHEAD = 3; // lookAt target this far ahead of the eye
 
 // Subtle blue tint distinguishing the local body (mirrors the old blue shirt).
 const LOCAL_TINT = new THREE.Color(1, 1, 1).lerp(new THREE.Color("#3f5d8a"), 0.35);
-const MAX_FRAME_DT = 0.8; // generous: throttled tabs (~2Hz rAF) keep full anim speed
+const MAX_FRAME_DT = 5; // throttled tabs land on the correct anim phase per frame
 
 // Flashlight beam (always on while the flashlight is the equipped item).
 const FLASHLIGHT_COLOR = "#ffe9b0";

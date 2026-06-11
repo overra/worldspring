@@ -26,10 +26,12 @@ const ATTACK_SWING_INTERVAL_S = 1.2;
 // Rigs beyond this only step their mixer every Nth frame (accumulated dt).
 const FAR_DIST_SQ = 80 * 80;
 const FAR_UPDATE_INTERVAL = 4;
-// Generous cap: under rAF throttling (occluded windows tick at ~2Hz) a
-// 0.1s clamp would play anims at quarter speed and hold new rigs in bind
-// pose. Locomotion clips are cyclic, so big steps read fine.
-const MAX_FRAME_DT = 0.8;
+// Generous cap: under rAF display-throttling (occluded windows tick at ~2Hz
+// or LESS) a small clamp plays anims in slow motion and holds new rigs in
+// bind pose. Locomotion clips are cyclic — a multi-second step lands on the
+// correct phase, so a throttled tab shows the right pose on every frame it
+// actually gets.
+const MAX_FRAME_DT = 5;
 
 function locomotionFor(state: ZombieState): LocomotionState {
   if (state === "chase") return "run";

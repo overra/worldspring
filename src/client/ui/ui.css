@@ -1173,3 +1173,20 @@
   width: 48px;
   height: 48px;
 }
+
+/* OS frame-throttle warning — shown when the page is visible but the frame
+   loop is starved (occluded/embedded window). DOM timers outlive rAF. */
+.hud-throttle-warning {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(140, 60, 10, 0.85);
+  color: #ffe9d0;
+  font-size: 13px;
+  padding: 6px 14px;
+  border: 1px solid rgba(255, 180, 90, 0.4);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 40;
+}

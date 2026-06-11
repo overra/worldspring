@@ -16,6 +16,7 @@ const FRAME_MS_ALPHA = 0.1;
 
 export function DebugCollector(): null {
   useFrame((state) => {
+    debugStats.lastFrameAt = performance.now();
     state.gl.info.autoReset = false;
     state.gl.info.reset();
     // Dev/debug introspection: the app's real scene + gl (the dynamic

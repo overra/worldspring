@@ -86,6 +86,9 @@ export interface DebugStats {
   textures: number;
   /** AudioContext state + mute, e.g. "running" / "suspended" / "running/muted". */
   audio: string;
+  /** performance.now() of the last R3F frame — lets DOM code (which keeps
+   * running when rAF is display-throttled) detect a starved frame loop. */
+  lastFrameAt: number;
 }
 
 export const debugStats: DebugStats = {
@@ -96,6 +99,7 @@ export const debugStats: DebugStats = {
   geometries: 0,
   textures: 0,
   audio: "-",
+  lastFrameAt: 0,
 };
 
 export interface RemotePlayerView {

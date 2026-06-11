@@ -22,7 +22,7 @@ const LABEL_MAX_DIST_SQ = 60 * 60;
 // Rigs beyond this only step their mixer every Nth frame (accumulated dt).
 const FAR_DIST_SQ = 80 * 80;
 const FAR_UPDATE_INTERVAL = 4;
-const MAX_FRAME_DT = 0.8; // generous: throttled tabs (~2Hz rAF) keep full anim speed
+const MAX_FRAME_DT = 5; // throttled tabs land on the correct anim phase per frame
 
 // Remote flashlights: a tiny pool of real spotlights assigned each frame to
 // the nearest holders — every extra live light is a forward-pass cost.
