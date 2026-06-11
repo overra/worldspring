@@ -1,20 +1,31 @@
-// Airdrop crates from clientWorld.drops (never interest-filtered): a 1m
-// olive crate with darker strapping, descending under a parachute while
-// drop.falling (client-side cosmetic fall — the server only flips the flag),
-// and a 40m billboarded smoke column while drop.smoke so the landing reads
-// from across the island. Smoke materials are fog: false on purpose — scene
-// fog must never swallow the column at distance (visible out to the 600m
-// camera far plane). Same imperative pooling pattern as Zombies.
+// Airdrop crates from clientWorld.drops (never interest-filtered): the
+// props.glb supply_crate (1m, base-origin) descending under the props.glb
+// parachute while drop.falling (client-side cosmetic fall — the server only
+// flips the flag), and a 40m billboarded smoke column while drop.smoke so
+// the landing reads from across the island. Smoke materials are fog: false
+// on purpose — scene fog must never swallow the column at distance (visible
+// out to the 600m camera far plane). Same imperative pooling pattern as
+// Zombies; GLB clones share geometry + materials like LootItems, with the
+// old primitive crate/cone as fallback if a node goes missing.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { AIRDROP_FALL_DELAY_S } from "@/shared/constants";
 import { clientWorld } from "@/client/runtime";
 
 const POOL_SIZE = 6;
 const MAX_FRAME_DT = 0.1;
+
+const PROPS_MODEL_URL = "/models/props.glb";
+useGLTF.preload(PROPS_MODEL_URL);
+
+// The parachute node's origin is the riser-line convergence point (canopy
+// apex ~3.4m above it). Attach just above the 1m crate top so the canopy
+// floats where the old cone chute used to.
+const CHUTE_ATTACH_Y = 1.05;
 
 // Cosmetic descent: spawn the crate this far above its landing spot and let
 // it sink at the rate that covers the height in the announce->land window.
@@ -64,7 +75,7 @@ const CHUTE_MAT = new THREE.MeshLambertMaterial({
 
 interface DropSlot {
   root: THREE.Group;
-  chute: THREE.Mesh;
+  chute: THREE.Object3D;
   smoke: THREE.Mesh[];
   /** Per-quad materials — opacity is animated individually. */
   smokeMats: THREE.MeshBasicMaterial[];
@@ -83,23 +94,47 @@ interface DropPool {
   free: number[];
 }
 
-function createSlot(): DropSlot {
+/** Grabs a template node from the cached GLB scene, flagging its meshes for
+ * shadows once so every clone inherits the flag (LootItems pattern). */
+function propTemplate(scene: THREE.Group, name: string, castShadow: boolean): THREE.Object3D | null {
+  const node = scene.getObjectByName(name);
+  if (!node) return null;
+  if (castShadow) {
+    node.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) obj.castShadow = true;
+    });
+  }
+  return node;
+}
+
+function createSlot(crateSource: THREE.Object3D | null, chuteSource: THREE.Object3D | null): DropSlot {
   const root = new THREE.Group();
   root.visible = false;
 
-  const crate = new THREE.Mesh(CRATE_GEO, CRATE_MAT);
-  crate.position.y = 0.5;
-  crate.castShadow = true;
-  root.add(crate);
-  const strapA = new THREE.Mesh(STRAP_A_GEO, STRAP_MAT);
-  strapA.position.y = 0.5;
-  root.add(strapA);
-  const strapB = new THREE.Mesh(STRAP_B_GEO, STRAP_MAT);
-  strapB.position.y = 0.5;
-  root.add(strapB);
+  if (crateSource) {
+    root.add(crateSource.clone());
+  } else {
+    // Fallback: olive box with darker strapping (props.glb node missing).
+    const crate = new THREE.Mesh(CRATE_GEO, CRATE_MAT);
+    crate.position.y = 0.5;
+    crate.castShadow = true;
+    root.add(crate);
+    const strapA = new THREE.Mesh(STRAP_A_GEO, STRAP_MAT);
+    strapA.position.y = 0.5;
+    root.add(strapA);
+    const strapB = new THREE.Mesh(STRAP_B_GEO, STRAP_MAT);
+    strapB.position.y = 0.5;
+    root.add(strapB);
+  }
 
-  const chute = new THREE.Mesh(CHUTE_GEO, CHUTE_MAT);
-  chute.position.y = 3.2;
+  let chute: THREE.Object3D;
+  if (chuteSource) {
+    chute = chuteSource.clone();
+    chute.position.y = CHUTE_ATTACH_Y;
+  } else {
+    chute = new THREE.Mesh(CHUTE_GEO, CHUTE_MAT);
+    chute.position.y = 3.2;
+  }
   chute.visible = false;
   root.add(chute);
 
@@ -150,12 +185,15 @@ function createSlot(): DropSlot {
   return { root, chute, smoke, smokeMats, flare, flareMat, light, fallOffset: 0 };
 }
 
-function createPool(): DropPool {
+function createPool(scene: THREE.Group): DropPool {
+  // Old cone chute never cast a shadow; keep the parachute shadowless too.
+  const crateSource = propTemplate(scene, "supply_crate", true);
+  const chuteSource = propTemplate(scene, "parachute", false);
   const root = new THREE.Group();
   const slots: DropSlot[] = [];
   const free: number[] = [];
   for (let i = 0; i < POOL_SIZE; i++) {
-    const slot = createSlot();
+    const slot = createSlot(crateSource, chuteSource);
     root.add(slot.root);
     slots.push(slot);
     free.push(POOL_SIZE - 1 - i);
@@ -164,7 +202,10 @@ function createPool(): DropPool {
 }
 
 export function Airdrops(): ReactElement {
-  const pool = useMemo(createPool, []);
+  // Suspends until the GLB loads; the Canvas mounts post-welcome so the
+  // suspension is invisible. Same drei cache entry the other props use.
+  const gltf = useGLTF(PROPS_MODEL_URL);
+  const pool = useMemo(() => createPool(gltf.scene), [gltf.scene]);
 
   // Smoke materials are per-slot (animated opacity) — dispose with the pool.
   useEffect(

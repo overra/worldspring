@@ -1,18 +1,28 @@
-// Wildlife: pooled procedural deer built from primitives (no external
-// assets), driven per frame from clientWorld.animals — same imperative
-// pooling pattern as Zombies. Yaw 0 faces -Z like every other entity.
-// Legs swing procedurally; rate/amplitude map from the wire state (idle:
-// none, wander: slow walk, flee: fast gallop with body bob).
+// Wildlife: pooled props.glb deer clones driven per frame from
+// clientWorld.animals — same imperative pooling pattern as Zombies. Yaw 0
+// faces -Z like every other entity (the GLB deer faces +Z, so each clone is
+// flipped half a turn). Legs swing procedurally via rotation.x on the
+// leg_fl/fr/bl/br child nodes, whose origins sit at the hip joints in the
+// model; rate/amplitude map from the wire state (idle: none, wander: slow
+// walk, flee: fast gallop with body bob). The old procedural box deer
+// remains as fallback if the GLB node goes missing.
 
 import { useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { DEER_COUNT } from "@/shared/constants";
 import { clientWorld } from "@/client/runtime";
 
 const POOL_SIZE = DEER_COUNT + 4; // margin over the wire max (respawn overlap)
 const MAX_FRAME_DT = 0.1;
+
+const PROPS_MODEL_URL = "/models/props.glb";
+useGLTF.preload(PROPS_MODEL_URL);
+
+// Hip-pivot leg nodes inside the deer GLB node, in gait order.
+const LEG_NODE_NAMES = ["leg_fl", "leg_fr", "leg_bl", "leg_br"] as const;
 
 // Gait tuning (rad/s swing rate, rad swing amplitude).
 const WANDER_RATE = 5;
@@ -44,10 +54,11 @@ const HIPS: ReadonlyArray<readonly [number, number]> = [
 
 interface DeerRig {
   root: THREE.Group;
-  /** Body + neck + head + tail — bobbed/rocked as one during a gallop. */
+  /** Whole body — bobbed/rocked as one during a gallop. */
   torso: THREE.Group;
-  /** Leg pivots at the hips; swing = rotation.x. */
-  legs: THREE.Group[];
+  /** Hip-pivot leg nodes [fl, fr, bl, br]; swing = rotation.x. Null when a
+   * leg node is missing from the GLB (slot keeps its gait order). */
+  legs: Array<THREE.Object3D | null>;
 }
 
 interface DeerSlot {
@@ -66,13 +77,25 @@ interface DeerPool {
   free: number[];
 }
 
-function createRig(): DeerRig {
+function createRig(deerSource: THREE.Object3D | null): DeerRig {
   const root = new THREE.Group();
   root.visible = false;
 
   const torso = new THREE.Group();
   root.add(torso);
 
+  if (deerSource) {
+    const model = deerSource.clone();
+    // GLB deer faces +Z (head and leg_f* sit at positive Z); flip to the
+    // game's yaw-0-faces--Z convention.
+    model.rotation.y = Math.PI;
+    torso.add(model);
+    // Hip-origin leg nodes — gait drives rotation.x on these directly.
+    const legs = LEG_NODE_NAMES.map((name) => model.getObjectByName(name) ?? null);
+    return { root, torso, legs };
+  }
+
+  // Fallback: procedural box deer (props.glb node missing).
   const body = new THREE.Mesh(BODY_GEO, TAN_MAT);
   body.position.y = 0.7;
   body.castShadow = true;
@@ -113,12 +136,17 @@ function createRig(): DeerRig {
   return { root, torso, legs };
 }
 
-function createPool(): DeerPool {
+function createPool(scene: THREE.Group): DeerPool {
+  // Flag shadows on the source once; clones inherit (LootItems pattern).
+  const deerSource = scene.getObjectByName("deer") ?? null;
+  deerSource?.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) obj.castShadow = true;
+  });
   const root = new THREE.Group();
   const slots: DeerSlot[] = [];
   const free: number[] = [];
   for (let i = 0; i < POOL_SIZE; i++) {
-    const rig = createRig();
+    const rig = createRig(deerSource);
     root.add(rig.root);
     // Stagger phases so a herd never moves in lockstep.
     slots.push({ rig, phase: i * 1.3, amp: 0, gallop: 0 });
@@ -128,7 +156,10 @@ function createPool(): DeerPool {
 }
 
 export function Animals(): ReactElement {
-  const pool = useMemo(createPool, []);
+  // Suspends until the GLB loads; the Canvas mounts post-welcome so the
+  // suspension is invisible. Same drei cache entry the other props use.
+  const gltf = useGLTF(PROPS_MODEL_URL);
+  const pool = useMemo(() => createPool(gltf.scene), [gltf.scene]);
 
   useFrame((_, delta) => {
     const animals = clientWorld.animals;
@@ -178,10 +209,11 @@ export function Animals(): ReactElement {
 
       // Diagonal leg pairs (FL+BR vs FR+BL) in antiphase.
       const swing = Math.sin(slot.phase) * slot.amp;
-      rig.legs[0].rotation.x = swing;
-      rig.legs[1].rotation.x = -swing;
-      rig.legs[2].rotation.x = -swing;
-      rig.legs[3].rotation.x = swing;
+      const [fl, fr, bl, br] = rig.legs;
+      if (fl) fl.rotation.x = swing;
+      if (fr) fr.rotation.x = -swing;
+      if (bl) bl.rotation.x = -swing;
+      if (br) br.rotation.x = swing;
 
       // Gallop: bounce the whole torso and rock it slightly.
       rig.torso.position.y = Math.abs(Math.sin(slot.phase)) * GALLOP_BOB_HEIGHT * slot.gallop;

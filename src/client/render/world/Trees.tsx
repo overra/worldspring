@@ -1,144 +1,160 @@
-// Forest: two low-poly variants drawn with InstancedMesh per part.
-// Conifer = trunk + two stacked cones, oak = trunk + olive icosahedron blob.
-// Matrices are written once per world in useLayoutEffect — fully static.
+// Forest: four modeled props.glb variants (tree_conifer_a/b, tree_oak_a/b)
+// drawn with one InstancedMesh per (variant x GLB primitive) — trunk +
+// foliage, so 8 instanced draws for the whole ~700-tree forest. Geometry and
+// materials come straight from the shared GLTF cache (never cloned per
+// instance); matrices are written once per world — fully static, no sway.
+// Variant choice hashes the tree's index in world.trees, which is
+// seed-deterministic, so every client sees the same forest.
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
+import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Tree } from "@/shared/world";
 import { clientWorld } from "@/client/runtime";
 
-const TRUNK_COLOR = "#5d4630";
-const CONIFER_COLOR = "#2f4a2d";
-const OAK_COLOR = "#6b7440";
+const PROPS_MODEL_URL = "/models/props.glb";
+useGLTF.preload(PROPS_MODEL_URL);
 
-// Base proportions are authored for an 8m tree; everything scales by height/8.
-const BASE_HEIGHT = 8;
 // Golden-angle increment gives a deterministic, non-repeating yaw per index.
 const YAW_STEP = 2.3999632;
 
+const VARIANT_NODES = {
+  conifer: ["tree_conifer_a", "tree_conifer_b"],
+  oak: ["tree_oak_a", "tree_oak_b"],
+} as const;
+
 interface TreeInstance {
   tree: Tree;
-  /** Index in world.trees — drives deterministic rotation variance. */
+  /** Index in world.trees — drives deterministic yaw/tilt/variant variance. */
   index: number;
+}
+
+interface VariantPart {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material | THREE.Material[];
+}
+
+interface VariantAssets {
+  parts: VariantPart[];
+  /** Native model height (m) — per-instance scale = tree.height / native. */
+  nativeHeight: number;
+}
+
+/** Deterministic 0/1 pick per tree. world.trees is seed-derived and
+ * index-stable across joins, so every client agrees. Bit-mixed so variants
+ * cluster irregularly instead of alternating by index parity. */
+function variantOf(index: number): number {
+  let h = Math.imul(index + 1, 0x9e3779b1) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h & 1;
+}
+
+/** Pulls shared geometry + material pairs out of a GLB node's mesh children
+ * (multi-primitive nodes load as Groups of Meshes). Nothing is cloned. */
+function extractVariant(scene: THREE.Group, name: string): VariantAssets | null {
+  const node = scene.getObjectByName(name);
+  if (!node) return null;
+  const parts: VariantPart[] = [];
+  node.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) parts.push({ geometry: obj.geometry, material: obj.material });
+  });
+  if (parts.length === 0) return null;
+  const box = new THREE.Box3().setFromObject(node);
+  return { parts, nativeHeight: Math.max(box.max.y, 1e-3) };
 }
 
 const dummy = new THREE.Object3D();
 
-function setMatrix(
-  mesh: THREE.InstancedMesh,
-  slot: number,
-  x: number,
-  y: number,
-  z: number,
-  sx: number,
-  sy: number,
-  sz: number,
-  yaw: number,
-  tilt: number,
-): void {
-  dummy.position.set(x, y, z);
-  dummy.rotation.set(tilt, yaw, -tilt);
-  dummy.scale.set(sx, sy, sz);
-  dummy.updateMatrix();
-  mesh.setMatrixAt(slot, dummy.matrix);
+function buildBucketMeshes(
+  assets: VariantAssets,
+  instances: TreeInstance[],
+  tiltable: boolean,
+): THREE.InstancedMesh[] {
+  const meshes: THREE.InstancedMesh[] = [];
+  assets.parts.forEach((part, partIndex) => {
+    const mesh = new THREE.InstancedMesh(part.geometry, part.material, instances.length);
+    mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    // Part 0 is the trunk (matches the old trunk mesh's receiveShadow).
+    mesh.receiveShadow = partIndex === 0;
+    instances.forEach(({ tree, index }, slot) => {
+      const s = tree.height / assets.nativeHeight;
+      const yaw = (index * YAW_STEP) % (Math.PI * 2);
+      // Slight deterministic lean (oaks only, like the old blob canopy);
+      // origin is at the trunk base so the lean never unroots the tree.
+      const tilt = tiltable ? Math.sin(index * 1.7) * 0.08 : 0;
+      dummy.position.set(tree.x, tree.groundY, tree.z);
+      dummy.rotation.set(tilt, yaw, -tilt);
+      dummy.scale.setScalar(s);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(slot, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    meshes.push(mesh);
+  });
+  return meshes;
+}
+
+interface Forest {
+  root: THREE.Group;
+  meshes: THREE.InstancedMesh[];
+}
+
+function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
+  // Two variants per kind; if one node is missing, fall back to its sibling
+  // (and skip the kind entirely only if both are gone).
+  const variants: Record<"conifer" | "oak", Array<VariantAssets | null>> = {
+    conifer: VARIANT_NODES.conifer.map((name) => extractVariant(scene, name)),
+    oak: VARIANT_NODES.oak.map((name) => extractVariant(scene, name)),
+  };
+
+  const buckets: Record<"conifer" | "oak", [TreeInstance[], TreeInstance[]]> = {
+    conifer: [[], []],
+    oak: [[], []],
+  };
+  trees.forEach((tree, index) => {
+    const pair = variants[tree.kind];
+    let v = variantOf(index);
+    if (!pair[v]) v = 1 - v; // missing node — sibling variant covers
+    if (!pair[v]) return; // both missing — kind unrenderable
+    buckets[tree.kind][v].push({ tree, index });
+  });
+
+  const root = new THREE.Group();
+  const meshes: THREE.InstancedMesh[] = [];
+  for (const kind of ["conifer", "oak"] as const) {
+    for (let v = 0; v < 2; v++) {
+      const assets = variants[kind][v];
+      const instances = buckets[kind][v];
+      if (!assets || instances.length === 0) continue;
+      for (const mesh of buildBucketMeshes(assets, instances, kind === "oak")) {
+        root.add(mesh);
+        meshes.push(mesh);
+      }
+    }
+  }
+  return { root, meshes };
 }
 
 export function Trees(): ReactElement | null {
+  const gltf = useGLTF(PROPS_MODEL_URL);
   const world = clientWorld.world;
 
-  const split = useMemo(() => {
+  const forest = useMemo(() => {
     if (!world) return null;
-    const all: TreeInstance[] = world.trees.map((tree, index) => ({ tree, index }));
-    return {
-      all,
-      conifers: all.filter((t) => t.tree.kind === "conifer"),
-      oaks: all.filter((t) => t.tree.kind === "oak"),
-    };
-  }, [world]);
-
-  const assets = useMemo(() => {
-    const trunkGeo = new THREE.CylinderGeometry(0.22, 0.3, 4.6, 6);
-    trunkGeo.translate(0, 2.3, 0); // origin at trunk base
-    const coneGeo = new THREE.ConeGeometry(1, 1, 7);
-    coneGeo.translate(0, 0.5, 0); // unit cone, base at origin
-    const blobGeo = new THREE.IcosahedronGeometry(1, 0);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: TRUNK_COLOR, flatShading: true });
-    const coniferMat = new THREE.MeshStandardMaterial({ color: CONIFER_COLOR, flatShading: true });
-    const oakMat = new THREE.MeshStandardMaterial({ color: OAK_COLOR, flatShading: true });
-    return { trunkGeo, coneGeo, blobGeo, trunkMat, coniferMat, oakMat };
-  }, []);
+    return buildForest(gltf.scene, world.trees);
+  }, [gltf.scene, world]);
 
   useEffect(() => {
+    if (!forest) return;
     return () => {
-      assets.trunkGeo.dispose();
-      assets.coneGeo.dispose();
-      assets.blobGeo.dispose();
-      assets.trunkMat.dispose();
-      assets.coniferMat.dispose();
-      assets.oakMat.dispose();
+      // Frees instance buffers only — geometry/materials belong to the
+      // shared GLTF cache and must outlive this component.
+      for (const mesh of forest.meshes) mesh.dispose();
     };
-  }, [assets]);
+  }, [forest]);
 
-  const trunksRef = useRef<THREE.InstancedMesh>(null);
-  const coneRef = useRef<THREE.InstancedMesh>(null);
-  const blobRef = useRef<THREE.InstancedMesh>(null);
-
-  useLayoutEffect(() => {
-    if (!split) return;
-    const trunks = trunksRef.current;
-    const cones = coneRef.current;
-    const blobs = blobRef.current;
-    if (!trunks || !cones || !blobs) return;
-
-    split.all.forEach(({ tree, index }, slot) => {
-      const s = tree.height / BASE_HEIGHT;
-      const yaw = (index * YAW_STEP) % (Math.PI * 2);
-      const thick = tree.kind === "oak" ? 1.25 : 1; // oaks get stockier trunks
-      setMatrix(trunks, slot, tree.x, tree.groundY, tree.z, s * thick, s, s * thick, yaw, 0);
-    });
-    trunks.instanceMatrix.needsUpdate = true;
-
-    split.conifers.forEach(({ tree, index }, slot) => {
-      const s = tree.height / BASE_HEIGHT;
-      const yaw = (index * YAW_STEP) % (Math.PI * 2);
-      // Lower wide cone + upper narrow cone; top lands at groundY + height.
-      setMatrix(cones, slot * 2, tree.x, tree.groundY + 2.1 * s, tree.z, 2.0 * s, 3.9 * s, 2.0 * s, yaw, 0);
-      setMatrix(cones, slot * 2 + 1, tree.x, tree.groundY + 4.7 * s, tree.z, 1.45 * s, 3.3 * s, 1.45 * s, yaw, 0);
-    });
-    cones.instanceMatrix.needsUpdate = true;
-
-    split.oaks.forEach(({ tree, index }, slot) => {
-      const s = tree.height / BASE_HEIGHT;
-      const yaw = (index * YAW_STEP) % (Math.PI * 2);
-      const tilt = Math.sin(index * 1.7) * 0.08; // slight deterministic lean
-      setMatrix(blobs, slot, tree.x, tree.groundY + 5.1 * s, tree.z, 2.4 * s, 2.1 * s, 2.4 * s, yaw, tilt);
-    });
-    blobs.instanceMatrix.needsUpdate = true;
-  }, [split]);
-
-  if (!split) return null;
-  return (
-    <group>
-      <instancedMesh
-        ref={trunksRef}
-        args={[assets.trunkGeo, assets.trunkMat, split.all.length]}
-        frustumCulled={false}
-        castShadow
-        receiveShadow
-      />
-      <instancedMesh
-        ref={coneRef}
-        args={[assets.coneGeo, assets.coniferMat, split.conifers.length * 2]}
-        frustumCulled={false}
-        castShadow
-      />
-      <instancedMesh
-        ref={blobRef}
-        args={[assets.blobGeo, assets.oakMat, split.oaks.length]}
-        frustumCulled={false}
-        castShadow
-      />
-    </group>
-  );
+  if (!forest) return null;
+  return <primitive object={forest.root} />;
 }
