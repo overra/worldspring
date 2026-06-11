@@ -18,6 +18,13 @@ export function DebugCollector(): null {
   useFrame((state) => {
     state.gl.info.autoReset = false;
     state.gl.info.reset();
+    // Dev/debug introspection: the app's real scene + gl (the dynamic
+    // import("three") hook resolves a DIFFERENT module instance, so
+    // prototype patching from the console can't observe these).
+    if (import.meta.env.DEV || window.location.search.includes("debug")) {
+      (window as unknown as { __scene?: unknown }).__scene = state.scene;
+      (window as unknown as { __gl?: unknown }).__gl = state.gl;
+    }
   }, 1);
 
   useFrame((state, delta) => {
