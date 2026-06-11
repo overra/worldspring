@@ -84,7 +84,12 @@ function extractParts(scene: THREE.Group, name: string): TrimPart[] {
   if (!node) return [];
   const parts: TrimPart[] = [];
   node.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) parts.push({ geometry: obj.geometry, material: obj.material });
+    if (!(obj instanceof THREE.Mesh)) return;
+    // The kit's window pane ("glass") would block the now-real opening —
+    // windows are see-through gameplay surfaces, so the pane stays out.
+    const mat = obj.material;
+    if (!Array.isArray(mat) && mat.name === "pane_dark") return;
+    parts.push({ geometry: obj.geometry, material: mat });
   });
   return parts;
 }
@@ -146,33 +151,22 @@ function collectBuilding(
     sz: 1,
   });
 
-  // --- Window frames on the non-door walls (center origin, +Z faces out) ---
-  const wide = isWideKind(b);
-  for (let side = 0; side < 4; side++) {
-    if (side === b.doorSide) continue;
-    const [nx, nz] = SIDE_NORMAL[side];
+  // --- Window frames: one per REAL opening (building.windows is the shared
+  // worldgen source that also cuts the wall geometry — frame and hole can
+  // never disagree). Slight overscale so the border hides the cut faces. ---
+  for (const win of b.windows) {
+    const [nx, nz] = SIDE_NORMAL[win.side];
     const tx = Math.abs(nz);
     const tz = Math.abs(nx);
-    const half = side < 2 ? b.halfW : b.halfD;
-    const usable = half - WINDOW_EDGE_MARGIN;
-    if (usable <= 0) continue;
-    const offsets = wide
-      ? [-rng.range(0.45, 0.7) * usable, rng.range(0.45, 0.7) * usable]
-      : [rng.range(-0.35, 0.35) * usable];
-    for (const t of offsets) {
-      const x = b.cx + nx * (b.halfW + TRIM_PROUD) + tx * t;
-      const z = b.cz + nz * (b.halfD + TRIM_PROUD) + tz * t;
-      if (distToSegment2D(x, z, gapAx, gapAz, gapBx, gapBz) < WINDOW_DOOR_CLEARANCE) continue;
-      push("window_frame", {
-        x,
-        y: b.floorY + WINDOW_CENTER_Y,
-        z,
-        yaw: SIDE_YAW[side],
-        sx: 1,
-        sy: 1,
-        sz: 1,
-      });
-    }
+    push("window_frame", {
+      x: b.cx + nx * (b.halfW + TRIM_PROUD) + tx * win.offset,
+      y: b.floorY + WINDOW_CENTER_Y,
+      z: b.cz + nz * (b.halfD + TRIM_PROUD) + tz * win.offset,
+      yaw: SIDE_YAW[win.side],
+      sx: 1.12,
+      sy: 1.12,
+      sz: 1,
+    });
   }
 
   // --- Corner posts: unit-height base origin, stretched skirt-to-roofline ---

@@ -13,7 +13,7 @@ import {
   WORLD_SIZE,
 } from "./constants";
 import { clamp, distSq2D, rayAabb, type Aabb, type Vec3 } from "./math";
-import { createRng, type Rng } from "./rng";
+import { createRng, hashString, type Rng } from "./rng";
 
 export type BuildingKind = "house" | "shed" | "barn" | "barracks" | "hangar";
 
@@ -34,6 +34,9 @@ export interface Building {
   wallHeight: number;
   /** 0:+Z 1:-Z 2:+X 3:-X — which side the door gap is on. */
   doorSide: number;
+  /** Real window openings cut from the walls (and framed by the trim kit).
+   * offset = signed distance along the wall from its center. */
+  windows: Array<{ side: number; offset: number }>;
   walls: Aabb[];
   roof: Aabb;
 }
@@ -200,6 +203,50 @@ function slopeAt(heightAt: (x: number, z: number) => number, x: number, z: numbe
   return max;
 }
 
+/** Window opening: 1.0m wide; sill 0.75 above the floor, head at 1.85. Sill
+ * height blocks walking (STEP_UP_MAX 0.6) but not a jump-vault (apex ~0.85),
+ * and shots/sight pass — the trim kit frames the same opening. */
+const WINDOW_WIDTH = 1.0;
+/** Doorway height — matches the trim kit's door frame lintel, closing the
+ * wall above it (the gap used to run to the roofline, leaving a visible
+ * hole over every door frame). */
+const DOOR_HEIGHT = 2.2;
+const WINDOW_SILL = 0.75;
+const WINDOW_HEAD = 1.85;
+/** No window center closer than this to a wall end (corner posts + jambs). */
+const WINDOW_EDGE_MARGIN = 1.4;
+/** Wide buildings get two windows per wall, others one. */
+const WIDE_WINDOW_KINDS = new Set(["barn", "hangar", "barracks"]);
+
+/** Deterministic per-building window layout — keyed off a hash, never the
+ * shared worldgen streams, so adding/changing windows can't shift towns,
+ * loot or trees for existing worlds. */
+function placeWindows(
+  seed: number,
+  id: number,
+  kind: string,
+  halfW: number,
+  halfD: number,
+  doorSide: number,
+): Array<{ side: number; offset: number }> {
+  const rng = createRng(hashString(`win|${seed}|${id}`) >>> 0);
+  const windows: Array<{ side: number; offset: number }> = [];
+  const wide = WIDE_WINDOW_KINDS.has(kind);
+  for (let side = 0; side < 4; side++) {
+    if (side === doorSide) continue;
+    const half = side < 2 ? halfW : halfD;
+    const usable = half - WINDOW_EDGE_MARGIN;
+    if (usable <= 0.2) continue;
+    if (wide) {
+      windows.push({ side, offset: -rng.range(0.35, 0.8) * usable });
+      windows.push({ side, offset: rng.range(0.35, 0.8) * usable });
+    } else {
+      windows.push({ side, offset: rng.range(-0.6, 0.6) * usable });
+    }
+  }
+  return windows;
+}
+
 function buildWalls(b: {
   cx: number;
   cz: number;
@@ -207,6 +254,7 @@ function buildWalls(b: {
   halfD: number;
   floorY: number;
   doorSide: number;
+  windows: Array<{ side: number; offset: number }>;
 }): { walls: Aabb[]; roof: Aabb } {
   const { cx, cz, halfW, halfD, floorY, doorSide } = b;
   const y0 = floorY - FOUNDATION_DEPTH;
@@ -225,20 +273,53 @@ function buildWalls(b: {
     horizontal: boolean,
   ): void => {
     if (which !== doorSide) {
-      walls.push({ minX, minZ, maxX, maxZ, y0, y1 });
+      // Cut real openings for this wall's windows: full-height strips
+      // between openings, plus below-sill and above-head boxes per opening.
+      // Sight, shots and a jump-vault pass; walking does not (sill 0.75).
+      const wins = b.windows
+        .filter((w) => w.side === which)
+        .map((w) => w.offset)
+        .sort((p, q) => p - q);
+      if (wins.length === 0) {
+        walls.push({ minX, minZ, maxX, maxZ, y0, y1 });
+        return;
+      }
+      const lo = horizontal ? minX : minZ;
+      const hi = horizontal ? maxX : maxZ;
+      const mid = (lo + hi) / 2;
+      const sillY = floorY + WINDOW_SILL;
+      const headY = floorY + WINDOW_HEAD;
+      const strip = (a: number, bnd: number, yLo: number, yHi: number): void => {
+        if (bnd - a < 0.01 || yHi - yLo < 0.01) return;
+        if (horizontal) walls.push({ minX: a, minZ, maxX: bnd, maxZ, y0: yLo, y1: yHi });
+        else walls.push({ minX, minZ: a, maxX, maxZ: bnd, y0: yLo, y1: yHi });
+      };
+      let cursor = lo;
+      for (const off of wins) {
+        const a = mid + off - WINDOW_WIDTH / 2;
+        const bnd = mid + off + WINDOW_WIDTH / 2;
+        strip(cursor, a, y0, y1); // solid strip up to the opening
+        strip(a, bnd, y0, sillY); // below the sill
+        strip(a, bnd, headY, y1); // above the head
+        cursor = bnd;
+      }
+      strip(cursor, hi, y0, y1);
       return;
     }
     const half = DOOR_WIDTH / 2;
+    const headerY = floorY + DOOR_HEIGHT;
     if (horizontal) {
       const mid = (minX + maxX) / 2;
       walls.push({ minX, minZ, maxX: mid - half, maxZ, y0, y1 });
       walls.push({ minX: mid + half, minZ, maxX, maxZ, y0, y1 });
       walls.push({ minX: mid - half, minZ, maxX: mid + half, maxZ, y0, y1: floorY });
+      walls.push({ minX: mid - half, minZ, maxX: mid + half, maxZ, y0: headerY, y1 });
     } else {
       const mid = (minZ + maxZ) / 2;
       walls.push({ minX, minZ, maxX, maxZ: mid - half, y0, y1 });
       walls.push({ minX, minZ: mid + half, maxX, maxZ, y0, y1 });
       walls.push({ minX, minZ: mid - half, maxX, maxZ: mid + half, y0, y1: floorY });
+      walls.push({ minX, minZ: mid - half, maxX, maxZ: mid + half, y0: headerY, y1 });
     }
   };
 
@@ -356,6 +437,7 @@ export function createWorld(seed: number): World {
     const doorC = doorCandidates[doorSide];
     const doorGround = heightAt(px + doorC.dx, pz + doorC.dz);
     floorY = Math.min(floorY, doorGround + STEP_UP_MAX - 0.15);
+    const windows = placeWindows(seed, buildingId, spec.kind, spec.halfW, spec.halfD, doorSide);
     const base = {
       cx: px,
       cz: pz,
@@ -363,6 +445,7 @@ export function createWorld(seed: number): World {
       halfD: spec.halfD,
       floorY,
       doorSide,
+      windows,
     };
     const { walls, roof } = buildWalls(base);
     buildings.push({
