@@ -109,9 +109,17 @@ function Hotbar(): ReactElement {
           >
             <span className="hotbar-index">{i + 1}</span>
             {stack !== null && (
-              <span
-                className="hotbar-swatch"
-                style={{ background: ITEM_DEFS[stack.type].color }}
+              <img
+                className="hotbar-swatch hotbar-icon"
+                src={`/icons/${stack.type}.png`}
+                alt={ITEM_DEFS[stack.type].name}
+                draggable={false}
+                onError={(e) => {
+                  // Missing icon: fall back to the flat color swatch.
+                  e.currentTarget.style.background = ITEM_DEFS[stack.type].color;
+                  e.currentTarget.style.visibility = "visible";
+                  e.currentTarget.removeAttribute("src");
+                }}
               />
             )}
             {stack !== null && stack.count > 1 && (
@@ -211,7 +219,16 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
   return (
     <div className="inv-row">
       <span className="inv-slot-num">{slot + 1}</span>
-      <span className="inv-swatch" style={{ background: def.color }} />
+      <img
+        className="inv-swatch inv-icon"
+        src={`/icons/${stack.type}.png`}
+        alt=""
+        draggable={false}
+        onError={(e) => {
+          e.currentTarget.style.background = def.color;
+          e.currentTarget.removeAttribute("src");
+        }}
+      />
       <span className="inv-name">{def.name}</span>
       <span className="inv-count">×{stack.count}</span>
       <span className="inv-kind">{def.kind}</span>

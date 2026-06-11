@@ -1029,3 +1029,20 @@
   flex: none;
   text-align: right;
 }
+
+/* Rendered item icons (Blender stills) in the hotbar + inventory. The base
+   swatch classes keep their box size; icons just fill them. */
+.hotbar-icon {
+  object-fit: contain;
+  image-rendering: auto;
+  background: transparent !important;
+  width: 80%;
+  height: 80%;
+}
+
+.inv-icon {
+  object-fit: contain;
+  background: transparent;
+  width: 22px;
+  height: 22px;
+}

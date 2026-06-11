@@ -186,12 +186,15 @@ declare global {
     __game?: { inputState: InputState; clientWorld: ClientWorldState };
   }
 }
-if (import.meta.env.DEV && typeof window !== "undefined") {
+const debugHooks =
+  typeof window !== "undefined" &&
+  (import.meta.env.DEV || window.location.search.includes("debug"));
+if (debugHooks) {
   window.__game = { inputState, clientWorld };
 }
 
 // Dev-only: expose three for console profiling (tree-shaken out of prod).
-if (import.meta.env.DEV && typeof window !== "undefined") {
+if (debugHooks) {
   void import("three").then((m) => {
     (window as unknown as { __THREE?: unknown }).__THREE = m;
   });
