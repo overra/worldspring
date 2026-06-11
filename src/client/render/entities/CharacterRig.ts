@@ -31,6 +31,15 @@ export interface CharacterRig {
   /** One-shot full-body action (LoopOnce). Locomotion weight fades down for
    * the duration and back up when the mixer fires "finished". */
   playOverlay(kind: OverlayKind): void;
+  /** Plays an arbitrary clip by GLB name as a clamped one-shot (LoopOnce +
+   * clampWhenFinished), stopping locomotion and any overlay first. Built for
+   * corpse pools: 1-keyframe `*_Pose` clips freeze after a single update();
+   * full death clips need per-frame update() until the returned duration
+   * elapses, then hold their last frame at zero mixer cost. Returns the clip
+   * duration in seconds, or null (rig unchanged) when the clip is missing.
+   * Locomotion does NOT auto-resume afterwards — pose rigs are expected to
+   * playPose again on slot reuse, never to go back to setLocomotion. */
+  playPose(clipName: string): number | null;
   /** Low-level: parents an arbitrary object to the right-hand slot bone
    * (replacing whatever is there). Prefer setHeldItem for inventory items. */
   attachHeldItem(mesh: THREE.Object3D | null): void;
@@ -404,6 +413,20 @@ export function createCharacterRig(kind: CharacterKind): CharacterRig {
     locoAction.fadeOut(OVERLAY_FADE_IN_S);
   };
 
+  const playPose = (clipName: string): number | null => {
+    const action = actionFor(clipName);
+    if (!action) return null;
+    mixer.stopAllAction();
+    overlayAction = null;
+    action.reset(); // also stops any in-flight fade
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    // A completed fadeOut leaves weight at 0 on the cached action — restore it.
+    action.setEffectiveWeight(1);
+    action.play();
+    return action.getClip().duration;
+  };
+
   const onFinished = (event: { action: THREE.AnimationAction }): void => {
     if (event.action !== overlayAction) return; // a superseded overlay ended
     event.action.fadeOut(OVERLAY_FADE_OUT_S);
@@ -479,6 +502,7 @@ export function createCharacterRig(kind: CharacterKind): CharacterRig {
     root,
     setLocomotion,
     playOverlay,
+    playPose,
     attachHeldItem,
     setHeldItem,
     setTint,
