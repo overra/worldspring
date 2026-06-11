@@ -3,6 +3,8 @@
 // the same statics and water rules as players.
 
 import {
+  WATER_WALK_MIN,
+  ZOMBIE_RADIUS,
   MILITARY_RESPAWN_MIN_PLAYER_DIST,
   MILITARY_ZOMBIE_DMG,
   MILITARY_ZOMBIE_HP,
@@ -24,7 +26,7 @@ import {
   ZOMBIES_PER_TOWN,
 } from "@/shared/constants";
 import { distSq2D } from "@/shared/math";
-import { stepZombie } from "@/shared/movement";
+import { resolveStatics, stepZombie } from "@/shared/movement";
 import type { World } from "@/shared/world";
 import { spawnZombieCorpse } from "./loot";
 import { damagePlayer } from "./survival";
@@ -217,6 +219,77 @@ export function tickZombies(state: GameState, dt: number): void {
     } else {
       zombie.state = "idle";
     }
+  }
+
+  separateZombies(state);
+}
+
+/** Minimum center distance between two zombies (slightly under 2x radius so
+ * a pack reads as a crowd, not a single stacked model). */
+const ZOMBIE_SEPARATION = ZOMBIE_RADIUS * 1.9;
+/** Zombies are pushed out of players' capsules one-sidedly: only the zombie
+ * moves, so client-side player prediction never diverges. */
+const PLAYER_SEPARATION = ZOMBIE_RADIUS + 0.45;
+
+/**
+ * Soft separation pass after movement: zombies converging on one target no
+ * longer interpenetrate into a single stacked model. One iteration per tick
+ * is enough — 15Hz convergence reads as natural shuffling. O(n^2) over at
+ * most ZOMBIE_MAX zombies (~1.8k pair checks) is negligible.
+ */
+function separateZombies(state: GameState): void {
+  const zombies = [...state.zombies.values()];
+  const pushedIds = new Set<number>();
+
+  for (let i = 0; i < zombies.length; i++) {
+    const a = zombies[i];
+    for (let j = i + 1; j < zombies.length; j++) {
+      const b = zombies[j];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq >= ZOMBIE_SEPARATION * ZOMBIE_SEPARATION) continue;
+      const d = Math.sqrt(dSq);
+      // Perfectly stacked pair: split along a deterministic-ish axis.
+      const nx = d > 1e-4 ? dx / d : 1;
+      const nz = d > 1e-4 ? dz / d : 0;
+      const push = (ZOMBIE_SEPARATION - d) / 2;
+      a.x -= nx * push;
+      a.z -= nz * push;
+      b.x += nx * push;
+      b.z += nz * push;
+      pushedIds.add(a.id);
+      pushedIds.add(b.id);
+    }
+    // One-sided push out of player capsules.
+    for (const player of state.players.values()) {
+      if (!player.alive) continue;
+      const dx = a.x - player.core.x;
+      const dz = a.z - player.core.z;
+      const dSq = dx * dx + dz * dz;
+      if (dSq >= PLAYER_SEPARATION * PLAYER_SEPARATION) continue;
+      const d = Math.sqrt(dSq);
+      const nx = d > 1e-4 ? dx / d : 1;
+      const nz = d > 1e-4 ? dz / d : 0;
+      a.x = player.core.x + nx * PLAYER_SEPARATION;
+      a.z = player.core.z + nz * PLAYER_SEPARATION;
+      pushedIds.add(a.id);
+    }
+  }
+
+  // Pushed zombies re-resolve against statics/water and re-snap to ground so
+  // separation can never shove them into a wall or the sea.
+  for (const zombie of zombies) {
+    if (!pushedIds.has(zombie.id)) continue;
+    if (state.world.heightAt(zombie.x, zombie.z) < WATER_WALK_MIN) {
+      // Pushed into deep water: pull back toward home instead.
+      zombie.x = zombie.homeX;
+      zombie.z = zombie.homeZ;
+    }
+    const [nx, nz] = resolveStatics(state.world, zombie.x, zombie.z, zombie.y, ZOMBIE_RADIUS);
+    zombie.x = nx;
+    zombie.z = nz;
+    zombie.y = state.world.groundHeight(zombie.x, zombie.z);
   }
 }
 
