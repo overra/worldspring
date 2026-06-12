@@ -39,6 +39,7 @@ A directory full of servers with *personalities* is the product.
 | [05-items-scavenging-crafting.md](05-items-scavenging-crafting.md) | Minutes 10–120: 16 new data-driven items, searchable containers on a new hash-salted rng stream, tree gather nodes, deer corpses + knife harvest, flat `RECIPES` crafting, jacket/backpack wear slots. |
 | [06-base-building.md](06-base-building.md) | Base building v1: mutable shared `StructureIndex` merged into the statics queries (zero movement.ts changes), snap-to-grid `canPlace`, global `sFull`/`sAdd` deltas, single-blob persistence, code locks, melee raiding, decay. |
 | [07-world-and-wildlife.md](07-world-and-wildlife.md) | World expansion: standard/large/huge tiers, chunked LOD terrain (fog-bounded), carve-in-heightfield rivers/ponds + wading + fishing, Deer→Animal species framework (rabbit/boar/wolf packs), fingerprint harness CI gate. |
+| [08-rendering-performance.md](08-rendering-performance.md) | Measured frame budget (the scene is post/fill-bound, not geometry-bound): device/GPU auto-tier + a real mobile tier (the launch gate), baked static-world vertex AO to kill the ~46%-of-frame N8AO line, shadow/rig budgets, WebGPU scoped as blocked R&D. |
 | `research/` | Ground truth the docs cite: `cf-costs.md` (billing math — read this one regardless), `cf-deploy.md`, `cf-oauth.md`, `codebase-server.md`, `codebase-sim.md`, `directory-prior-art.md`. |
 
 ### Canonical vocabulary (who owns what)
@@ -54,6 +55,7 @@ Parallel-written docs share these names; the owner's definition is binding:
 | `wood`/`scrap` items, tree-gather faucet, fishing/canteen items | doc 05 | Doc 06 consumes them verbatim; doc 07 M12 replaces only doc 05's *interim fishing mechanic*, never the items. |
 | `cOpen`/`cMove`/`cont` container protocol, `hammer`, `BuildingConfig` semantics | doc 06 | Doc 04 §1 carries the amended `BuildingConfig {enabled, pieceCapPerPlayer, decayHours, offlineRaidMult}`. |
 | `WorldSizeTier` value set (standard/large/huge), tier tables, `waterAt`, `WORLDGEN_VERSION`, species framework | doc 07 | Doc 04's M6 tier work is **subsumed by doc 07 M1–M2** — implement once, through doc 07. |
+| Client render tiers: `QualityConfig` knobs, `detectTier`, `mobile` profile, baked-AO vertex pass, the `?debug=1` frame profiler | doc 08 | Doc 04's presets dial *server* entity counts; doc 08 owns *client* render quality. The two meet only at doc 08 M6's worst-case test scene (doc 04 `zombieDensity:2` + doc 07 species ceilings). |
 
 ## Dependency graph
 
@@ -67,6 +69,7 @@ graph TD
     D05["05 items + scavenging + crafting"]
     D06["06 base building"]
     D07["07 world + water + wildlife"]
+    D08["08 rendering performance<br/>auto-tier + mobile + baked AO"]
 
     D03 -->|release gate needs PROTOCOL_VERSION + route| D01
     D03 -->|probes + heartbeat contract| D02
@@ -84,6 +87,9 @@ graph TD
     P -.->|free-plan copy gate M6| D01
     P -.->|community-host gate M4| D05
     P -.->|large/huge viability| D07
+    D04 -.->|entity-count ceilings = M6 worst-case scene| D08
+    D07 -.->|render milestones share the frame budget| D08
+    D08 -.->|mobile tier gates the community-server launch| D02
 ```
 
 Solid arrows are hard dependencies; dotted arrows are gates on specific milestones
@@ -91,7 +97,35 @@ Solid arrows are hard dependencies; dotted arrows are gates on specific mileston
 M1–M2**: between them they gate doc 01's release artifacts, doc 02's entire contract
 surface, doc 07's M1, and the version-gate story every gameplay doc leans on. The
 gameplay docs (05/06/07) are otherwise **independent of the platform docs (01/02)** —
-the game can grow while the hosting story is built in parallel.
+the game can grow while the hosting story is built in parallel. **Doc 08 has no hard
+dependency** — it is client render code that can start any time; its only couplings are
+soft (its acceptance scenes use doc 04/07 ceilings, and its mobile tier gates a credible
+public launch).
+
+## Client frame budget (the binding render anchor)
+
+Every gameplay doc that adds something to the screen is spending against a measured
+budget, and that budget does **not** live where the docs assume. Profiled on an M3 Max /
+ProMotion display, in-town, `high` tier (doc 08 has the full table): the frame costs
+**~24 ms and is post/fill/CPU-bound** — N8AO ambient occlusion alone is **~11 ms (~46 %
+of the frame)**, shadows ~2.6 ms, `dpr`-2 fill is most of the rest; **draw calls and
+triangles together measured < 1 ms.** Three rules fall out, binding on docs 04/06/07:
+
+1. **Acceptance criteria measure frame-time and main-thread-ms, not draw counts.** Doc
+   07's chunked terrain ("~32K verts, ≤45 draws") and doc 06's instancing ("≤14 draws")
+   are correctly *optimizing a non-bottleneck on desktop* — keep them (they matter for
+   mobile and upload spikes), but gate them on measured **frame ms** plus a **mid-tier
+   device** check, not draw/triangle counts.
+2. **Main-thread rig updates are the one shared budget line.** Doc 04 (`zombieDensity:2` =
+   120 zombies), doc 07 (up to 256 animals), and doc 06 (per-delta matrix rewrites) all
+   draw on it. It is masked under GPU-bound frames on an M3 Max but surfaces on weaker
+   GPUs — doc 08 M6 owns bounding it, with those ceilings as the worst-case test scene.
+3. **No client device/GPU auto-detect exists** (`settings.ts` hardcodes `quality:"high"`)
+   — every phone boots dpr-2 + full-res AO. This is a **launch-blocking gap** for the
+   "anyone joins any server" pitch, owned by doc 08 M2–M3.
+
+Doc 08 is measurement-gated and **off the critical path** — it ships behind the spine, but
+the gameplay docs must write their perf acceptance criteria in this vocabulary.
 
 ## Recommended build order
 
@@ -157,6 +191,18 @@ Everything else fans out from here.
 14. **Doc 02 M8 + Doc 01 M9** — launch wiring, official-instance registration,
     SELF_HOSTING docs, the one-way public-OAuth promotion. *(Sonnet 4.8 + Adam manual
     steps. Hard-blocked on the custom-domain decision.)*
+
+### Doc 08 — rendering (no hard deps; weave through the waves)
+
+Client-render-only, so it slots wherever there's a free session rather than gating
+anything. Suggested placement: **M1 profiler early in Wave 1** (cheap, and every later
+gameplay milestone can then self-check its frame cost); **M4 baked AO in Wave 2 alongside
+doc 07's chunked-terrain milestone** (both touch the terrain vertex pipeline — sequence
+M4 right after doc 07 M3/M4 to share context); **M5 AO/shadow retune and M6 rig budget in
+Wave 2–3** (M6's worst-case scene needs doc 04's `zombieDensity:2` and doc 07's species
+ceilings to exist); **M2–M3 auto-tier + mobile as a Wave 3 launch gate** (the mobile tier
+is a prerequisite for a credible public launch, item 14). **M7 WebGPU is parked R&D** —
+not scheduled. *(M4/M6 Opus 4.8 — render-correctness + hot loop; M1/M2/M3/M5 Sonnet 4.8.)*
 
 ## Open questions for Adam
 
@@ -264,6 +310,21 @@ when the answer is needed.
 24. **Ship `huge`/`frontier` at launch?** *(doc 07 Q6)* — pre-persistAll-fix, 24/7 huge
     is ~$90–100/mo on paid; post-fix ~$15–24/mo. **Rec: hold behind "experimental";
     ship standard + large, validate huge via M11 after the fix.**
+
+### Needed for rendering (Wave 1–3)
+
+25. **Ship target for `high` on desktop** *(doc 08 Q1)* — `high` ≈ 90 fps (dpr 1.5 +
+    baked + half-res AO) vs *locked* 120 (forces dynamic AO essentially off). **Rec:
+    `high` = ~90–110 fps; add opt-in `ultra` (dpr 2, full AO) for fidelity-over-fps.**
+26. **Baked static-world AO — go?** *(doc 08 Q2)* — the doc's load-bearing bet; a visible
+    (improving) restyle of static surfaces, gated on your look sign-off at M4. **Rec:
+    yes — it is the only thing that makes AO cheap on every device at once.** **Pin
+    `simplex-noise` to `4.0.3` exact** *(doc 08 Q5; also a doc 07 determinism finding)*:
+    **yes, the caret range is a latent client/server desync hazard.**
+27. **WebGPU R&D priority** *(doc 08 Q4)* — spike now or park until the pmndrs post stack
+    ships WebGPU parity (the migration is blocked on it; it is *not* a geometry/AO fix).
+    **Rec: park; revisit when the post ecosystem moves or the mobile rig budget needs
+    compute offload. No gameplay doc forces it.**
 
 ## How to use these docs with Claude
 
