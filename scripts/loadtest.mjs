@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// DEADCOAST load-test harness — drives N protocol-faithful bots against the
+// Worldspring load-test harness — drives N protocol-faithful bots against the
 // GameRoom WebSocket and reports join success, snapshot bandwidth, RTT
 // percentiles, socket closes and the server's /api/health stats.
 //

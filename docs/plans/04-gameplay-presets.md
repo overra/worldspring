@@ -945,7 +945,7 @@ Anything beyond these four fields (plus the restore action) = redeploy with a ne
 
 ## Migration & compatibility
 
-- **Official deployed instance** (`survival-game.adam-730.workers.dev`): no
+- **Official deployed instance** (`worldspring.adam-730.workers.dev`): no
   `GAME_CONFIG` var → `DEFAULT_CONFIG` → behavior identical. First boot after deploy
   finds `world_seed=1337` matching and `world_fingerprint` absent → writes the
   fingerprint without wiping. Characters, world state, leaderboard all survive.

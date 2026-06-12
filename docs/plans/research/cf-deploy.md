@@ -18,7 +18,7 @@ implementing; this API surface moves weekly. Anything not directly confirmed is 
 
 ```jsonc
 {
-  "name": "survival-game",
+  "name": "worldspring",
   "main": "src/server/worker.ts",
   "compatibility_date": "2026-06-01",
   "assets": { "not_found_handling": "single-page-application" },

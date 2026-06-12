@@ -1,4 +1,4 @@
-# DEADCOAST
+# Worldspring
 
 A web-based DayZ-like: multiplayer survival on a procedurally generated island.
 Loot towns, manage hunger/thirst/temperature, fight zombies and other players.

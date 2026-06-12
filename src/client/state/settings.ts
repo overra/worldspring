@@ -41,6 +41,18 @@ export interface SettingsState {
   setShowDebug(v: boolean): void;
 }
 
+// One-time migration of the pre-Worldspring settings key (dc_settings → ws_settings):
+// copy the legacy value forward if the new key is unset so existing players keep their
+// settings. Harmless if storage is blocked (private browsing) — we just fall to defaults.
+try {
+  if (localStorage.getItem("ws_settings") === null) {
+    const legacy = localStorage.getItem("dc_settings");
+    if (legacy !== null) localStorage.setItem("ws_settings", legacy);
+  }
+} catch {
+  // storage unavailable — ignore
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -54,7 +66,7 @@ export const useSettingsStore = create<SettingsState>()(
       setQuality: (quality) => set({ quality }),
       setShowDebug: (showDebug) => set({ showDebug }),
     }),
-    { name: "dc_settings" },
+    { name: "ws_settings" },
   ),
 );
 

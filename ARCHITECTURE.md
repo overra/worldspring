@@ -1,4 +1,4 @@
-# DEADCOAST — web survival (DayZ-like)
+# Worldspring — web survival (DayZ-like)
 
 Multiplayer survival: spawn on the coast of an island, loot towns, manage
 hunger/thirst/health/temperature, fight zombies and other players. Authoritative
