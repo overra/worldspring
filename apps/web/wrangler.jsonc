@@ -1,0 +1,20 @@
+{
+  // @astrojs/cloudflare v13 generates `main` + `assets` itself — do NOT set them
+  // here. The adapter uses @cloudflare/vite-plugin, which validates a `main` path
+  // at config time, before `astro build` produces dist/_worker.js. We provide
+  // only name, compat, and bindings; the adapter wires the rest.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "worldspring-web",
+  "compatibility_date": "2026-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "worldspring-directory",
+      // SETUP: `wrangler d1 create worldspring-directory` then paste the id here
+      // (apps/prober binds the SAME id).
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "observability": { "enabled": true }
+}

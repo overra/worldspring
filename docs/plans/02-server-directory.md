@@ -1,5 +1,14 @@
 # Official Site & Server Directory
 
+> **Superseded in part (monorepo, PR #2):** the separate `site/` Hono worker
+> below is now ONE Astro app — `apps/web` — prerendered landing + Starlight docs +
+> the directory as per-route SSR with a D1 binding; the cron prober is the
+> standalone `apps/prober` Worker. See [doc 09 §5–§6](09-monorepo-migration.md)
+> for the layout and the v13 `import { env } from "cloudflare:workers"` binding API
+> (`Astro.locals.runtime` is gone). The data model, server tokens, ranking,
+> probe-first liveness, and trust boundaries here all still apply — only the
+> framework and worker layout changed.
+
 Design doc for `site/` — the deadcoast landing page that doubles as the flagship server
 directory. Companion to doc-01 (hosted deploy flow), doc-03 (the `/api/server-info` +
 heartbeat contract, `src/shared/serverInfo.ts`) and doc-04 (ServerConfig / presets,
@@ -814,7 +823,7 @@ spec is canonical — implement once, against it.
    tick (fire-and-forget, only when `DIRECTORY_URL` + `DIRECTORY_TOKEN` set); `Env`
    typegen. Acceptance: `npm run typecheck` green; local `curl /api/server-info`
    returns the documented shape idle AND with a connected client; loadtest
-   (`scripts/loadtest.mjs`) unchanged-green; tick EMA unchanged with heartbeats enabled
+   (`apps/game/scripts/loadtest.mjs`) unchanged-green; tick EMA unchanged with heartbeats enabled
    against a mock directory.
 2. **M2 — Site scaffold** *(Sonnet 4.8)*. `site/` per §1: wrangler.jsonc, package.json
    (hono pinned), tsconfig (strict, hono/jsx), D1 migrations for the §3 schema,

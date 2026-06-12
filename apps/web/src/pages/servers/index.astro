@@ -1,0 +1,33 @@
+---
+// SSR directory page (runs on the Worker). The full ranked listing, filters,
+// and per-server pages land with doc 02; this scaffold proves a per-route SSR
+// page builds, reads D1 via the v13 `cloudflare:workers` env API, and that the
+// @worldspring/shared package resolves inside Astro's SSR build (vite.ssr.noExternal).
+export const prerender = false;
+import { env } from "cloudflare:workers";
+import { MAX_PLAYERS } from "@worldspring/shared/constants";
+
+let count = 0;
+try {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM servers").first<{
+    n: number;
+  }>();
+  count = Number(row?.n ?? 0);
+} catch {
+  // local dev without a migrated D1 — show 0
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Servers — Worldspring</title>
+  </head>
+  <body>
+    <main>
+      <h1>Community servers</h1>
+      <p>{count} registered. Player counts are capped at {MAX_PLAYERS}.</p>
+    </main>
+  </body>
+</html>

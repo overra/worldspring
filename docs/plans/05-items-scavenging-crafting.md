@@ -649,7 +649,7 @@ the existing pickup prompts; same `[E]` affordance (`HUD.tsx:139-147`).
 
 Order: M1 → M2 → (M3 → M4) → M5 → M6 → M7. M3/M4 can proceed in parallel with M2. Each
 milestone ends with `npm run typecheck` clean and a manual two-client smoke test via
-`npm run dev` (`scripts/loadtest.mjs` for tick-budget regression after M4, which adds the
+`npm run dev` (`apps/game/scripts/loadtest.mjs` for tick-budget regression after M4, which adds the
 only new per-tick sweeps).
 
 1. **M1 — Catalog + use behaviors as data** *(Sonnet 4.8)*.
