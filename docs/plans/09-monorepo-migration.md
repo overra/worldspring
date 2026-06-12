@@ -1112,3 +1112,15 @@ reset is unrecoverable); **Sonnet 4.8** for mechanical moves and scaffolds.
    OAuth-client visibility needs a TXT-verifiable custom domain; the same now lands on the
    Astro app's host. The `site:` config and the join interstitial copy depend on the final
    origin — decide before authoring directory/docs URLs.
+10. **Publishing `@worldspring/shared` to npm (future — NOT this migration).** The npm org
+   `worldspring` is now owned, so the `@worldspring/*` scope is publishable. The natural
+   public package is `@worldspring/shared` — community/forked servers building against the
+   official sim need it version-locked, or worldgen/protocol skew (exactly what doc 03's
+   `PROTOCOL_VERSION` gate catches) becomes an *ecosystem* problem, not just a same-deploy
+   one. This **reopens the "ship raw `.ts`, no build, `workspace:*` internal" decision
+   (§Design 1) for the *published* artifact only** — a public package usually wants semver +
+   `.d.ts` + a release flow, whereas raw-TS-no-build is what protects floating-point worldgen
+   determinism. **Recommendation: out of scope here — ship `shared` workspace-internal + raw
+   now; treat "publish `@worldspring/shared`" as a separate later step with its own packaging
+   call (raw-TS publish vs a verified build that re-runs the determinism fingerprint on the
+   emitted artifact).**
