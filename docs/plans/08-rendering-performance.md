@@ -38,8 +38,8 @@ not a fix: the entire dominant cost is the WebGL-only `@react-three/postprocessi
 
 This doc is **measurement-gated and off the critical path.** It ships behind the
 gameplay/platform spine; every milestone is A/B'd on real hardware with the harness in
-`scripts/perf-probes.md` (committed in M1). Acceptance criteria measure **frame time and
-main-thread ms**, never draw counts.
+`scripts/perf-probes.md` (committed with this doc; M1 promotes it into a `?debug=1`
+overlay). Acceptance criteria measure **frame time and main-thread ms**, never draw counts.
 
 ## Goals / Non-goals
 
