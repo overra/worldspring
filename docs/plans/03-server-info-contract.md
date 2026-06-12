@@ -74,7 +74,7 @@ Verified against this worktree:
   (GameRoom.ts:173-174). CORS `*` (GameRoom.ts:191-195). Two consumer notes: `players` is
   `game.players.size`, which **includes offline lingering bodies**, and `uptime` is
   `game.time` — **world age, which persists across restarts via SQLite meta** — not process
-  uptime. The loadtest harness consumes this endpoint verbatim (`scripts/loadtest.mjs:331,
+  uptime. The loadtest harness consumes this endpoint verbatim (`apps/game/scripts/loadtest.mjs:331,
   394`), so its shape is load-bearing for tooling.
 - **Tick lifecycle**: `startTicking()` is only called from `fetch` on a WebSocket upgrade
   (GameRoom.ts:209, 367-370). The tick stops via `stopAndPersist` (GameRoom.ts:613-622) from
@@ -309,7 +309,7 @@ Decision: **keep `/api/health` exactly as is; add `/api/server-info` beside it.*
 
 - `/api/health` is the *ops* endpoint: tick timing EMA/max, entity counts — internals that
   should stay free to evolve without a versioning ceremony. The loadtest harness depends on
-  its current shape (`scripts/loadtest.mjs:331, 394`); changing it buys nothing.
+  its current shape (`apps/game/scripts/loadtest.mjs:331, 394`); changing it buys nothing.
 - `/api/server-info` is the *product* endpoint: versioned, additive-only, public contract.
   Directory, third parties, and the official client read this one.
 - Merging would either freeze the ops shape under the compat rules (bad) or version the ops

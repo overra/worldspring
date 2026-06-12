@@ -1,0 +1,24 @@
+{
+  "name": "@worldspring/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "wrangler dev",
+    "deploy": "astro build && wrangler deploy",
+    "typecheck": "astro check",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "astro": "^6.4.6",
+    "@astrojs/cloudflare": "^13.7.0",
+    "@astrojs/starlight": "^0.40.0",
+    "@worldspring/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.0",
+    "typescript": "catalog:",
+    "wrangler": "catalog:"
+  }
+}

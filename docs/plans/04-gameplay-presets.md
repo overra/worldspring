@@ -894,7 +894,7 @@ Anything beyond these four fields (plus the restore action) = redeploy with a ne
 - `GameState.config` threads through every system signature-free (it's already passed
   as `state`), but **tests and the loadtest bot** must now construct a config;
   `createGameState` gains a required parameter (one-line fix at each call site,
-  `scripts/loadtest.mjs` is protocol-level and unaffected).
+  `apps/game/scripts/loadtest.mjs` is protocol-level and unaffected).
 - M1 stands up the repo's **first test harness** — `package.json` has no test runner,
   no test script, no vitest/jest/miniflare today. Vitest in plain node mode covers
   everything pure (`resolveServerConfig`/`clampConfig` fuzzing, `DEFAULT_CONFIG` ⇔

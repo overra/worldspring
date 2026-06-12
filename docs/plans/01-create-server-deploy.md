@@ -737,7 +737,7 @@ is acceptable in the interim). The persistAll one-row-snapshot fix (research/cf-
 §6 lever 1) is tracked outside this plan but gates the free-plan marketing copy in M6.
 
 1. **M1 — Scratch-account spike** *(Sonnet 4.8)* — no repo code changes except
-   `scripts/spike-deploy.mjs` (zero-dep Node, like `scripts/loadtest.mjs`). Enumerate
+   `scripts/spike-deploy.mjs` (zero-dep Node, like `apps/game/scripts/loadtest.mjs`). Enumerate
    `GET /oauth/scopes` and pin the Workers write scope ID; create a private confidential
    client; run the full code+secret exchange; record `expires_in`/token shape; confirm
    `GET /accounts` discovery; then drive the full §5 call sequence into a brand-new free

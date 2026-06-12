@@ -634,7 +634,7 @@ zombies, 10 deer, ~90 loot entities. At `frontier` (4x): ~320 zombies, ~280 anim
   for *paid* large/huge hosting being cheap, not just for free-plan viability; the
   directory/server-info labels for large/huge presets should carry the cost caveat until
   it lands. This doc treats that fix as an external prerequisite, not a milestone here.
-- **Acceptance gate:** rerun `scripts/loadtest.mjs` (20 bots / 120s) against `frontier`;
+- **Acceptance gate:** rerun `apps/game/scripts/loadtest.mjs` (20 bots / 120s) against `frontier`;
   pass = 100% joins, tick max < 15ms, no unexpected closes.
 
 ## Implications
@@ -830,7 +830,7 @@ M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
     growth).
 
 11. **M11 — Huge-tier capacity validation** *(Sonnet 4.8)*
-    Files: `scripts/loadtest.mjs` config pass-through; results appended to this doc.
+    Files: `apps/game/scripts/loadtest.mjs` config pass-through; results appended to this doc.
     Accept: 20 bots / 120s on `frontier`: 100% joins, tick max <15ms, EMA <4ms, boot
     `createWorld` time recorded; free-plan caveat AND the §8 paid-plan cost numbers
     (pre-fix ~$90-100/mo vs post-fix ~$15-24/mo for 24/7 large/huge) documented in

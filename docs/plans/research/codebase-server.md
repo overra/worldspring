@@ -265,7 +265,7 @@ Deployed name `worldspring` (wrangler.jsonc:3) → `worldspring.adam-730.workers
 
 Local dev: `npm run dev` runs Vite with the plugin's workerd integration — client on
 :5173, the worker + DO running in local workerd with local SQLite (README.md:12-14).
-The loadtest header (scripts/loadtest.mjs:6-7) targets `ws://localhost:4173/ws`, i.e.
+The loadtest header (apps/game/scripts/loadtest.mjs:6-7) targets `ws://localhost:4173/ws`, i.e.
 `vite preview` of a production build.
 
 ### Env/bindings surface and parameterizing a deployment
@@ -307,10 +307,10 @@ identically — today that transport is the `welcome` message's `seed` field.
 
 ### Measured (commit 914fd65, local workerd via `vite preview`)
 
-`node scripts/loadtest.mjs ws://localhost:4173/ws 20 120` → 20 protocol-faithful bots,
+`node apps/game/scripts/loadtest.mjs ws://localhost:4173/ws 20 120` → 20 protocol-faithful bots,
 120s: **100% joins, 0 unexpected closes, tick 0.51ms EMA / 3ms max (<1% of the 66.7ms
 budget), ~52 KB/s snapshot bandwidth per bot, 9 deaths / 9 respawns** (commit message of
-914fd65; harness: scripts/loadtest.mjs — zero-dep Node 22+ ESM, mirrors
+914fd65; harness: apps/game/scripts/loadtest.mjs — zero-dep Node 22+ ESM, mirrors
 constants/protocol/cadences and reports join success, KB/s, RTT p50/p95, close codes, and
 the final `/api/health`). The harness exits non-zero on join failures or unexpected closes,
 so it is CI-able.

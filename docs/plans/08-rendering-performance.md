@@ -38,7 +38,7 @@ not a fix: the entire dominant cost is the WebGL-only `@react-three/postprocessi
 
 This doc is **measurement-gated and off the critical path.** It ships behind the
 gameplay/platform spine; every milestone is A/B'd on real hardware with the harness in
-`scripts/perf-probes.md` (committed with this doc; M1 promotes it into a `?debug=1`
+`apps/game/scripts/perf-probes.md` (committed with this doc; M1 promotes it into a `?debug=1`
 overlay). Acceptance criteria measure **frame time and main-thread ms**, never draw counts.
 
 ## Goals / Non-goals
@@ -210,7 +210,7 @@ is the budget line docs 04, 06, and 07 all draw on; this milestone owns bounding
 
 ### 7. The profiler as a permanent tool
 
-The session's harness (`scripts/perf-probes.md`: instance-wrapped CPU/GPU/submit splitter,
+The session's harness (`apps/game/scripts/perf-probes.md`: instance-wrapped CPU/GPU/submit splitter,
 per-set visibility census, n8ao GPU timer, per-lever A/B kit) becomes a committed dev
 tool. Wire the splitter's frame/JS/submit numbers into `DebugCollector` behind `?debug=1`
 and add two rows to the on-screen overlay, so every future gameplay milestone can read its
@@ -267,7 +267,7 @@ shared client surface).
 
 One milestone per session; A/B every render change on real hardware via M1.
 
-1. **Profiler as a committed tool** — *Sonnet 4.8*. Promote `scripts/perf-probes.md` into
+1. **Profiler as a committed tool** — *Sonnet 4.8*. Promote `apps/game/scripts/perf-probes.md` into
    a `?debug=1` overlay: instance-wrap `gl.render` for submit-ms, rAF-gap for frame-ms,
    optional GPU-timer row, plus the documented per-set visibility-census and per-lever A/B
    snippets kept as a committed console kit. No gameplay deps. *Acceptance:* overlay shows

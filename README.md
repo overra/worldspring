@@ -10,12 +10,21 @@ everything is low-poly primitives generated in code.
 
 ## Run
 
+This repo is a **pnpm workspace** (`apps/game`, `apps/web`, `apps/prober`,
+`packages/shared`); see [docs/plans/09](docs/plans/09-monorepo-migration.md).
+
 ```sh
-npm install
-npm run dev        # vite + workerd locally — open http://localhost:5173
-npm run typecheck  # client + server tsc projects
-npm run deploy     # vite build && wrangler deploy
+corepack enable     # pins pnpm 10 (per package.json "packageManager")
+pnpm install
+pnpm dev:game       # the game (Vite + workerd) — http://localhost:5173
+pnpm dev:web        # the site + Starlight docs (Astro)
+pnpm typecheck      # all packages (turbo)
+pnpm build          # all packages (turbo)
+pnpm deploy:game    # also: deploy:web, deploy:prober
 ```
+
+Agent skills are restored from the committed `skills-lock.json`, not vendored —
+on a fresh clone run `npx skills experimental_install`.
 
 ## Controls
 

@@ -10,16 +10,23 @@ server on a Cloudflare Durable Object; React Three Fiber client with prediction.
   procedural look — **no external 3D assets**, primitives + flat colors + fog.
 - Server: Cloudflare Worker + `GameRoom` Durable Object (one global room,
   `env.GAME.getByName("main")`), WebSocket at `/ws`, 15Hz tick.
-- Shared deterministic sim in `src/shared/` — world gen + movement run
-  identically on both sides. **V8 on both ends; results match.**
+- Shared deterministic sim in `packages/shared/` (`@worldspring/shared`) — world
+  gen + movement run identically on both sides. **V8 on both ends; results match.**
+- **Monorepo (pnpm workspace):** `apps/game` (this client + server/DO, Vite),
+  `apps/web` (Astro landing + Starlight docs + server directory SSR/D1),
+  `apps/prober` (cron Worker), `packages/shared` (the sim). Paths below that read
+  `src/...` now live under `apps/game/src/...`; the sim moved to
+  `packages/shared/src/`. See [docs/plans/09](docs/plans/09-monorepo-migration.md).
 
 ## Hard rules
 
 - TypeScript strict. No `any`. Named exports only. Early returns.
-- Import alias `@/` = `src/` (e.g. `import { WALK_SPEED } from "@/shared/constants"`).
-- All tunables come from `@/shared/constants` — never inline magic gameplay numbers.
+- Import alias `@/` = `apps/game/src/` (game-local); the shared sim is the
+  workspace package `@worldspring/shared` (e.g.
+  `import { WALK_SPEED } from "@worldspring/shared/constants"`).
+- All tunables come from `@worldspring/shared/constants` — never inline magic gameplay numbers.
 - Yaw convention: yaw 0 faces **-Z**, forward = `(-sin(yaw), -cos(yaw))`
-  (three.js Object3D rotation.y convention). Helpers in `@/shared/math`.
+  (three.js Object3D rotation.y convention). Helpers in `@worldspring/shared/math`.
 - High-frequency state lives in `src/client/runtime.ts` mutable objects, NOT
   React state. zustand (`src/client/state/store.ts`) is for UI-rate data only.
 - Render components read `clientWorld` / `inputState`; only the net layer
@@ -31,7 +38,7 @@ server on a Cloudflare Durable Object; React Three Fiber client with prediction.
 
 Already written (read, do not modify):
 
-- `src/shared/*` — constants, rng, math, items, protocol, world, movement
+- `packages/shared/src/*` (`@worldspring/shared`) — constants, rng, math, items, protocol, world, movement
 - `src/client/runtime.ts` — `inputState`, `clientWorld`, `drainEvents`, `resetClientWorld`
 - `src/client/state/store.ts` — `useUIStore` (zustand)
 - `src/client/App.tsx`, `src/client/main.tsx`, `src/client/styles.css`
