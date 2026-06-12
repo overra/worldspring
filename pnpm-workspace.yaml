@@ -1,0 +1,21 @@
+# Worldspring pnpm workspace. See docs/plans/09-monorepo-migration.md.
+#   apps/*     = deployable Workers (game, web, prober)
+#   packages/* = shared libraries (@worldspring/shared — the deterministic sim)
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Cross-cutting version pins (doc 09 OQ3). App-specific deps (the Vite trio,
+# Astro/Starlight) pin in their own package.json.
+catalog:
+  typescript: ~5.9.0
+  wrangler: ^4.99.0
+
+# pnpm 10 requires postinstall build scripts to be allowlisted, or a clean
+# install silently skips them and the toolchain breaks at deploy time (doc 09
+# §Threatens). Finalized at the install milestone (M2) from pnpm's
+# ignored-build-scripts report.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp

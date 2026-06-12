@@ -1,0 +1,25 @@
+{
+  "name": "@worldspring/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./constants": "./src/constants.ts",
+    "./items": "./src/items.ts",
+    "./math": "./src/math.ts",
+    "./movement": "./src/movement.ts",
+    "./protocol": "./src/protocol.ts",
+    "./rng": "./src/rng.ts",
+    "./world": "./src/world.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "fingerprint": "node scripts/fingerprint.mjs src"
+  },
+  "dependencies": {
+    "simplex-noise": "4.0.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.3"
+  }
+}

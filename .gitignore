@@ -1,7 +1,23 @@
+# Dependencies (pnpm links per-package node_modules)
 node_modules/
+
+# Build output & framework caches
 dist/
+.astro/
 .wrangler/
+.turbo/
+
+# Local secrets & env
 .dev.vars
+.mcp.json
+
+# Logs & OS
 *.log
 .DS_Store
-.mcp.json
+
+# Agent skills: the lock file (skills-lock.json) is tracked; the fetched skill
+# contents are restored via `npx skills experimental_install` — like
+# package-lock.json vs node_modules (docs/plans/09 — lock-only hygiene).
+.agents/skills/
+.claude/skills/
+.skills.json

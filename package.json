@@ -1,35 +1,24 @@
 {
-  "name": "worldspring",
+  "name": "worldspring-monorepo",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "deploy": "vite build && wrangler deploy",
-    "cf-typegen": "wrangler types"
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=20"
   },
-  "dependencies": {
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.6.1",
-    "@react-three/postprocessing": "^3.0.4",
-    "n8ao": "^1.10.1",
-    "postprocessing": "^6.39.1",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "simplex-noise": "^4.0.3",
-    "three": "^0.184.0",
-    "zustand": "^5.0.14"
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "dev": "turbo run dev",
+    "dev:game": "turbo run dev --filter=@worldspring/game",
+    "dev:web": "turbo run dev --filter=@worldspring/web",
+    "deploy:game": "turbo run deploy --filter=@worldspring/game",
+    "deploy:web": "turbo run deploy --filter=@worldspring/web",
+    "deploy:prober": "turbo run deploy --filter=@worldspring/prober",
+    "loadtest": "pnpm --filter @worldspring/game loadtest"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.40.1",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.184.1",
-    "@vitejs/plugin-react": "^6.0.2",
-    "typescript": "~5.9.0",
-    "vite": "^8.0.16",
-    "wrangler": "^4.99.0"
+    "turbo": "^2.9.18"
   }
 }
