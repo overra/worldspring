@@ -136,7 +136,7 @@ function createWindMaterial(timeUniform: THREE.IUniform<number>): THREE.MeshLamb
       )
       .replace("#include <project_vertex>", WIND_PROJECT_VERTEX);
   };
-  material.customProgramCacheKey = () => "deadcoast-grass-wind";
+  material.customProgramCacheKey = () => "worldspring-grass-wind";
   return material;
 }
 

@@ -73,7 +73,7 @@ Verified against this worktree:
   routes `/ws`, `/api/leaderboard`, `/api/health` to `env.GAME.getByName("main")` and 404s
   everything else. The only binding is `GAME: DurableObjectNamespace<GameRoom>`
   (`worker-configuration.d.ts:5`). Zero vars, zero secrets.
-- **Deploy config**: `wrangler.jsonc:3` names the worker `survival-game`;
+- **Deploy config**: `wrangler.jsonc:3` names the worker `worldspring`;
   `wrangler.jsonc:17-22` declares migration `v1` with `new_sqlite_classes: ["GameRoom"]`;
   assets use `not_found_handling: "single-page-application"` (`wrangler.jsonc:6-8`).
   `npm run deploy` = `vite build && wrangler deploy` (`package.json:10`); the Vite plugin
@@ -196,7 +196,7 @@ access token exists only inside the Deployer DO for the life of one job.
 ### 3. Release pipeline — versioned build artifacts
 
 GitHub Actions workflow `.github/workflows/release.yml`, triggered on tag `v*` against
-`overra/survival-game`:
+`overra/worldspring`:
 
 1. `npm ci`, `npm run typecheck`, `npm run build` (`vite build`).
 2. `node scripts/build-artifact.mjs` — produces the artifact from `dist/`:
@@ -623,8 +623,8 @@ The game is open source; the site flow is sugar, not a gate. `docs/SELF_HOSTING.
 documents:
 
 ```
-git clone https://github.com/overra/survival-game
-cd survival-game && npm ci
+git clone https://github.com/overra/worldspring
+cd worldspring && npm ci
 # optional: edit vars in wrangler.jsonc → { "vars": { "GAME_CONFIG": "warpath" } }
 npm run deploy            # vite build && wrangler deploy → your account, your workers.dev
 ```

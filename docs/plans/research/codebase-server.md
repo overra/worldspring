@@ -261,7 +261,7 @@ and `tsconfig.server.json` (src/server + src/shared + `worker-configuration.d.ts
 So `wrangler deploy` uploads: the worker bundle (server + shared code), the static asset
 manifest/files from `dist/client`, the DO binding (`GAME` → `GameRoom`), the v1
 `new_sqlite_classes` migration, and `observability: { enabled: true }` (wrangler.jsonc:23-25).
-Deployed name `survival-game` (wrangler.jsonc:3) → `survival-game.adam-730.workers.dev`.
+Deployed name `worldspring` (wrangler.jsonc:3) → `worldspring.adam-730.workers.dev`.
 
 Local dev: `npm run dev` runs Vite with the plugin's workerd integration — client on
 :5173, the worker + DO running in local workerd with local SQLite (README.md:12-14).
@@ -387,7 +387,7 @@ Integration options, cheapest first:
    today. For a community-instance directory this is the right interface: it works against
    *any* deployment with zero changes to the game worker.
 2. **Cross-script DO binding**: a second worker in the same account can bind the existing
-   namespace via `durable_objects.bindings` with `script_name: "survival-game"` — only
+   namespace via `durable_objects.bindings` with `script_name: "worldspring"` — only
    needed if the site wants DO-internal access rather than the public API. Not recommended
    until a concrete need exists.
 3. **Auxiliary workers via the Vite plugin** (the generated config shows

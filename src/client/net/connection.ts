@@ -29,7 +29,10 @@ let pingTimer: ReturnType<typeof setInterval> | null = null;
 // same character across page loads. localStorage can throw (private browsing,
 // blocked storage) — fall back to an in-memory token for the session.
 
-const TOKEN_STORAGE_KEY = "dc_token";
+const TOKEN_STORAGE_KEY = "ws_token";
+// Pre-Worldspring key; read once as a fallback and migrated forward (below) so
+// existing players keep the same character across the rename.
+const LEGACY_TOKEN_KEY = "dc_token";
 
 let memoryToken: string | null = null;
 
@@ -42,9 +45,12 @@ function generateToken(): string {
 function getToken(): string {
   if (memoryToken !== null) return memoryToken;
   try {
-    const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const stored =
+      localStorage.getItem(TOKEN_STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_TOKEN_KEY);
     if (stored !== null && /^[0-9a-f]{32,64}$/i.test(stored)) {
       memoryToken = stored;
+      localStorage.setItem(TOKEN_STORAGE_KEY, stored);
       return stored;
     }
     const fresh = generateToken();

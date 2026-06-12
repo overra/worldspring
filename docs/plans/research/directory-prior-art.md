@@ -273,7 +273,7 @@ entry; it's an app-store install with zero review. Concretely:
 - Is "servers ship their own client build" actually a goal, or an accident of the
   deployment story? If it's negotiable, the first-party join path makes the whole trust
   problem tractable.
-- Does the official instance (survival-game.adam-730.workers.dev) appear in the directory
+- Does the official instance (worldspring.adam-730.workers.dev) appear in the directory
   as a peer, or pinned? (Pinning is normal — Rust's "Official" tab — but mixes curation
   into ranking.)
 - Factorio's gated-list-reads (token required to *read* `get-games`) — irrelevant for an

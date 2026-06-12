@@ -1,4 +1,4 @@
-/* DEADCOAST escape menu — pause/settings overlay. Same grim-minimal language
+/* Worldspring escape menu — pause/settings overlay. Same spare, minimal language
    as ui.css; base tokens (--ui-*) come from styles.css. Sits above the HUD
    (z 5) but below the death screen (z 10) so dying with the menu open still
    shows YOU DIED. */

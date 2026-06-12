@@ -9,7 +9,9 @@ import { connect } from "@/client/net/connection";
 import { useUIStore } from "@/client/state/store";
 import "./ui.css";
 
-const NAME_STORAGE_KEY = "dc_name";
+const NAME_STORAGE_KEY = "ws_name";
+// Pre-Worldspring key; read as a fallback so a saved name survives the rename.
+const LEGACY_NAME_KEY = "dc_name";
 const LEADERBOARD_SHOWN = 5;
 
 const CONTROLS_LEGEND =
@@ -19,7 +21,9 @@ const CONTROLS_LEGEND =
 function loadSavedName(): string {
   // localStorage can throw in private browsing / blocked-storage contexts.
   try {
-    const saved = localStorage.getItem(NAME_STORAGE_KEY);
+    const saved =
+      localStorage.getItem(NAME_STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_NAME_KEY);
     return saved === null ? "" : saved.slice(0, MAX_NAME_LENGTH);
   } catch {
     return "";
@@ -103,7 +107,7 @@ export function MainMenu(): ReactElement {
   return (
     <div className="menu-root">
       <div className="menu-panel">
-        <h1 className="menu-title">DEADCOAST</h1>
+        <h1 className="menu-title">Worldspring</h1>
         <p className="menu-subtitle">a web survival experiment</p>
         <div className="menu-form">
           <input

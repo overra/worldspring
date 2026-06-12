@@ -35,7 +35,7 @@ const BLOOM_INTENSITY = 0.5;
 const VIGNETTE_OFFSET = 0.25;
 const VIGNETTE_DARKNESS = 0.55;
 
-// Desaturated grade — the muted DayZ look. Subtle; don't crush it.
+// Desaturated grade — the muted, washed-out survival look. Subtle; don't crush it.
 const GRADE_SATURATION = -0.12;
 const GRADE_CONTRAST = 0.06;
 

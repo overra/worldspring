@@ -455,7 +455,7 @@ Registration deliberately collects **only the URL**. Name, MOTD, preset, version
 all flow from the server itself (heartbeats + probes) — the listing can never drift from
 what the server says it is, and there is no second place to moderate.
 
-The official instance (`survival-game.adam-730.workers.dev`) registers through Path B
+The official instance (`worldspring.adam-730.workers.dev`) registers through Path B
 like everyone else, with `source='official'` set by hand — it heartbeats, gets probed,
 and shows real uptime. Pinning is presentation-only.
 
