@@ -1,10 +1,12 @@
 # Worldspring
 
-A web-based DayZ-like: multiplayer survival on a procedurally generated island.
-Loot towns, manage hunger/thirst/temperature, fight zombies and other players.
-Persistent authoritative server on a Cloudflare Durable Object; React Three
-Fiber client with client-side prediction. No 3D assets — everything is
-low-poly primitives generated in code.
+A browser-native multiplayer survival game on a procedurally generated island:
+loot towns, manage hunger/thirst/temperature, and outlast zombies and other players.
+DayZ-inspired at its core, but built to grow into a platform for worlds you host and
+configure — community servers, presets, base-building, and bigger worlds are on the
+roadmap (see [docs/plans](docs/plans/)). Persistent authoritative server on a Cloudflare
+Durable Object; React Three Fiber client with client-side prediction. No 3D assets —
+everything is low-poly primitives generated in code.
 
 ## Run
 
