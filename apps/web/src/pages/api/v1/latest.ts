@@ -1,13 +1,19 @@
-// SSR JSON endpoint (runs on the Worker). Proves the v13 adapter env API
-// (`Astro.locals.runtime` was removed → `import { env } from "cloudflare:workers"`)
-// and that the @worldspring/shared package boundary resolves inside Astro's SSR
-// build (vite.ssr.noExternal). The real directory API — heartbeat/registration
-// with ServerInfo types — lands with doc 02/03.
+// SSR JSON endpoint (runs on the Worker). Honors doc 02's documented contract:
+// `GET /api/v1/latest` → `{ version, protocol }` of the current release (build-
+// time constants), used by clients/servers for an "update available" hint.
+//
+// The real values come from doc 03's GAME_VERSION + PROTOCOL_VERSION (not built
+// yet) — placeholders until then. Proves the v13 `cloudflare:workers` env API
+// (Astro.locals.runtime was removed) by reading D1 for a registered count, kept
+// as a non-contractual extra field.
 import type { APIRoute } from "astro";
 import { env } from "cloudflare:workers";
-import { WORLD_SIZE } from "@worldspring/shared/constants";
 
 export const prerender = false;
+
+// TODO(doc 03): import GAME_VERSION + PROTOCOL_VERSION from @worldspring/shared.
+const VERSION = "0.0.0-scaffold";
+const PROTOCOL = 0;
 
 export const GET: APIRoute = async () => {
   let servers = 0;
@@ -19,6 +25,5 @@ export const GET: APIRoute = async () => {
   } catch {
     // D1 not migrated in local dev
   }
-  // `_shared` is a scaffold smoke-test that the shared package resolves in SSR.
-  return Response.json({ ok: true, servers, _shared: WORLD_SIZE });
+  return Response.json({ version: VERSION, protocol: PROTOCOL, servers });
 };

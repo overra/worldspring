@@ -6,7 +6,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "wrangler dev",
-    "deploy": "astro build && wrangler deploy",
+    "deploy": "node ../../scripts/assert-d1-configured.mjs wrangler.jsonc && astro build && wrangler deploy",
     "typecheck": "astro check",
     "cf-typegen": "wrangler types"
   },
