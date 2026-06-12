@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.server.json --noEmit",
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
-    "loadtest": "node scripts/loadtest.mjs"
+    "loadtest": "node scripts/loadtest.mjs",
+    "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
