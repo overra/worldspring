@@ -20,6 +20,12 @@ import { ChatPanel } from "./ChatPanel";
 import { RecapStats } from "./DeathScreen";
 import "./ui.css";
 
+// Transparent 1x1 GIF. When an item has no /icons/<type>.png, the onError
+// handlers swap this in as the src (and clear alt) so the browser shows neither
+// a broken-image glyph nor the alt text — only the inline color-swatch fallback.
+const BLANK_PX =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
 const USABLE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
   "food",
   "drink",
@@ -118,10 +124,14 @@ function Hotbar(): ReactElement {
                 alt={(ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).name}
                 draggable={false}
                 onError={(e) => {
-                  // Missing icon: fall back to the flat color swatch.
-                  e.currentTarget.style.background = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).color;
-                  e.currentTarget.style.visibility = "visible";
-                  e.currentTarget.removeAttribute("src");
+                  // Missing icon: fall back to the flat color swatch. Swap in a
+                  // blank pixel + clear alt so neither the broken-image glyph nor
+                  // the item name renders on top of the swatch.
+                  const img = e.currentTarget;
+                  img.style.background = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).color;
+                  img.style.visibility = "visible";
+                  img.alt = "";
+                  img.src = BLANK_PX;
                 }}
               />
             )}
@@ -228,8 +238,9 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
         alt=""
         draggable={false}
         onError={(e) => {
+          // Missing icon: flat color swatch (blank pixel avoids the broken glyph).
           e.currentTarget.style.background = def.color;
-          e.currentTarget.removeAttribute("src");
+          e.currentTarget.src = BLANK_PX;
         }}
       />
       <span className="inv-name">{def.name}</span>
