@@ -1,0 +1,28 @@
+{
+  "name": "combat",
+  "provision": [
+    { "kind": "position", "zone": "military", "face": "inland" },
+    {
+      "kind": "loadout",
+      "items": [
+        { "type": "pistol", "count": 1 },
+        { "type": "ammo_9mm", "count": 30 },
+        { "type": "rifle", "count": 1 },
+        { "type": "ammo_762", "count": 20 },
+        { "type": "shotgun", "count": 1 },
+        { "type": "shells", "count": 12 },
+        { "type": "bandage", "count": 4 }
+      ]
+    },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack"] }
+  ],
+  "checklist": [
+    "Spawn at the military compound facing inland, full vitals.",
+    "Equip the pistol (Makarov) and fire — a 9mm round is consumed, hitscan at ~90 m.",
+    "Equip the rifle (Mosin) and fire — a 7.62 round is consumed, long-range hitscan.",
+    "Equip the shotgun (Izh-43) and fire — 6 pellets in a cone, one shell consumed.",
+    "Take damage from a zombie, then apply a bandage — hp climbs back.",
+    "Confirm firing with an empty ammo type produces the out-of-ammo notice, no crash."
+  ]
+}

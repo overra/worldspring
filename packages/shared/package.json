@@ -11,6 +11,7 @@
     "./movement": "./src/movement.ts",
     "./protocol": "./src/protocol.ts",
     "./rng": "./src/rng.ts",
+    "./scenario": "./src/scenario.ts",
     "./serverInfo": "./src/serverInfo.ts",
     "./version": "./src/version.ts",
     "./world": "./src/world.ts"
