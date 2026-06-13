@@ -68,8 +68,11 @@ export const ANIM_ATTACKING = 4;
 export type ClientMsg =
   /** `proto` = the client's PROTOCOL_VERSION (two-sided join gate, doc 03 §1).
    * Optional on the wire: pre-gate clients omit it and are accepted only while
-   * PROTOCOL_VERSION === 1. The server gates on it at the top of handleJoin. */
-  | { t: "join"; name: string; token: string; proto?: number }
+   * PROTOCOL_VERSION === 1. The server gates on it at the top of handleJoin.
+   * `scenario` (doc 10 M3) = a preview-only testbed set name. Additive-optional
+   * (no PROTOCOL_VERSION bump); validated below, and CONSULTED by the server only
+   * when env.TESTBED is on — parsed-and-ignored in prod. */
+  | { t: "join"; name: string; token: string; proto?: number; scenario?: string }
   | { t: "input"; cmds: InputCmd[] }
   /** `at` = game-time the shooter's screen was rendering (interpolation runs
    * INTERP_DELAY_MS behind). The server rewinds targets to it, clamped to
@@ -303,7 +306,15 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
         if (!isFiniteNum(m.proto)) return null;
         proto = m.proto;
       }
-      return { t: "join", name: m.name, token: m.token, proto };
+      // scenario (doc 10 M3): optional preview-only testbed set name. Validate the
+      // SHAPE on the wire (1-100 chars, [a-z0-9_-]) regardless of TESTBED — same
+      // discipline as the token regex; the server only CONSULTS it when testbed.
+      let scenario: string | undefined;
+      if (m.scenario !== undefined) {
+        if (typeof m.scenario !== "string" || !/^[a-z0-9_-]{1,100}$/.test(m.scenario)) return null;
+        scenario = m.scenario;
+      }
+      return { t: "join", name: m.name, token: m.token, proto, scenario };
     }
     case "input": {
       if (!Array.isArray(m.cmds)) return null;

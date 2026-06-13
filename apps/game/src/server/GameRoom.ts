@@ -104,6 +104,7 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
+import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickWeather } from "./systems/weather";
@@ -470,7 +471,7 @@ export class GameRoom extends DurableObject<Env> {
 
     const game = this.ensureGame();
     if (msg.t === "join") {
-      await this.handleJoin(ws, game, msg.name, msg.token, msg.proto);
+      await this.handleJoin(ws, game, msg.name, msg.token, msg.proto, msg.scenario);
       this.flushOutbox(game);
       return;
     }
@@ -641,6 +642,7 @@ export class GameRoom extends DurableObject<Env> {
     rawName: string,
     token: string,
     proto: number | undefined,
+    scenario: string | undefined,
   ): Promise<void> {
     if (this.playerBySocket.has(ws)) return; // already joined
     // Server-side half of the two-sided protocol gate (doc 03 §1) — the ONLY
@@ -755,7 +757,10 @@ export class GameRoom extends DurableObject<Env> {
     // doc 10 M1: on a preview only (env.TESTBED), seed this fresh life so a
     // tester lands ready. After the keep-inventory restore (so it isn't
     // clobbered) and before sendWelcome (so the welcome carries it). No-op in prod.
-    if (this.testbed) provisionTestbed(game, player);
+    // doc 10 M3: pick the set per-join (gated). The join field is validated on
+    // the wire but only consulted here under this.testbed; env.SCENARIO is the
+    // deploy-time default; resolveScenario falls back to the universal set.
+    if (this.testbed) provisionTestbed(game, player, resolveScenario(scenario ?? this.env.SCENARIO));
     const recap = saved ? saved.pendingRecap : null;
     if (recap) clearPendingRecap(sql, tokenHash);
     this.playerBySocket.set(ws, id);
