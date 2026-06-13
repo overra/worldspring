@@ -185,8 +185,13 @@ export function restorePlayer(
 export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.core = freshSpawnCore(state);
   player.vitals = { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL };
-  player.inventory = emptyInventory();
-  player.selectedSlot = 0;
+  // Keep-inventory (pvp.fullLoot=false): the corpse spawned empty (see
+  // spawnPlayerCorpse), so the new life keeps the items held at death rather
+  // than starting empty. fullLoot (default) wipes to a fresh inventory.
+  if (state.config.pvp.fullLoot) {
+    player.inventory = emptyInventory();
+    player.selectedSlot = 0;
+  }
   player.alive = true;
   // A new life: stats restart here. The stale pending recap (if any) is
   // storage-side state — GameRoom calls saveCharacter right after respawn,

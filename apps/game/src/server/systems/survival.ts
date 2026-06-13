@@ -5,7 +5,6 @@
 import {
   AMBIENT_WARM_HOUR_END,
   AMBIENT_WARM_HOUR_START,
-  DAY_DURATION_S,
   FIRE_WARMTH_RADIUS,
   FOOD_DECAY_PER_S,
   FREEZE_HP_PER_S,
@@ -16,7 +15,6 @@ import {
   REGEN_WATER_MIN,
   SPRINT_FOOD_MULT,
   STARVE_HP_PER_S,
-  START_HOUR,
   TEMP_FALL_PER_S,
   TEMP_MIN,
   TEMP_NORMAL,
@@ -24,8 +22,9 @@ import {
   TEMP_SHIVER,
   WATER_DECAY_PER_S,
 } from "@worldspring/shared/constants";
+import { effectiveGameHour } from "@worldspring/shared/config";
 import { distSq2D } from "@worldspring/shared/math";
-import { gameHours, type DeathRecap } from "@worldspring/shared/protocol";
+import type { DeathRecap } from "@worldspring/shared/protocol";
 import type { World } from "@worldspring/shared/world";
 import { spawnPlayerCorpse } from "./loot";
 import { sendInventory } from "./players";
@@ -119,18 +118,19 @@ function insideBuilding(world: World, x: number, z: number): boolean {
 }
 
 export function tickSurvival(state: GameState, dt: number): void {
-  const hour = gameHours(state.time, DAY_DURATION_S, START_HOUR);
+  const hour = effectiveGameHour(state.config.time, state.time);
   const ambientWarm = hour >= AMBIENT_WARM_HOUR_START && hour < AMBIENT_WARM_HOUR_END;
   const raining = state.weather > 0.5;
+  const survival = state.config.survival;
 
   for (const player of state.players.values()) {
     if (!player.alive) continue;
     const v = player.vitals;
 
-    // Hunger/thirst decay, faster while sprinting.
+    // Hunger/thirst decay, faster while sprinting, scaled by server rates.
     const mult = player.sprinting ? SPRINT_FOOD_MULT : 1;
-    v.food = Math.max(0, v.food - FOOD_DECAY_PER_S * mult * dt);
-    v.water = Math.max(0, v.water - WATER_DECAY_PER_S * mult * dt);
+    v.food = Math.max(0, v.food - FOOD_DECAY_PER_S * mult * survival.hungerRate * dt);
+    v.water = Math.max(0, v.water - WATER_DECAY_PER_S * mult * survival.thirstRate * dt);
 
     // Body temperature: warm hours or a nearby campfire pull you up toward
     // normal; otherwise exposure pulls you down toward the minimum. While it
@@ -140,14 +140,16 @@ export function tickSurvival(state: GameState, dt: number): void {
     const fireNear = nearFire(state, player.core.x, player.core.z);
     const rainExposed =
       raining && !fireNear && !insideBuilding(state.world, player.core.x, player.core.z);
+    // Both cold-fall terms scale by temperatureSeverity (0 disables cold); the
+    // warm-up term is never scaled. fall stays in temp/s before * dt.
     if (rainExposed) {
       let fall = RAIN_TEMP_FALL_PER_S * state.weather;
       if (!ambientWarm) fall += TEMP_FALL_PER_S;
-      v.temp = Math.max(TEMP_MIN, v.temp - fall * dt);
+      v.temp = Math.max(TEMP_MIN, v.temp - fall * survival.temperatureSeverity * dt);
     } else if (ambientWarm || fireNear) {
       v.temp = Math.min(TEMP_NORMAL, v.temp + TEMP_RISE_PER_S * dt);
     } else {
-      v.temp = Math.max(TEMP_MIN, v.temp - TEMP_FALL_PER_S * dt);
+      v.temp = Math.max(TEMP_MIN, v.temp - TEMP_FALL_PER_S * survival.temperatureSeverity * dt);
     }
 
     // Drains. Each can kill; stop processing the player once dead.
@@ -161,7 +163,7 @@ export function tickSurvival(state: GameState, dt: number): void {
 
     // Regen while well fed and hydrated.
     if (v.hp < MAX_HP && v.food > REGEN_FOOD_MIN && v.water > REGEN_WATER_MIN) {
-      v.hp = Math.min(MAX_HP, v.hp + REGEN_HP_PER_S * dt);
+      v.hp = Math.min(MAX_HP, v.hp + REGEN_HP_PER_S * survival.regenRate * dt);
     }
   }
 }

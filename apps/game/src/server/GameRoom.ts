@@ -30,12 +30,10 @@ import {
   CHAT_RADIUS,
   INPUT_BUDGET_CAP_S,
   INTEREST_RADIUS,
-  LOGOUT_LINGER_S,
   LOOT_INTEREST_RADIUS,
   MAX_MOTD_LENGTH,
   MAX_PLAYERS,
   MAX_SERVER_NAME_LENGTH,
-  RESPAWN_DELAY_S,
   TICK_MS,
   WORLD_SAVE_INTERVAL_S,
 } from "@worldspring/shared/constants";
@@ -293,7 +291,7 @@ export class GameRoom extends DurableObject<Env> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 426 });
     }
-    if (this.ctx.getWebSockets().length >= MAX_PLAYERS) {
+    if (this.ctx.getWebSockets().length >= this.effectiveMaxPlayers) {
       return new Response("Server full", { status: 503 });
     }
     const pair = new WebSocketPair();
@@ -315,6 +313,12 @@ export class GameRoom extends DurableObject<Env> {
       }
     }, JOIN_TIMEOUT_MS);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Hard player cap: the configured soft cap (session.maxPlayers) clamped to
+   * the verified perf envelope MAX_PLAYERS. */
+  private get effectiveMaxPlayers(): number {
+    return Math.min(MAX_PLAYERS, this.config.session.maxPlayers);
   }
 
   /**
@@ -374,7 +378,7 @@ export class GameRoom extends DurableObject<Env> {
       motd: sanitizeServerText(this.env.SERVER_MOTD ?? "", MAX_MOTD_LENGTH),
       rules: summarizeRules(this.config),
       players,
-      maxPlayers: MAX_PLAYERS,
+      maxPlayers: this.effectiveMaxPlayers,
       status: occupied ? "occupied" : "idle",
       uptimeS: occupied ? Math.floor((Date.now() - this.activeSince) / 1000) : 0,
       worldAgeS,
@@ -498,7 +502,7 @@ export class GameRoom extends DurableObject<Env> {
         dropSlot(game, player, msg.slot);
         break;
       case "respawn":
-        if (!player.alive && game.time - player.diedAt >= RESPAWN_DELAY_S) {
+        if (!player.alive && game.time - player.diedAt >= this.config.session.respawnDelayS) {
           respawnPlayer(game, player);
           // Persist the new life right away (atomically with the world):
           // overwrites the dead row and clears any stale pending recap.
@@ -706,7 +710,7 @@ export class GameRoom extends DurableObject<Env> {
     for (const p of game.players.values()) {
       if (!p.offline) connected++;
     }
-    if (connected >= MAX_PLAYERS) {
+    if (connected >= this.effectiveMaxPlayers) {
       this.send(ws, { t: "error", msg: "Server full" });
       return;
     }
@@ -733,6 +737,15 @@ export class GameRoom extends DurableObject<Env> {
     const name = sanitizeName(rawName, game);
     const id = crypto.randomUUID().slice(0, 8);
     const player = createPlayer(game, id, name, tokenHash);
+    // Keep-inventory (pvp.fullLoot=false): a player who closed the tab on the
+    // death screen rejoins into their DEAD row here — restore the inventory held
+    // at death (createPlayer started them empty) rather than destroying it. The
+    // persistAll below immediately rewrites the dead row as this living life, so
+    // a second rejoin takes path 1/2 and never this branch (restore-once).
+    if (!game.config.pvp.fullLoot && saved?.alive === false) {
+      player.inventory = saved.state.inventory.map((stack) => (stack ? { ...stack } : null));
+      player.selectedSlot = saved.state.selectedSlot;
+    }
     const recap = saved ? saved.pendingRecap : null;
     if (recap) clearPendingRecap(sql, tokenHash);
     this.playerBySocket.set(ws, id);
@@ -778,15 +791,22 @@ export class GameRoom extends DurableObject<Env> {
       if (game) {
         const player = game.players.get(playerId);
         if (player) {
-          if (player.alive) {
-            // Combat-log deterrent: the body lingers in the world,
-            // defenseless, for LOGOUT_LINGER_S (it drops a real corpse only
-            // if something kills it). Replaces the old instant death bag.
+          if (player.alive && this.config.session.logoutLingerS > 0) {
+            // Combat-log deterrent: the body lingers in the world, defenseless,
+            // for session.logoutLingerS (it drops a real corpse only if
+            // something kills it). Replaces the old instant death bag.
             player.offline = true;
             player.offlineSince = game.time;
             player.cmdQueue.length = 0;
             player.wantsAttack = false;
             player.wantsAttackAt = null;
+            this.persistAll(game);
+          } else if (player.alive) {
+            // logoutLingerS = 0: no combat-log window — save the living body and
+            // remove it immediately (saveCharacter first so the life persists,
+            // then persistAll keeps the world coherent after removal).
+            saveCharacter(this.ctx.storage.sql, player, game.time);
+            game.players.delete(playerId);
             this.persistAll(game);
           } else {
             // Dead characters were already marked dead in storage at kill
@@ -885,7 +905,7 @@ export class GameRoom extends DurableObject<Env> {
     let lingersExpired = false;
     for (const player of game.players.values()) {
       if (!player.offline) continue;
-      if (game.time - player.offlineSince < LOGOUT_LINGER_S) continue;
+      if (game.time - player.offlineSince < this.config.session.logoutLingerS) continue;
       saveCharacter(this.ctx.storage.sql, player, game.time);
       game.players.delete(player.id);
       lingersExpired = true;

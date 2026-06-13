@@ -236,20 +236,23 @@ function meleeAttack(
       hitPos = pos;
     }
   }
-  for (const other of state.players.values()) {
-    if (other.id === player.id || !other.alive) continue;
-    const pos = rewind.player(other);
-    if (Math.abs(pos.y - py) > MELEE_MAX_DY) continue;
-    if (!inMeleeCone(x, z, yaw, pos.x, pos.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) {
-      continue;
-    }
-    const dSq = distSq2D(x, z, pos.x, pos.z);
-    if (dSq < bestSq && !meleeBlocked(state, x, py, z, pos.x, pos.y, pos.z)) {
-      bestSq = dSq;
-      hitZombie = null;
-      hitDeer = null;
-      hitPlayer = other;
-      hitPos = pos;
+  // PvP off: players are not meleeable targets (zombies/deer still are).
+  if (state.config.pvp.enabled) {
+    for (const other of state.players.values()) {
+      if (other.id === player.id || !other.alive) continue;
+      const pos = rewind.player(other);
+      if (Math.abs(pos.y - py) > MELEE_MAX_DY) continue;
+      if (!inMeleeCone(x, z, yaw, pos.x, pos.z, MELEE_RANGE, MELEE_HALF_ANGLE_RAD)) {
+        continue;
+      }
+      const dSq = distSq2D(x, z, pos.x, pos.z);
+      if (dSq < bestSq && !meleeBlocked(state, x, py, z, pos.x, pos.y, pos.z)) {
+        bestSq = dSq;
+        hitZombie = null;
+        hitDeer = null;
+        hitPlayer = other;
+        hitPos = pos;
+      }
     }
   }
 
@@ -276,7 +279,8 @@ function meleeAttack(
     return;
   }
   if (hitPlayer) {
-    if (damagePlayer(state, hitPlayer, dmg, player.name, true)) player.stats.kills++;
+    const pvpDmg = dmg * state.config.pvp.damageMult;
+    if (damagePlayer(state, hitPlayer, pvpDmg, player.name, true)) player.stats.kills++;
   }
 }
 
@@ -374,24 +378,27 @@ function fireRanged(
         hitPlayer = null;
       }
     }
-    for (const other of state.players.values()) {
-      if (other.id === player.id || !other.alive) continue;
-      const pos = rewind.player(other);
-      const t = rayVerticalCylinder(
-        origin,
-        dir,
-        pos.x,
-        pos.z,
-        pos.y,
-        pos.y + PLAYER_HEIGHT,
-        HIT_CAPSULE_RADIUS,
-        maxT,
-      );
-      if (t !== null && t < hitT) {
-        hitT = t;
-        hitZombie = null;
-        hitDeer = null;
-        hitPlayer = other;
+    // PvP off: players are not shootable targets (zombies/deer still are).
+    if (state.config.pvp.enabled) {
+      for (const other of state.players.values()) {
+        if (other.id === player.id || !other.alive) continue;
+        const pos = rewind.player(other);
+        const t = rayVerticalCylinder(
+          origin,
+          dir,
+          pos.x,
+          pos.z,
+          pos.y,
+          pos.y + PLAYER_HEIGHT,
+          HIT_CAPSULE_RADIUS,
+          maxT,
+        );
+        if (t !== null && t < hitT) {
+          hitT = t;
+          hitZombie = null;
+          hitDeer = null;
+          hitPlayer = other;
+        }
       }
     }
 
@@ -426,7 +433,10 @@ function fireRanged(
       if (hitDeer.hp <= 0) killDeer(state, hitDeer);
       continue;
     }
-    if (hitPlayer && damagePlayer(state, hitPlayer, def.power, player.name, true)) {
+    if (
+      hitPlayer &&
+      damagePlayer(state, hitPlayer, def.power * state.config.pvp.damageMult, player.name, true)
+    ) {
       player.stats.kills++;
     }
   }

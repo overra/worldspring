@@ -7,7 +7,6 @@
 
 import {
   DEER_CORPSE_TTL_S,
-  DEER_COUNT,
   DEER_FLEE_RADIUS,
   DEER_FLEE_SPEED,
   DEER_HP,
@@ -17,6 +16,7 @@ import {
   VENISON_PER_DEER_MIN,
   WORLD_SIZE,
 } from "@worldspring/shared/constants";
+import { effectiveDeerMax } from "@worldspring/shared/config";
 import { distSq2D } from "@worldspring/shared/math";
 import { stepZombie } from "@worldspring/shared/movement";
 import type { Deer, GameState } from "./state";
@@ -77,9 +77,10 @@ function pickDeerPoint(state: GameState): { x: number; z: number } | null {
   return null;
 }
 
-/** DEER_COUNT deer scattered inland at room boot (never persisted). */
+/** effectiveDeerMax deer scattered inland at room boot (never persisted). */
 export function spawnInitialDeer(state: GameState): void {
-  for (let i = 0; i < DEER_COUNT; i++) {
+  const max = effectiveDeerMax(state.config);
+  for (let i = 0; i < max; i++) {
     const pos = pickDeerPoint(state);
     if (pos) spawnDeer(state, pos.x, pos.z);
   }
@@ -174,8 +175,10 @@ export function tickWildlife(state: GameState, dt: number): void {
   }
 }
 
-/** Count down pending deer respawns; blocked ones retry next tick. */
+/** Count down pending deer respawns; blocked ones retry next tick. No deer at
+ * all (deerDensity 0) → nothing respawns. */
 export function tickDeerRespawns(state: GameState, dt: number): void {
+  if (effectiveDeerMax(state.config) <= 0) return;
   for (let i = state.deerRespawns.length - 1; i >= 0; i--) {
     state.deerRespawns[i] -= dt;
     if (state.deerRespawns[i] > 0) continue;

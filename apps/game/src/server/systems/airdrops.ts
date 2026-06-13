@@ -51,40 +51,50 @@ function pickDropPoint(state: GameState): { x: number; z: number } | null {
 export function tickAirdrops(state: GameState, dt: number): void {
   void dt; // schedule runs on absolute game time; dt kept for tick-fn symmetry
 
-  // First tick ever: schedule the boot drop. airdropNextAt === 0 is the
-  // uninitialized marker (persisted worlds restore a real timestamp).
-  if (state.airdropNextAt === 0) {
-    state.airdropNextAt = state.time + randBetween(FIRST_DROP_MIN_S, FIRST_DROP_MAX_S);
-  }
+  // Scheduling is gated on loot.airdrops: 0 disables NEW drops entirely; the
+  // multiplier divides the interval (2 = twice as often). The expiry sweep
+  // below runs every tick REGARDLESS — gating it would strand a persisted crate
+  // as an immortal entity on a world switched to airdrops:0 (§4 LIVE-class).
+  const airdrops = state.config.loot.airdrops;
+  if (airdrops > 0) {
+    // First tick ever: schedule the boot drop. airdropNextAt === 0 is the
+    // uninitialized marker (persisted worlds restore a real timestamp).
+    if (state.airdropNextAt === 0) {
+      state.airdropNextAt =
+        state.time + randBetween(FIRST_DROP_MIN_S, FIRST_DROP_MAX_S) / airdrops;
+    }
 
-  if (state.time >= state.airdropNextAt) {
-    state.airdropNextAt =
-      state.time + randBetween(AIRDROP_INTERVAL_MIN_S, AIRDROP_INTERVAL_MAX_S);
-    const pos = pickDropPoint(state);
-    // No landing point found (vanishingly unlikely at 40 attempts): skip this
-    // cycle entirely rather than dropping into the sea.
-    if (pos) {
-      const contents: ItemStack[] = [];
-      for (let roll = 0; roll < AIRDROP_ROLLS; roll++) {
-        contents.push(rollFromTable(AIRDROP_TABLE));
+    if (state.time >= state.airdropNextAt) {
+      state.airdropNextAt =
+        state.time + randBetween(AIRDROP_INTERVAL_MIN_S, AIRDROP_INTERVAL_MAX_S) / airdrops;
+      const pos = pickDropPoint(state);
+      // No landing point found (vanishingly unlikely at 40 attempts): skip this
+      // cycle entirely rather than dropping into the sea.
+      if (pos) {
+        const contents: ItemStack[] = [];
+        for (let roll = 0; roll < AIRDROP_ROLLS; roll++) {
+          contents.push(rollFromTable(AIRDROP_TABLE));
+        }
+        const id = state.nextEntityId++;
+        const landsAt = state.time + AIRDROP_FALL_DELAY_S;
+        state.drops.set(id, {
+          id,
+          x: pos.x,
+          y: state.world.groundHeight(pos.x, pos.z),
+          z: pos.z,
+          landsAt,
+          expiresAt: landsAt + AIRDROP_TTL_S,
+          contents,
+        });
+        broadcast(state, { t: "notice", msg: "supply drop inbound — watch for the smoke" });
       }
-      const id = state.nextEntityId++;
-      const landsAt = state.time + AIRDROP_FALL_DELAY_S;
-      state.drops.set(id, {
-        id,
-        x: pos.x,
-        y: state.world.groundHeight(pos.x, pos.z),
-        z: pos.z,
-        landsAt,
-        expiresAt: landsAt + AIRDROP_TTL_S,
-        contents,
-      });
-      broadcast(state, { t: "notice", msg: "supply drop inbound — watch for the smoke" });
     }
   }
 
   // Expiry: past TTL, or looted empty (players.ts removes emptied crates on
-  // pickup; this also catches any crate persisted in an emptied state).
+  // pickup; this also catches any crate persisted in an emptied state). Runs
+  // every tick even when airdrops are disabled — existing crates age out
+  // naturally and are never force-deleted at deploy (§4 LIVE-class promise).
   for (const drop of state.drops.values()) {
     if (state.time >= drop.expiresAt || drop.contents.length === 0) {
       state.drops.delete(drop.id);

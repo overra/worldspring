@@ -18,13 +18,13 @@ import {
   ZOMBIE_DEAGGRO_RADIUS,
   ZOMBIE_DMG,
   ZOMBIE_HP,
-  ZOMBIE_MAX,
   ZOMBIE_RESPAWN_S,
   ZOMBIE_ROAMERS,
   ZOMBIE_SPAWN_MIN_PLAYER_DIST,
   ZOMBIE_WANDER_SPEED,
   ZOMBIES_PER_TOWN,
 } from "@worldspring/shared/constants";
+import { effectiveZombieMax } from "@worldspring/shared/config";
 import { distSq2D } from "@worldspring/shared/math";
 import { resolveStatics, stepZombie } from "@worldspring/shared/movement";
 import type { World } from "@worldspring/shared/world";
@@ -94,18 +94,26 @@ function findLandNear(
  * point, so the wander loop keeps them inside the walls.
  */
 export function spawnInitialZombies(state: GameState): void {
-  const { cx, cz } = state.world.military;
-  for (let i = 0; i < MILITARY_ZOMBIES && state.zombies.size < ZOMBIE_MAX; i++) {
-    const pos = findLandNear(state.world, cx, cz, MILITARY_SPAWN_RADIUS, 20);
-    if (pos) spawnZombie(state, pos.x, pos.z, true);
+  if (!state.config.threats.zombies) return;
+  const density = state.config.threats.zombieDensity;
+  const max = effectiveZombieMax(state.config);
+  if (state.config.threats.militaryZone) {
+    const { cx, cz } = state.world.military;
+    const milCount = Math.round(MILITARY_ZOMBIES * density);
+    for (let i = 0; i < milCount && state.zombies.size < max; i++) {
+      const pos = findLandNear(state.world, cx, cz, MILITARY_SPAWN_RADIUS, 20);
+      if (pos) spawnZombie(state, pos.x, pos.z, true);
+    }
   }
+  const perTown = Math.round(ZOMBIES_PER_TOWN * density);
   for (const town of state.world.towns) {
-    for (let i = 0; i < ZOMBIES_PER_TOWN && state.zombies.size < ZOMBIE_MAX; i++) {
+    for (let i = 0; i < perTown && state.zombies.size < max; i++) {
       const pos = findLandNear(state.world, town.cx, town.cz, town.radius, 20);
       if (pos) spawnZombie(state, pos.x, pos.z, false);
     }
   }
-  for (let i = 0; i < ZOMBIE_ROAMERS && state.zombies.size < ZOMBIE_MAX; i++) {
+  const roamers = Math.round(ZOMBIE_ROAMERS * density);
+  for (let i = 0; i < roamers && state.zombies.size < max; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
       const x = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
       const z = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
@@ -189,11 +197,15 @@ export function tickZombies(state: GameState, dt: number): void {
         zombie.y = state.world.groundHeight(zombie.x, zombie.z);
         if (zombie.attackCooldown <= 0 && !attackBlocked(state, zombie, target)) {
           zombie.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_S;
-          damagePlayer(state, target, zombie.mil ? MILITARY_ZOMBIE_DMG : ZOMBIE_DMG, "a zombie", true);
+          const dmg =
+            (zombie.mil ? MILITARY_ZOMBIE_DMG : ZOMBIE_DMG) * state.config.threats.zombieDamage;
+          damagePlayer(state, target, dmg, "a zombie", true);
         }
       } else {
         zombie.state = "chase";
-        const speed = zombie.mil ? MILITARY_ZOMBIE_SPEED : ZOMBIE_CHASE_SPEED;
+        const speed =
+          (zombie.mil ? MILITARY_ZOMBIE_SPEED : ZOMBIE_CHASE_SPEED) *
+          state.config.threats.zombieSpeed;
         stepZombie(zombie, tx, tz, speed, dt, state.world);
       }
       continue;
@@ -327,11 +339,13 @@ function pickMilitaryRespawnPos(state: GameState): { x: number; z: number } | nu
 
 /** Count down pending respawns; blocked ones are held and retried next tick. */
 export function tickZombieRespawns(state: GameState, dt: number): void {
+  if (!state.config.threats.zombies) return;
+  const max = effectiveZombieMax(state.config);
   for (let i = state.zombieRespawns.length - 1; i >= 0; i--) {
     const pending = state.zombieRespawns[i];
     pending.t -= dt;
     if (pending.t > 0) continue;
-    if (state.zombies.size >= ZOMBIE_MAX) {
+    if (state.zombies.size >= max) {
       pending.t = 0;
       continue;
     }
