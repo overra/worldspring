@@ -42,6 +42,7 @@ A directory full of servers with *personalities* is the product.
 | [08-rendering-performance.md](08-rendering-performance.md) | Measured frame budget (the scene is post/fill-bound, not geometry-bound): device/GPU auto-tier + a real mobile tier (the launch gate), baked static-world vertex AO to kill the ~46%-of-frame N8AO line, shadow/rig budgets, WebGPU scoped as blocked R&D. |
 | [09-monorepo-migration.md](09-monorepo-migration.md) | **Infrastructure, do first:** pnpm workspace + Turborepo → `apps/game` (Vite, identity preserved), `apps/web` (Astro + Starlight + directory SSR/D1 — supersedes doc 02's Hono), `apps/prober` (cron Worker), `packages/shared` (`@worldspring/shared`, determinism-gated extraction). Lands before any feature milestone. |
 | [10-preview-testbed-qa.md](10-preview-testbed-qa.md) | **Infrastructure / process:** makes the per-PR `worldspring-pr-<N>` preview *testable* — a prod-gated (`env.TESTBED`, never in `wrangler.jsonc`) `provisionTestbed` that lands a fresh-token join fully kitted at a coast station by a lit fire through existing systems (no new wire surface), an extensible typed `Scenario` schema (`parseScenario` in `packages/shared`) driving both that setup and a headless `@worldspring/testkit` harness, and a `/testbed` Claude Code skill that authors scenarios + the human checklist from a diff. The QA acceptance harness docs 05/06/07 defer to. |
+| [11-channeled-timed-actions.md](11-channeled-timed-actions.md) | The channeled-action primitive: a shared `ActiveAction` on `ServerPlayer` (durationS + cancel-on-move/damage/slot-swap/leave-fire), zero new ClientMsg (server-driven cancel) + an additive `you.action` snapshot/`welcome` field + a HUD cast bar, server-authoritative game-time countdown that fires the existing completion path (cook/boil, use, craft, reload, deer-harvest, fishing cast) on finish — turning doc 05's instant `use`/`craft` and combat's instant ranged fire into interruptible casts (forcing the net-new reload + magazine model), with one `PROTOCOL_VERSION` bump owned by doc 03. |
 | `research/` | Ground truth the docs cite: `cf-costs.md` (billing math — read this one regardless), `cf-deploy.md`, `cf-oauth.md`, `codebase-server.md`, `codebase-sim.md`, `directory-prior-art.md`. |
 
 ### Canonical vocabulary (who owns what)
@@ -58,6 +59,7 @@ Parallel-written docs share these names; the owner's definition is binding:
 | `cOpen`/`cMove`/`cont` container protocol, `hammer`, `BuildingConfig` semantics | doc 06 | Doc 04 §1 carries the amended `BuildingConfig {enabled, pieceCapPerPlayer, decayHours, offlineRaidMult}`. |
 | `WorldSizeTier` value set (standard/large/huge), tier tables, `waterAt`, `WORLDGEN_VERSION`, species framework | doc 07 | Doc 04's M6 tier work is **subsumed by doc 07 M1–M2** — implement once, through doc 07. |
 | Client render tiers: `QualityConfig` knobs, `detectTier`, `mobile` profile, baked-AO vertex pass, the `?debug=1` frame profiler | doc 08 | Doc 04's presets dial *server* entity counts; doc 08 owns *client* render quality. The two meet only at doc 08 M6's worst-case test scene (doc 04 `zombieDensity:2` + doc 07 species ceilings). |
+| `ActiveAction` (the channeled-action primitive), the server-driven cast + cancel rules, the `you.action` snapshot/`welcome` field, `*_CHANNEL_S` durations | doc 11 | docs 05 (use/craft), combat (reload/magazine), 07 (fishing cast) delegate their completion to it but keep their own data + balance. |
 
 ## Dependency graph
 
@@ -72,6 +74,7 @@ graph TD
     D06["06 base building"]
     D07["07 world + water + wildlife"]
     D08["08 rendering performance<br/>auto-tier + mobile + baked AO"]
+    D11["11 channeled/timed actions<br/>cook/use/reload casts + cancel"]
 
     D03 -->|release gate needs PROTOCOL_VERSION + route| D01
     D03 -->|probes + heartbeat contract| D02
@@ -85,6 +88,9 @@ graph TD
     D04 -.->|BuildingConfig fields, stub OK| D06
     D05 -->|wood/scrap + tree faucet| D06
     D05 -.->|fishing items for M12| D07
+    D03 -.->|proto gate, channel-msg bump| D11
+    D05 -.->|wraps use/craft completion| D11
+    D11 -.->|cast substrate for M12| D07
     D02 -.->|registration API for M5/M8| D01
     P -.->|free-plan copy gate M6| D01
     P -.->|community-host gate M4| D05
