@@ -293,7 +293,12 @@ function parseAssert(raw: unknown): Assert | null {
     case "vitals": {
       const field = enumOr(raw.field, ["hp", "food", "water", "temp"] as const, "hp");
       const cmp = enumOr(raw.cmp, ["lte", "gte"] as const, "gte");
-      return { on: "vitals", field, cmp, value: num(raw.value, 0, TEMP_MIN, VITAL_MAX) };
+      // Field-specific range (matches the provisioning vitals clamp): hp/food/water
+      // span [0, VITAL_MAX], temp spans [TEMP_MIN, TEMP_MAX]. Clamping the assert
+      // target to [TEMP_MIN, …] would forbid low-vitals checks like hp <= 8.
+      const min = field === "temp" ? TEMP_MIN : 0;
+      const max = field === "temp" ? TEMP_MAX : VITAL_MAX;
+      return { on: "vitals", field, cmp, value: num(raw.value, 0, min, max) };
     }
     case "notice":
       return { on: "notice", contains: str(raw.contains, "") };

@@ -14,6 +14,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type Assert,
   BUILTIN_SCENARIO,
   parseScenario,
   type Provision,
@@ -174,6 +175,29 @@ describe("parseScenario clamps and survives malformed input", () => {
     expect(v.food).toBe(0); // clamped to MIN
     expect(v.water).toBeUndefined(); // NaN → absent (not set)
     expect(v.temp).toBe(60); // clamped to TEMP_MAX
+  });
+
+  it("vitals ASSERTION values clamp per-field — low hp/water survive, temp keeps its band", () => {
+    const s = parseScenario({
+      name: "x",
+      provision: [],
+      checklist: [],
+      assert: [
+        { on: "vitals", field: "hp", cmp: "lte", value: 8 },
+        { on: "vitals", field: "water", cmp: "lte", value: 0 },
+        { on: "vitals", field: "temp", cmp: "gte", value: 5 },
+        { on: "vitals", field: "temp", cmp: "lte", value: 9999 },
+      ],
+    });
+    const va = (s.assert ?? []).filter(
+      (a): a is Extract<Assert, { on: "vitals" }> => a.on === "vitals",
+    );
+    const find = (field: string, cmp: string) =>
+      va.find((a) => a.field === field && a.cmp === cmp)?.value;
+    expect(find("hp", "lte")).toBe(8); // below TEMP_MIN(20) must NOT clamp up
+    expect(find("water", "lte")).toBe(0); // 0 survives (was forced to 20)
+    expect(find("temp", "gte")).toBe(20); // temp clamps to TEMP_MIN
+    expect(find("temp", "lte")).toBe(60); // temp clamps to TEMP_MAX
   });
 
   it("an unknown provision kind is DROPPED, the rest are kept", () => {
