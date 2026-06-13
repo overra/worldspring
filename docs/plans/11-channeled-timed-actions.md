@@ -136,16 +136,17 @@ Lifecycle, all server-authoritative:
 
 | Action | Today's instant call site | `durationS` (proposed) | Cancel triggers | Completion fn |
 | --- | --- | --- | --- | --- |
-| **Cook venison** | `useItem` cook branch, `players.ts:350-354` | `COOK_CHANNEL_S` (≈3) | move / damage / slot-swap / chat / death / **leaves fire range** | cook branch (`consumeFromSlot` + `addToInventory("cooked_venison",1)`) |
-| **Eat / drink / heal** | `useItem` switch, `players.ts:371-380` | `USE_CHANNEL_S` (≈1.2; bandage longer) | move / damage / slot-swap / chat / death | the matching `case` (apply vitals + `consumeFromSlot`) |
-| **Eat raw (venison, no fire)** | `useItem` else-branch, `players.ts:355-366` | `USE_CHANNEL_S` | move / damage / slot-swap / chat / death | eat-raw branch (food + hp penalty + consume) |
-| **Reload** | *(none — net-new)* off `attack`/equip | combat-owned (≈`RELOAD_CHANNEL_S`) | move? *(open Q)* / damage / slot-swap / chat / death | combat refill (§2) |
-| **Craft** | doc 05 `craftItem` (doc 05 §2, `{t:"craft"}`) | doc-05-owned per recipe | move / damage / slot-swap / chat / death | doc 05's `craftItem` (unchanged) |
-| **Deer harvest** | doc 05 M5 `{t:"gather", k:"corpse"}` | doc-05-owned (≈2) | move / damage / slot-swap / chat / death | doc 05's harvest handler |
-| **Tree gather** | doc 05 M5 `{t:"gather", k:"tree"}` | doc-05-owned (≈1.5) | move / damage / slot-swap / chat / death | doc 05's gather handler |
-| **Fishing cast** | doc 07 M12 (`fishingUntil`, `07-world-and-wildlife.md:505-517`) | doc-07-owned (4–10 already) | move (already) / damage / slot-swap / chat / death | doc 07's cast roll |
+| **Cook venison** | `useItem` cook branch, `players.ts:350-354` | `COOK_CHANNEL_S` (≈3) | move / damage / slot-swap / death / **leaves fire range** | cook branch (`consumeFromSlot` + `addToInventory("cooked_venison",1)`) |
+| **Eat / drink / heal** | `useItem` switch, `players.ts:371-380` | `USE_CHANNEL_S` (≈1.2; bandage longer) | move / damage / slot-swap / death | the matching `case` (apply vitals + `consumeFromSlot`) |
+| **Eat raw (venison, no fire)** | `useItem` else-branch, `players.ts:355-366` | `USE_CHANNEL_S` | move / damage / slot-swap / death | eat-raw branch (food + hp penalty + consume) |
+| **Place campfire** | `useItem` placeable branch, `players.ts:375-388` | `PLACEABLE_CHANNEL_S` (≈1.5) | move / damage / slot-swap / death | placeable branch (push the campfire onto `state.fires`) |
+| **Reload** | *(none — net-new)* off `attack`/equip | combat-owned (≈`RELOAD_CHANNEL_S`) | move? *(open Q)* / damage / slot-swap / death | combat refill (§2) |
+| **Craft** | doc 05 `craftItem` (doc 05 §2, `{t:"craft"}`) | doc-05-owned per recipe | move / damage / slot-swap / death | doc 05's `craftItem` (unchanged) |
+| **Deer harvest** | doc 05 M5 `{t:"gather", k:"corpse"}` | doc-05-owned (≈2) | move / damage / slot-swap / death | doc 05's harvest handler |
+| **Tree gather** | doc 05 M5 `{t:"gather", k:"tree"}` | doc-05-owned (≈1.5) | move / damage / slot-swap / death | doc 05's gather handler |
+| **Fishing cast** | doc 07 M12 (`fishingUntil`, `07-world-and-wildlife.md:505-517`) | doc-07-owned (4–10 already) | move (already) / damage / slot-swap / death | doc 07's cast roll |
 
-The deer-harvest / tree-gather / craft / fishing rows point at the *owning doc*, not a today's-code `file:line`, because those completion paths are themselves doc-05/07 design surface (not yet in the tree) — only the cook/eat/drink rows cite live call sites. The proposed durations in the cook/use/reload rows are *placeholders* that live in `packages/shared/src/constants.ts` (house rule — no system-local tunables; the `FIRE_WARMTH_RADIUS`/`ATTACK_COOLDOWN_S` precedent at `constants.ts:64`/`constants.ts:99`), named `COOK_CHANNEL_S`, `USE_CHANNEL_S`, etc. Per-action numbers that belong to another owner — craft times (doc 05), reload time + mag sizes (combat), fishing cast window (doc 07) — live in *their* data tables (`RECIPES`, `RangedConfig`, doc 07's fishing config), not here. This doc owns only the `*_CHANNEL_S` constants for the actions it itself adopts (cook + use), and the `ActiveAction` substrate the rest cast on.
+The deer-harvest / tree-gather / craft / fishing rows point at the *owning doc*, not a today's-code `file:line`, because those completion paths are themselves doc-05/07 design surface (not yet in the tree) — only the cook/eat/drink rows cite live call sites. The proposed durations in the cook/use/reload rows are *placeholders* that live in `packages/shared/src/constants.ts` (house rule — no system-local tunables; the `FIRE_WARMTH_RADIUS`/`ATTACK_COOLDOWN_S` precedent at `constants.ts:64`/`constants.ts:99`), named `COOK_CHANNEL_S`, `USE_CHANNEL_S`, `PLACEABLE_CHANNEL_S`, etc. Per-action numbers that belong to another owner — craft times (doc 05), reload time + mag sizes (combat), fishing cast window (doc 07) — live in *their* data tables (`RECIPES`, `RangedConfig`, doc 07's fishing config), not here. This doc owns only the `*_CHANNEL_S` constants for the actions it itself adopts (cook + use + place-campfire), and the `ActiveAction` substrate the rest cast on.
 
 **Reload + magazine model (combat consumer).** Reload is the combat instance of the primitive, and it forces a magazine. Today one ammo item == one trigger pull (`combat.ts:303-310`); there is no rounds-in-the-gun state. This doc scopes:
 
@@ -161,7 +162,7 @@ Server-authoritative, evaluated at the top of `tickActiveActions` before the cou
 - **Move.** `player.movedThisTick` is `true` this tick (`players.ts:256`). This is the default for cook/use/craft/harvest/gather. Whether *reload* cancels on move or merely the bar pauses is an open question (Open Q4) — recommendation below is **cancel** for consistency, but combat may override.
 - **Take damage.** Set on the player by any damage application this tick. The cleanest signal is the existing per-victim `{e:"hurt"}` event the combat/zombie/survival paths already emit to the victim (`protocol.ts:221`); the channel reads a `tookDamageThisTick` flag set wherever hp is reduced (a one-line set alongside the existing hurt-event emit). Cancels every kind.
 - **Swap selected slot.** `player.selectedSlot` changed since the cast started — equipping a different hotbar slot mid-cast. The cast is bound to `action.slot`; if `selectedSlot !== action.slot` (for slot-bound kinds) the cast cancels. `equipSlot` (`players.ts:404-409`) is the mutation point; the check lives in `tickActiveActions`, not in `equipSlot`, to keep one cancellation owner.
-- **Chat open.** Opening the chat input is a client-side state, but the server sees its proxy: the client stops sending movement/input and the player goes idle. A dedicated signal is overkill — chat-open already gates client input emission (the `InputController` returns early when chat is focused, doc 05 §6 precedent for `KeyF` at `InputController.tsx:96-103`). If a hard guarantee is wanted, a `{t:"chat"}` send could carry a "chatting" hint, but that is a wire change this doc declines; **recommendation: rely on input-cessation + the move rule.**
+- **Chat open is NOT a server-visible cancel.** Opening the chat input is purely client-side; there is no chat-focus wire signal, so the server cannot see it. Its only server-visible effect is *input cessation* — the `InputController` returns early while chat is focused (`InputController.tsx:96-103`, the doc 05 §6 `KeyF` precedent), so movement stops being sent. A cast therefore cancels on chat-open ONLY via the consequent lack of movement: a **stationary, in-range cast still completes** with chat open. This doc declines a dedicated `{t:"chat"}` "chatting" hint (a wire change); cancellation relies on the move + range rules above, and a hint is purely additive if a hard guarantee is ever wanted. (Hence "chat" is absent from the §2 cancel-trigger column.)
 - **Leave fire range (cook only).** Re-run `nearFire(state, player.core.x, player.core.z)` (`players.ts:313-319`) every tick the cook is active; `false` cancels with the "moved away from the fire" notice. This is the net-new per-tick predicate (Drift) and the whole point of the cook example.
 - **Death.** `!player.alive` cancels and clears; also belt-and-braces cleared in `respawnPlayer` (`players.ts:185-208`).
 
@@ -209,7 +210,7 @@ The client does three things and predicts none of them:
 
 A center-screen cast bar mounts in the HUD root (`HUD.tsx:304-320`) alongside the crosshair, reading `channelAction` from the store via `useUIStore` (the `VitalsPanel` subscription pattern, `HUD.tsx:58-72`). It reuses the existing `Bar` primitive (`HUD.tsx:45-56`, `value`/`max`/`fillClass`) — `value = totalS - remainingS`, `max = totalS` — and renders only when `channelAction` is non-null.
 
-```
+```text
                          (crosshair)
 
                   ┌─────────────────────────┐
