@@ -7,6 +7,8 @@
 //   - clientWorld is written by the net/prediction layer only
 //   - render components READ both; they never write.
 
+import { DEFAULT_CONFIG } from "@worldspring/shared/config";
+import type { ServerConfig } from "@worldspring/shared/config";
 import type {
   AnimalState,
   GameEvent,
@@ -164,6 +166,10 @@ export interface ClientWorldState {
   audioEvents: GameEvent[];
   /** Deterministic world geometry, built from the seed in `welcome`. */
   world: World | null;
+  /** Server rules, clamped from `welcome.config`. Initialized to DEFAULT_CONFIG
+   * so every read path is total against an old/absent-config server. The net
+   * layer ALWAYS writes clampConfig(msg.config) — never the raw object. */
+  config: ServerConfig;
 }
 
 export const clientWorld: ClientWorldState = {
@@ -184,6 +190,7 @@ export const clientWorld: ClientWorldState = {
   events: [],
   audioEvents: [],
   world: null,
+  config: DEFAULT_CONFIG,
 };
 
 // Dev-only debug handle: lets tooling (and curious humans) drive input and

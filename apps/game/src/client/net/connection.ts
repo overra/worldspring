@@ -9,6 +9,7 @@ import {
   MAX_NAME_LENGTH,
   START_HOUR,
 } from "@worldspring/shared/constants";
+import { clampConfig } from "@worldspring/shared/config";
 import { ITEM_DEFS } from "@worldspring/shared/items";
 import { gameHours, PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
@@ -282,6 +283,13 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   resetInterpolation();
 
   clientWorld.world = createWorld(msg.seed);
+  // Clamp the server's config before storing — NEVER store the raw object. A
+  // hostile open-source server (doc 02's first-party join path) could send
+  // zombieDensity:1e9 (OOM) or dayLengthMin:0 (NaN clock); clampConfig bounds
+  // every field. Absent config → DEFAULT_CONFIG (clampConfig's base). M1 stores
+  // it but does not yet drive runtime behavior off it (clock swap deferred to
+  // M4 to keep this PR byte-identical).
+  clientWorld.config = clampConfig(msg.config);
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;

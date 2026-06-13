@@ -17,13 +17,16 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "fingerprint": "node scripts/fingerprint.mjs src"
+    "fingerprint": "node scripts/fingerprint.mjs src",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "simplex-noise": "4.0.3"
   },
   "devDependencies": {
     "esbuild": "0.27.3",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "4.1.8"
   }
 }

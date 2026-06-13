@@ -10,6 +10,7 @@
   "scripts": {
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
     "dev": "turbo run dev",
     "dev:game": "turbo run dev --filter=@worldspring/game",
     "dev:web": "turbo run dev --filter=@worldspring/web",
