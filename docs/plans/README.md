@@ -1,4 +1,4 @@
-# DEADCOAST — Plans Roadmap
+# Worldspring — Plans Roadmap
 
 Read this first. It is the map for the seven design docs in this directory: what each
 owns, what gates what, the order to build in, and the decisions still waiting on Adam.
@@ -8,7 +8,7 @@ the same PR as the code.
 
 ## Vision
 
-DEADCOAST is an open-source, browser-native DayZ-like: a low-poly procedural island,
+Worldspring is an open-source, browser-native DayZ-like: a low-poly procedural island,
 zombies, hunger and cold, full-loot PvP — running as a React Three Fiber client against
 an authoritative Durable Object server with a shared deterministic sim. No launcher, no
 install. The repo deploys with one command, and the deterministic worldgen contract
@@ -33,9 +33,9 @@ A directory full of servers with *personalities* is the product.
 | Doc | One line |
 | --- | --- |
 | [01-create-server-deploy.md](01-create-server-deploy.md) | One-click deploy into the user's own Cloudflare account: confidential OAuth client, CI release artifacts in R2, a Deployer DO replaying the multipart Script Upload API, ephemeral tokens, update/delete flows. |
-| [02-server-directory.md](02-server-directory.md) | Official site + server directory: second SSR Worker in `site/` (Hono, D1), `dcd1.` server tokens + challenge-hash URL proof, probe-first liveness, capped Luanti-style ranking, honest leave-our-site join interstitial. |
+| [02-server-directory.md](02-server-directory.md) | Official site + server directory: Astro app `apps/web` (landing + Starlight docs + directory SSR over D1) plus a standalone `apps/prober` cron Worker, `dcd1.` server tokens + challenge-hash URL proof, probe-first liveness, capped Luanti-style ranking, honest leave-our-site join interstitial. |
 | [03-server-info-contract.md](03-server-info-contract.md) | The contract everything builds on: `PROTOCOL_VERSION` + two-sided `proto` join gate, versioned `GET /api/server-info` (DO cheap-read + Worker micro-cache), push-primary heartbeats, forward-compat rules. |
-| [04-gameplay-presets.md](04-gameplay-presets.md) | `ServerConfig` in `src/shared/config.ts`: constants stay defaults, config multiplies at point of use, `GAME_CONFIG` var → fail-closed `world_fingerprint` wipes, six presets, whole-config-in-welcome, admin v1. |
+| [04-gameplay-presets.md](04-gameplay-presets.md) | `ServerConfig` in `packages/shared/src/config.ts`: constants stay defaults, config multiplies at point of use, `GAME_CONFIG` var → fail-closed `world_fingerprint` wipes, six presets, whole-config-in-welcome, admin v1. |
 | [05-items-scavenging-crafting.md](05-items-scavenging-crafting.md) | Minutes 10–120: 16 new data-driven items, searchable containers on a new hash-salted rng stream, tree gather nodes, deer corpses + knife harvest, flat `RECIPES` crafting, jacket/backpack wear slots. |
 | [06-base-building.md](06-base-building.md) | Base building v1: mutable shared `StructureIndex` merged into the statics queries (zero movement.ts changes), snap-to-grid `canPlace`, global `sFull`/`sAdd` deltas, single-blob persistence, code locks, melee raiding, decay. |
 | [07-world-and-wildlife.md](07-world-and-wildlife.md) | World expansion: standard/large/huge tiers, chunked LOD terrain (fog-bounded), carve-in-heightfield rivers/ponds + wading + fishing, Deer→Animal species framework (rabbit/boar/wolf packs), fingerprint harness CI gate. |
@@ -66,7 +66,7 @@ graph TD
     D03["03 server-info contract<br/>PROTOCOL_VERSION + /api/server-info + heartbeats"]
     D04["04 ServerConfig + presets<br/>GAME_CONFIG + fingerprint + PRESETS"]
     D01["01 create-server deploy<br/>OAuth + artifacts + Deployer DO"]
-    D02["02 site + directory<br/>site/ Worker + D1 + ranking"]
+    D02["02 site + directory<br/>apps/web (Astro) + apps/prober + D1 + ranking"]
     D05["05 items + scavenging + crafting"]
     D06["06 base building"]
     D07["07 world + water + wildlife"]
@@ -140,7 +140,7 @@ Everything else fans out from here.
 
 1. **Doc 03 M1–M2** — version constants, two-sided `proto` gate, `ServerInfo` +
    `GET /api/server-info`, micro-cache. *(M1 Opus 4.8 — protocol; M2 Sonnet 4.8.)*
-2. **Doc 04 M1–M2** — `src/shared/config.ts`, presets, validation, fail-closed
+2. **Doc 04 M1–M2** — `packages/shared/src/config.ts`, presets, validation, fail-closed
    fingerprint persistence, the repo's first test harness (vitest). *(Both Opus 4.8 —
    determinism + data-loss-adjacent wipe semantics.)*
 3. **persistAll single-row world snapshot** (research/cf-costs.md §6 lever 1) — ~30
@@ -227,7 +227,7 @@ when the answer is needed.
 4. **Ephemeral OAuth tokens — confirm** *(doc 01 Q2)* — costs one OAuth bounce per
    ~monthly update; caps breach blast radius at jobs-in-flight. **Rec: ephemeral; revisit
    only if fleet auto-update becomes a real ask, as a separate opt-in consent.**
-5. **Enforce the `deadcoast-` script-name prefix?** *(doc 01 Q3)* — clobber guard +
+5. **Enforce the `worldspring-` script-name prefix?** *(doc 01 Q3)* — clobber guard +
    self-identification vs vanity URLs. **Rec: enforce.**
 6. **Site storage split** *(doc 01 Q5)* — shared site D1 (directory tables) + private
    Deployer-DO job table. Doc 02 independently chose D1. **Rec: keep the split.**
@@ -342,7 +342,7 @@ when the answer is needed.
   session will "fix" your work back to the stale contract.
 - **Determinism is sacred.** Existing rng stream draw order never changes; new
   generation uses new hash-salted streams; `scripts/worldgen-fingerprint.ts` (doc 07
-  M1) is the CI gate — run it on anything that goes near `src/shared/world.ts`.
+  M1) is the CI gate — run it on anything that goes near `packages/shared/src/world.ts`.
 - **UNCONFIRMED means unconfirmed.** Docs 01–03 mark platform behaviors that must be
   verified on a live Cloudflare account before code relies on them (doc 01 M1 is the
   dedicated spike). Don't promote an UNCONFIRMED to fact from training data — check

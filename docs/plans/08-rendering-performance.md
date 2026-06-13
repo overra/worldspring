@@ -17,7 +17,7 @@ That inverts the intuition the gameplay docs encode. Doc 06 (base building) and 
 features are "cheap"; on desktop they are right about the wrong axis. Three things
 actually move this game's frame budget, and this doc owns all three:
 
-1. **No device tiering exists.** `src/client/state/settings.ts` hardcodes
+1. **No device tiering exists.** `apps/game/src/client/state/settings.ts` hardcodes
    `quality: "high"` for every device with **no auto-detect** (verified — no `detectGPU`,
    no `matchMedia`, no UA/hardwareConcurrency branch). Every phone that opens a community
    server boots into retina `dpr 2` + full-res N8AO + 2048 shadows. This is the single
@@ -102,27 +102,27 @@ deltas are the ground truth below**, not per-pass timers.
 
 **Render config (verified):**
 
-- `src/client/state/settings.ts` — `QUALITY_CONFIGS`: `low {maxDpr 1, postFx false,
+- `apps/game/src/client/state/settings.ts` — `QUALITY_CONFIGS`: `low {maxDpr 1, postFx false,
   shadows false, grassDensity 0.35}`, `medium {1.5, true, 1024, 0.7}`, `high {2, true,
   2048, 1}`. **Default `quality: "high"` unconditionally; no device detection anywhere.**
-  Live-switchable via the Esc menu (`src/client/ui/EscapeMenu.tsx`); persisted to
+  Live-switchable via the Esc menu (`apps/game/src/client/ui/EscapeMenu.tsx`); persisted to
   `localStorage` key `dc_settings`. Not exposed on `window`.
-- `src/client/render/post/PostFX.tsx` — pmndrs `EffectComposer` is the sole renderer
+- `apps/game/src/client/render/post/PostFX.tsx` — pmndrs `EffectComposer` is the sole renderer
   (R3F auto-render disabled by PlayerCamera's positive-priority `useFrame`). Chain
   (medium/high, identical — only `dpr` differs between the tiers): RenderPass → N8AO
   (`quality="medium"` = 16 AO / 8 denoise samples, **`halfRes` default false**) → merged
   EffectPass [Bloom mipmapBlur + Vignette + HueSaturation + BrightnessContrast] → SMAA.
   **WebGL-only stack** (`postprocessing` + `n8ao`); `multisampling={0}` already set.
-- `src/client/GameCanvas.tsx` — `gl={{ antialias: true, powerPreference:
+- `apps/game/src/client/GameCanvas.tsx` — `gl={{ antialias: true, powerPreference:
   "high-performance" }}`. `antialias: true` allocates a 4×-MSAA backbuffer that only ever
   receives the composer's final fullscreen blit (SMAA is the real AA) — wasted resolve;
   context-creation flag, so toggling needs a Canvas remount.
-- `src/client/render/world/SkyAndLighting.tsx` — one shadow-casting `DirectionalLight`
+- `apps/game/src/client/render/world/SkyAndLighting.tsx` — one shadow-casting `DirectionalLight`
   (the sun), `shadow.mapSize` 2048 on high, `shadowMap.autoUpdate` default true (full
   re-render every frame), shadow ortho box camera-centered (110×110 m), **`castShadow`
   stays true at night** while `intensity` ramps to 0 — the whole shadow pass renders for
   an invisible sun (hours 21–5).
-- `src/client/render/world/Terrain.tsx` — one `PlaneGeometry(WORLD_SIZE, 200, 200)`,
+- `apps/game/src/client/render/world/Terrain.tsx` — one `PlaneGeometry(WORLD_SIZE, 200, 200)`,
   40,401 verts, already vertex-colored from height + central-difference slope
   (`:39–53`). **This is the existing hook for baked AO** — an extra darkening term on an
   existing vertex-color pipeline, no new material.
@@ -133,7 +133,7 @@ deltas are the ground truth below**, not per-pass timers.
   species` (256) ceilings, it surfaces.
 
 **Determinism note:** the static world (terrain heightfield, town/building layout, trees,
-rocks) is produced by deterministic seeded worldgen (`src/shared/world.ts`). Vertex AO is
+rocks) is produced by deterministic seeded worldgen (`packages/shared/src/world.ts`). Vertex AO is
 computed **on the client at mesh-build time** from that already-resolved geometry; it
 reads world data, writes only vertex colors, and **touches no rng stream and no
 `heightAt`** — so `scripts/worldgen-fingerprint.ts` (doc 07 M1) is unaffected. Stated

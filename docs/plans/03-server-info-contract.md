@@ -6,14 +6,14 @@ in `site/` — consumes heartbeats and probes). This doc is the contract both bu
 
 ## Summary
 
-Every DEADCOAST server — official or community — exposes **`GET /api/server-info`**: a
-versioned, additive-only JSON document (`ServerInfo`, types in a new `src/shared/serverInfo.ts`)
+Every Worldspring server — official or community — exposes **`GET /api/server-info`**: a
+versioned, additive-only JSON document (`ServerInfo`, types in a new `packages/shared/src/serverInfo.ts`)
 carrying identity (`name`, `motd`, `joinUrl`), compatibility (`gameVersion`,
-`protocolVersion` — a new `PROTOCOL_VERSION` constant in `src/shared/protocol.ts`, carried
+`protocolVersion` — a new `PROTOCOL_VERSION` constant in `packages/shared/src/protocol.ts`, carried
 in both `join` and `welcome` as a **two-sided** hard join gate: the server rejects
 mismatched clients before touching any character state, the client refuses older
 servers), rules badges (`rules: RulesSummary` derived
-from `ServerConfig` in the new `src/shared/config.ts`), and liveness (`players`/`maxPlayers`,
+from `ServerConfig` in the new `packages/shared/src/config.ts`), and liveness (`players`/`maxPlayers`,
 `status`, `uptimeS`, `worldAgeS`, optional `colo`). The existing `/api/health` is **kept
 unchanged** as the unversioned ops endpoint; `/api/server-info` is the public contract.
 Serving is **DO-with-cheap-read fronted by a per-isolate micro-cache in the Worker** — no new
@@ -62,13 +62,13 @@ breaking changes.
 
 Verified against this worktree:
 
-- **Worker routing** (`src/server/worker.ts:6-22`): `/ws` (426 without Upgrade header),
+- **Worker routing** (`apps/game/src/server/worker.ts:6-22`): `/ws` (426 without Upgrade header),
   `/api/leaderboard`, `/api/health` forward to the single DO via `env.GAME.getByName("main")`;
   everything else 404s at `worker.ts:20`. Static assets are served platform-first; browser
   *navigation* requests to non-asset paths get `index.html` without invoking the Worker
   (SPA `not_found_handling`, `wrangler.jsonc:6-8`; gotcha documented in
   `docs/plans/research/codebase-server.md` §1).
-- **`/api/health`** (`src/server/GameRoom.ts:175-197`): returns
+- **`/api/health`** (`apps/game/src/server/GameRoom.ts:175-197`): returns
   `{players, zombies, animals, drops, corpses, loot, tickMsEma, tickMsMax, tick, uptime}`
   from in-memory state only, with the explicit comment "we never wake the sim to answer"
   (GameRoom.ts:173-174). CORS `*` (GameRoom.ts:191-195). Two consumer notes: `players` is
@@ -86,15 +86,15 @@ Verified against this worktree:
 - **Connected-player counting precedent**: `handleJoin`'s capacity check counts only
   non-offline players (GameRoom.ts:466-473) — the correct semantics for a public "players
   online" number.
-- **Protocol**: JSON discriminated unions on `t` (`src/shared/protocol.ts`); `welcome`
+- **Protocol**: JSON discriminated unions on `t` (`packages/shared/src/protocol.ts`); `welcome`
   carries `seed` (protocol.ts:194-206, sent at GameRoom.ts:514-524). **No wire version field
   exists anywhere** — `PROTOCOL_VERSION` must be created (gap flagged in
   `docs/plans/research/directory-prior-art.md` §9.4).
-- **Sanitization precedent**: `STRIP_TEXT_RE` (`src/server/systems/players.ts:41`) strips
+- **Sanitization precedent**: `STRIP_TEXT_RE` (`apps/game/src/server/systems/players.ts:41`) strips
   controls/zero-width/bidi; `sanitizeName` (players.ts:46) caps by code points. Names and
   chat both reuse it; server name and MOTD will too.
 - **Env surface**: exactly one binding (`GAME`), zero vars, zero secrets
-  (`wrangler.jsonc:9-16`; `worker-configuration.d.ts`). `src/shared/` has no `config.ts`,
+  (`wrangler.jsonc:9-16`; `worker-configuration.d.ts`). `packages/shared/src/` has no `config.ts`,
   `serverInfo.ts`, or `version.ts` yet (verified by listing).
 - **Costs** (all from `docs/plans/research/cf-costs.md`): free plan = 100K DO requests/day,
   100K Worker requests/day, 13K GB-s duration/day; HTTP DO requests bill 1:1; outbound
@@ -108,9 +108,9 @@ Verified against this worktree:
 
 | Constant | Lives in | Type | Meaning | Bump when |
 | --- | --- | --- | --- | --- |
-| `PROTOCOL_VERSION` | `src/shared/protocol.ts` | `number`, starts `1` | Wire + sim compatibility: a client and server with equal values can play together (messages parse, shared sim is deterministic-identical) | Any breaking change to `ClientMsg`/`ServerMsg` shapes or semantics, to `src/shared/movement.ts`/`world.ts` behavior the client predicts, or to `ItemType` wire enums |
-| `GAME_VERSION` | `src/shared/version.ts` (new) | `string`, semver, starts `"0.1.0"` | Human-readable build label for display only. Never gate on it | Every release; hand-maintained one-liner |
-| `SERVER_INFO_SCHEMA_VERSION` | `src/shared/serverInfo.ts` (new) | `number`, starts `1` | Shape of the `ServerInfo` document and `HeartbeatBody` | Breaking schema change only (see §10) |
+| `PROTOCOL_VERSION` | `packages/shared/src/protocol.ts` | `number`, starts `1` | Wire + sim compatibility: a client and server with equal values can play together (messages parse, shared sim is deterministic-identical) | Any breaking change to `ClientMsg`/`ServerMsg` shapes or semantics, to `packages/shared/src/movement.ts`/`world.ts` behavior the client predicts, or to `ItemType` wire enums |
+| `GAME_VERSION` | `packages/shared/src/version.ts` (new) | `string`, semver, starts `"0.1.0"` | Human-readable build label for display only. Never gate on it | Every release; hand-maintained one-liner |
+| `SERVER_INFO_SCHEMA_VERSION` | `packages/shared/src/serverInfo.ts` (new) | `number`, starts `1` | Shape of the `ServerInfo` document and `HeartbeatBody` | Breaking schema change only (see §10) |
 
 `PROTOCOL_VERSION` is enforced on **both ends of the wire** — a one-directional check is
 not a gate:
@@ -143,17 +143,17 @@ not a gate:
 
 Together these are the Factorio-style hard gate: the deterministic shared sim makes a
 soft warning a lie — mismatched sims desync. `SCHEMA_VERSION` in
-`src/server/persistence.ts:34` is a fourth, *server-private* axis (SQLite shape +
+`apps/game/src/server/persistence.ts:34` is a fourth, *server-private* axis (SQLite shape +
 worldgen wipes) and is deliberately not exposed.
 
 ### 2. `ServerInfo` — full types
 
-New file `src/shared/serverInfo.ts` (shared so the game worker, the `site/` directory
+New file `packages/shared/src/serverInfo.ts` (shared so the game worker, the `site/` directory
 worker, and the client can all import it; the `site/` worker imports via relative path —
 same repo):
 
 ```ts
-// src/shared/serverInfo.ts
+// packages/shared/src/serverInfo.ts
 // The public server-info contract. Versioned and boring-stable: community
 // servers update on their own schedule, so this file changes by ADDITION only
 // within a schema version. See docs/plans/03-server-info-contract.md.
@@ -163,7 +163,7 @@ export const SERVER_INFO_SCHEMA_VERSION = 1;
 
 /**
  * Compact, render-ready rules summary. Derived from ServerConfig by
- * summarizeRules() in src/shared/config.ts — the directory renders these as
+ * summarizeRules() in packages/shared/src/config.ts — the directory renders these as
  * badges and MUST NOT need to understand full ServerConfig. The FIELD SET is
  * owned by doc 04 §6 (which specs the banding thresholds, the closed preset
  * union, and the directory-side ingest whitelist rules); an earlier sketch
@@ -181,9 +181,9 @@ export interface RulesSummary {
   vitals: "gentle" | "normal" | "harsh";
   night: "cycle" | "always" | "never";
   dayLengthMin: number;
-  worldSize: WorldSizeTier;   // type-only import from src/shared/config.ts
+  worldSize: WorldSizeTier;   // type-only import from packages/shared/src/config.ts
   maxPlayers: number;
-  wipe: WipeSchedule;         // type-only import from src/shared/config.ts
+  wipe: WipeSchedule;         // type-only import from packages/shared/src/config.ts
 }
 
 export type ServerStatus = "occupied" | "idle";
@@ -240,7 +240,7 @@ export interface ServerInfo {
    */
   joinUrl: string;
   /**
-   * Doc 02's URL-control proof: sha256hex("deadcoast-directory-challenge:" +
+   * Doc 02's URL-control proof: sha256hex("worldspring-directory-challenge:" +
    * DIRECTORY_TOKEN), computed once and cached module-level; null when
    * DIRECTORY_TOKEN is unset. Publishing it leaks nothing (preimage
    * resistance over a 256-bit secret) and grants nothing — heartbeat auth
@@ -256,14 +256,14 @@ Field sourcing (server side):
 | Field | Source | Idle-safe? |
 | --- | --- | --- |
 | `schemaVersion`, `gameVersion`, `protocolVersion`, `worldSeed`, `maxPlayers`, `rules` | compile-time constants / `ServerConfig` | yes |
-| `name`, `motd` | `env.SERVER_NAME` / `env.SERVER_MOTD` vars, falling back to built-in code defaults (`"DEADCOAST"` / `""` — doc 04's `ServerConfig` deliberately carries no name/motd fields); sanitized with `STRIP_TEXT_RE` + code-point caps at read. `STRIP_TEXT_RE` (players.ts:41) removes controls/zero-width/bidi **only** — `<` `>` `&` and quotes pass through, hence §10 rule 8 | yes |
+| `name`, `motd` | `env.SERVER_NAME` / `env.SERVER_MOTD` vars, falling back to built-in code defaults (`"Worldspring"` / `""` — doc 04's `ServerConfig` deliberately carries no name/motd fields); sanitized with `STRIP_TEXT_RE` + code-point caps at read. `STRIP_TEXT_RE` (players.ts:41) removes controls/zero-width/bidi **only** — `<` `>` `&` and quotes pass through, hence §10 rule 8 | yes |
 | `players` | count of non-offline players in `this.game` (the GameRoom.ts:466-473 loop), `0` when `game === null` | yes |
 | `status` | `this.tickHandle !== null ? "occupied" : "idle"` | yes |
 | `uptimeS` | `Date.now() - this.activeSince` (new field set in `startTicking`, cleared in `stopTicking`); `0` when idle | yes |
 | `worldAgeS` | `this.game?.time` if live, else one SQLite read of `meta.game_time` (rows read are nearly free — 5M/day free cap) | yes |
 | `colo` | self-measured once per occupied session (see §8), persisted to `meta.colo`; `null` until known | yes |
 | `joinUrl` | `this.publicOrigin`: the DO captures `new URL(request.url).origin` in `fetch` on **every** request it sees (WS upgrades and `/api/server-info` alike), keeping it in memory and mirroring it to a `meta.origin` row; a cold-started DO restores it from `meta.origin`. Heartbeats read the same field — beats fire only while occupied, and occupancy always begins with a WS upgrade through `fetch` (GameRoom.ts:209), so the origin is always known before any beat fires. The GET handler may equally use its own request's origin; the captured field exists for the request-less beat contexts (§6) | yes |
-| `directoryChallenge` | `sha256hex("deadcoast-directory-challenge:" + env.DIRECTORY_TOKEN)`, computed once per isolate and cached module-level; `null` when the secret is unset (doc 02 §2) | yes |
+| `directoryChallenge` | `sha256hex("worldspring-directory-challenge:" + env.DIRECTORY_TOKEN)`, computed once per isolate and cached module-level; `null` when the secret is unset (doc 02 §2) | yes |
 
 `name`/`motd` as vars is deliberate: they are cosmetic, server-only, and doc 01's deploy
 flow can set them without a rebuild. Everything in `rules` derives from the resolved
@@ -337,7 +337,7 @@ Options considered:
 The chosen shape, concretely:
 
 ```ts
-// src/server/worker.ts — micro-cache in module scope (per-isolate; that's fine,
+// apps/game/src/server/worker.ts — micro-cache in module scope (per-isolate; that's fine,
 // each isolate refreshes at most once per TTL and isolates are bounded).
 interface InfoCacheEntry {
   body: string;
@@ -394,7 +394,7 @@ Why this satisfies the constraints:
   is `(number of isolates) / TTL`, not `1 / TTL`. Isolate counts for a low-traffic worker
   are small; this is a burst absorber, not a precision rate limiter, and that is enough.
 
-New constants (`src/shared/constants.ts`, new `// --- Server info & directory ---` section,
+New constants (`packages/shared/src/constants.ts`, new `// --- Server info & directory ---` section,
 per the all-tunables-in-constants contract):
 
 ```ts
@@ -478,7 +478,7 @@ issued by the directory at registration. The same token is what the server hashe
 the public `directoryChallenge` field (§2; doc 02 §2's challenge scheme).
 
 ```ts
-// src/shared/serverInfo.ts (continued)
+// packages/shared/src/serverInfo.ts (continued)
 
 export type HeartbeatEvent = "boot" | "edge" | "periodic" | "quiet";
 
@@ -513,7 +513,7 @@ accepted beats is at most `HEARTBEAT_INTERVAL_S + HEARTBEAT_JITTER_S + slack ≈
 a `quiet` beat, silence is normal and indefinite. Any accepted beat ends the silence —
 normally a `boot`, possibly an `edge` under the fallback (§7's suspension rule matches).
 
-**Sender implementation sketch** (`src/server/heartbeat.ts`, called from GameRoom):
+**Sender implementation sketch** (`apps/game/src/server/heartbeat.ts`, called from GameRoom):
 
 ```ts
 // Fire-and-forget: a heartbeat must never block or break the tick.
@@ -749,7 +749,7 @@ These rules bind every future change to `ServerInfo`/`HeartbeatBody`:
    Binding rule for all of the above: treat the document as data, not markup or links,
    until validated. Directory intake SHOULD additionally strip `<` from free-text
    fields as defense in depth. Also out of scope for sanitization: homoglyph
-   impersonation (cyrillic "Officiаl DEADCOAST" passes untouched) — that is a doc 02
+   impersonation (cyrillic "Officiаl Worldspring" passes untouched) — that is a doc 02
    moderation lever, flagged here so nobody assumes it handled.
 
 ## Implications
@@ -774,7 +774,7 @@ These rules bind every future change to `ServerInfo`/`HeartbeatBody`:
 
 - Every future wire/sim change now carries a "did this break `PROTOCOL_VERSION`?" review
   question. That's the point, but it's a new standing tax on protocol PRs.
-- `GAME_VERSION` in `src/shared/version.ts` can drift from `package.json` `version`
+- `GAME_VERSION` in `packages/shared/src/version.ts` can drift from `package.json` `version`
   (0.1.0 today). Hand-maintained constant chosen for boring-ness; drift is cosmetic.
 - The micro-cache means `/api/server-info` can lag reality by up to
   `SERVER_INFO_CACHE_TTL_S` (15s) per isolate — fine for listings, worth one sentence in
@@ -837,7 +837,7 @@ These rules bind every future change to `ServerInfo`/`HeartbeatBody`:
   regenerates via `npm run cf-typegen` after wrangler.jsonc gains the vars.
 - **Determinism**: nothing in this contract feeds worldgen or the shared sim. Heartbeat
   jitter uses `Math.random()` in server-infra code only — the seeded rng streams in
-  `src/shared/world.ts` are not touched. `worldSeed` in `ServerInfo` is read-only exposure
+  `packages/shared/src/world.ts` are not touched. `worldSeed` in `ServerInfo` is read-only exposure
   of an already-public value.
 
 ## Implementation plan
@@ -846,20 +846,20 @@ Milestone dependencies: M1 → M2 → M3; M4 independent after M2; M5 after M2.
 
 1. **M1 — version constants + two-sided join gate** *(Opus 4.8 —
    protocol/determinism-sensitive)*
-   - Scope: `PROTOCOL_VERSION = 1` in `src/shared/protocol.ts`; `GAME_VERSION` in new
-     `src/shared/version.ts`; add `proto?: number` to the `join` variant and its
+   - Scope: `PROTOCOL_VERSION = 1` in `packages/shared/src/protocol.ts`; `GAME_VERSION` in new
+     `packages/shared/src/version.ts`; add `proto?: number` to the `join` variant and its
      validation in `parseClientMsg` (protocol.ts:255-260 — finite number when present);
      server-side gate at the **top** of `handleJoin` (GameRoom.ts:407-505): explicit
      mismatch → `{ t: "error", msg: "incompatible version" }` + close, before token
      hashing, character create/restore, `persistAll`, or any broadcast; absent `proto`
      accepted while `PROTOCOL_VERSION === 1` (§1); client sends `proto` in its join and
-     gates on `welcome.proto` in `src/client/net/connection.ts`'s welcome handler
+     gates on `welcome.proto` in `apps/game/src/client/net/connection.ts`'s welcome handler
      (friendly fatal error UI on mismatch or absence, before `createWorld`); add
      `proto: number` to the `welcome` variant (protocol.ts:194-206) and `sendWelcome`
      (GameRoom.ts:514-524).
    - Acceptance: typecheck both tsconfigs; local dev joins normally. The mismatch path
      CANNOT be exercised by editing the shared constant in dev — client and worker
-     compile from the same `src/shared/protocol.ts` (vite.config.ts:7, one source tree
+     compile from the same `packages/shared/src/protocol.ts` (vite.config.ts:7, one source tree
      via `@cloudflare/vite-plugin`), so both sides move together. Instead: temporarily
      invert one comparison (e.g. server-side `proto === PROTOCOL_VERSION` → reject, or
      client-side gate on `msg.proto !== PROTOCOL_VERSION + 1`) or point a locally
@@ -868,15 +868,15 @@ Milestone dependencies: M1 → M2 → M3; M4 independent after M2; M5 after M2.
      lingering body (check `/api/health` players and the SQLite characters table), and
      the client gate shows the error UI instead of building the world.
 2. **M2 — `ServerInfo` + `GET /api/server-info`** *(Sonnet 4.8; depends M1)*
-   - Scope: new `src/shared/serverInfo.ts` (types + `SERVER_INFO_SCHEMA_VERSION` exactly
-     as §2); constants section in `src/shared/constants.ts` (§5); `buildServerInfo()` +
+   - Scope: new `packages/shared/src/serverInfo.ts` (types + `SERVER_INFO_SCHEMA_VERSION` exactly
+     as §2); constants section in `packages/shared/src/constants.ts` (§5); `buildServerInfo()` +
      route in `GameRoom.fetch` (no `ensureGame`, idle-safe per §2 table; `activeSince`
      field in `startTicking`/`stopTicking`); origin capture per the §2 `joinUrl` row
      (`this.publicOrigin` set in `GameRoom.fetch`, mirrored to/restored from
      `meta.origin`); Worker route + micro-cache (cache `res.ok` **GET** responses only —
      HEAD and errors pass through uncached, §3/§5 sketch) + OPTIONS (§3, §5);
      `SERVER_NAME`/`SERVER_MOTD` vars
-     (optional) with `STRIP_TEXT_RE` sanitization; **stub** `src/shared/config.ts` with
+     (optional) with `STRIP_TEXT_RE` sanitization; **stub** `packages/shared/src/config.ts` with
      a minimal `ServerConfig`, `PRESETS = { deadcoast: … }` (doc 04's default preset
      key), and `summarizeRules()`
      returning stock values — clearly commented as the config doc's to replace.
@@ -885,7 +885,7 @@ Milestone dependencies: M1 → M2 → M3; M4 independent after M2; M5 after M2.
      never wakes); repeated polls within 15s hit the micro-cache (count DO fetches in
      local dev logs); loadtest still passes.
 3. **M3 — heartbeat sender** *(Sonnet 4.8; depends M2)*
-   - Scope: `src/server/heartbeat.ts` (§6 sketch); `DIRECTORY_URL` var +
+   - Scope: `apps/game/src/server/heartbeat.ts` (§6 sketch); `DIRECTORY_URL` var +
      `DIRECTORY_TOKEN` secret in Env (optional); beat triggers wired into `startTicking`,
      the tick (periodic + edge-debounce via a dirty flag set in **both** `dropSocket`
      branches and all three join paths — §6 edge row), and `stopAndPersist`; every sent
@@ -949,7 +949,7 @@ Milestone dependencies: M1 → M2 → M3; M4 independent after M2; M5 after M2.
    Recommendation: **no for v1** — privacy and abuse surface for zero listing value;
    additive `sample?: string[]` later if wanted.
 4. **`GAME_VERSION` source — hand-maintained constant vs importing `package.json`?**
-   Recommendation: hand-maintained `src/shared/version.ts` (boring, no resolveJsonModule
+   Recommendation: hand-maintained `packages/shared/src/version.ts` (boring, no resolveJsonModule
    in two tsconfigs); accept the drift risk. Cheap to revisit.
 5. **Heartbeat numbers**: 60s ±10s periodic, 20s edge debounce (which, with §6's
    every-beat-reschedules rule, is also the hard cap on sustained send rate), ≤90s
