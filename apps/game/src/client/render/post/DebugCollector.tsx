@@ -10,6 +10,7 @@
 
 import { useFrame } from "@react-three/fiber";
 import { debugStats } from "@/client/runtime";
+import { startPerfSplitter } from "./perfSplitter";
 
 /** EMA weight for frame-time smoothing; ~0.1 ≈ averaging the last ~10 frames. */
 const FRAME_MS_ALPHA = 0.1;
@@ -25,6 +26,8 @@ export function DebugCollector(): null {
     if (import.meta.env.DEV || window.location.search.includes("debug")) {
       (window as unknown as { __scene?: unknown }).__scene = state.scene;
       (window as unknown as { __gl?: unknown }).__gl = state.gl;
+      // Promote the §1 CPU/JS/submit splitter into the live overlay (idempotent).
+      startPerfSplitter(state.gl);
     }
   }, 1);
 
