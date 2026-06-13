@@ -743,16 +743,11 @@ export function resolveServerConfig(raw: unknown): ResolvedConfig {
     config.preset = presetName;
   }
 
-  // M1 seed restriction: until M2's fingerprint machinery lands, any non-
-  // default seed coerces back to WORLD_SEED + taints. Honoring a custom seed in
-  // that window would hydrate stale world_state into a different world.
-  if (config.world.seed !== WORLD_SEED) {
-    warnings.push(
-      `world.seed: custom seed ${config.world.seed} not yet supported (M2), coerced to ${WORLD_SEED}`,
-    );
-    config.world.seed = WORLD_SEED;
-    worldTainted = true;
-  }
+  // M2 lifted the M1 seed restriction: a clean, finite custom world.seed is now
+  // honored and flows to worldFingerprintOf + createWorld. Persistence's fail-
+  // closed fingerprint check (initSchema) — not coercion here — is what guards a
+  // stale world_state from being hydrated into a different world. A non-finite
+  // or wrong-typed seed is still clamped to WORLD_SEED + tainted upstream.
 
   return { config, warnings, varAbsent, worldTainted };
 }
