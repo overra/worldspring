@@ -26,7 +26,7 @@ import type { ItemStack, ItemType } from "./items";
  * it at runtime, so the comparison must keep compiling — and flip its
  * absent-proto handling — the instant this value bumps.
  */
-export const PROTOCOL_VERSION: number = 1;
+export const PROTOCOL_VERSION: number = 2;
 
 // --- Sim state shared by prediction (client) and authority (server) ---
 

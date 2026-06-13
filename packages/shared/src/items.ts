@@ -12,7 +12,24 @@ export type ItemType =
   | "campfire_kit"
   | "flashlight"
   | "raw_venison"
-  | "cooked_venison";
+  | "cooked_venison"
+  // 16 new items added in doc 05 M1 (bumps PROTOCOL_VERSION 1→2)
+  | "wood"
+  | "cloth"
+  | "scrap"
+  | "rope"
+  | "deer_pelt"
+  | "knife"
+  | "fishing_rod"
+  | "raw_fish"
+  | "cooked_fish"
+  | "canteen_empty"
+  | "canteen_dirty"
+  | "canteen_clean"
+  | "torch"
+  | "first_aid_kit"
+  | "padded_jacket"
+  | "backpack";
 
 export type ItemKind =
   | "food"
@@ -22,7 +39,9 @@ export type ItemKind =
   | "ranged"
   | "ammo"
   | "placeable"
-  | "tool";
+  | "tool"
+  | "material"
+  | "wear";
 
 /** Firing behavior for kind === "ranged" weapons. */
 export interface RangedConfig {
@@ -39,6 +58,40 @@ export interface RangedConfig {
   sound: "pistol" | "rifle" | "shotgun";
 }
 
+/**
+ * Water vessel behavior. Priority order in useItem:
+ *   1. near campfire + boilsTo → boil
+ *   2. water ahead + fillsTo → fill
+ *   3. drink → drink
+ */
+export interface WaterConfig {
+  /** Using next to water (heightAt 2.5m ahead < WATER_LEVEL) converts to this type. */
+  fillsTo?: ItemType;
+  /** Using within FIRE_WARMTH_RADIUS of a campfire converts to this type. */
+  boilsTo?: ItemType;
+  /** Drinking: restore water, optionally cost hp, become emptiesTo. */
+  drink?: { restore: number; hpPenalty?: number; emptiesTo: ItemType };
+}
+
+/** Wearable item config (jacket = insulation, backpack = extra slots). */
+export interface WearConfig {
+  slot: "body" | "back";
+  /** Fraction of temperature fall negated while worn (0..1). */
+  insulation?: number;
+  /** Extra inventory slots granted while worn. */
+  extraSlots?: number;
+}
+
+/** Held-light config. Set on the torch in M1; the flashlight keeps its existing
+ * hardcoded PlayerCamera beam until a later doc-05 milestone unifies both behind
+ * one held-light pool keyed by item type. */
+export interface LightConfig {
+  /** Spotlight tint. */
+  color: string;
+  intensity: number;
+  range: number;
+}
+
 export interface ItemDef {
   type: ItemType;
   name: string;
@@ -51,6 +104,23 @@ export interface ItemDef {
   power: number;
   /** Present only on kind === "ranged" items. */
   ranged?: RangedConfig;
+  /**
+   * Using within FIRE_WARMTH_RADIUS of a campfire converts one stack to this
+   * type (generalizes the old raw_venison branch in players.ts). Present on
+   * raw_venison, raw_fish.
+   */
+  cooksTo?: ItemType;
+  /**
+   * HP cost of consuming this item raw (power still restores food first).
+   * Floor at 1 hp, never lethal.
+   */
+  rawPenaltyHp?: number;
+  /** Water vessel behavior (canteen variants). */
+  water?: WaterConfig;
+  /** Wearable item behavior (jacket, backpack). */
+  wear?: WearConfig;
+  /** Held-light behavior (torch). Client light-pool key is the item type. */
+  light?: LightConfig;
 }
 
 export const ITEM_DEFS: Record<ItemType, ItemDef> = {
@@ -90,14 +160,114 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   axe: { type: "axe", name: "Fire Axe", kind: "melee", stack: 1, color: "#a33327", power: 35 },
   campfire_kit: { type: "campfire_kit", name: "Campfire Kit", kind: "placeable", stack: 2, color: "#7a5230", power: 0 },
   flashlight: { type: "flashlight", name: "Flashlight", kind: "tool", stack: 1, color: "#c8c23a", power: 0 },
-  // Raw venison restores little and costs hp (eat it desperate or cook it:
-  // using it within FIRE_WARMTH_RADIUS of a campfire converts the stack).
-  raw_venison: { type: "raw_venison", name: "Raw Venison", kind: "food", stack: 3, color: "#9e4a4a", power: 15 },
+  // Raw venison: migrated from the hardcoded branch in players.ts — now data-driven
+  // via cooksTo / rawPenaltyHp (doc 05 M1).
+  raw_venison: {
+    type: "raw_venison",
+    name: "Raw Venison",
+    kind: "food",
+    stack: 3,
+    color: "#9e4a4a",
+    power: 15,
+    cooksTo: "cooked_venison",
+    rawPenaltyHp: 8,
+  },
   cooked_venison: { type: "cooked_venison", name: "Cooked Venison", kind: "food", stack: 3, color: "#7a4a2e", power: 65 },
-};
 
-/** HP penalty for eating venison raw (power still applies to food). */
-export const RAW_VENISON_HP_PENALTY = 8;
+  // --- 16 new items (doc 05 M1) ---
+
+  // Materials (craft inputs only)
+  wood: { type: "wood", name: "Wood Branches", kind: "material", stack: 8, color: "#7a5c3a", power: 0 },
+  cloth: { type: "cloth", name: "Cloth Scraps", kind: "material", stack: 8, color: "#c8c0a8", power: 0 },
+  scrap: { type: "scrap", name: "Scrap Metal", kind: "material", stack: 8, color: "#8a8a8a", power: 0 },
+  rope: { type: "rope", name: "Rope", kind: "material", stack: 4, color: "#a09060", power: 0 },
+  deer_pelt: { type: "deer_pelt", name: "Deer Pelt", kind: "material", stack: 4, color: "#8a6a40", power: 0 },
+
+  // Melee tool (also gates crafting)
+  knife: { type: "knife", name: "Hunting Knife", kind: "melee", stack: 1, color: "#c0b878", power: 20 },
+
+  // Fishing
+  fishing_rod: { type: "fishing_rod", name: "Fishing Rod", kind: "tool", stack: 1, color: "#7a6040", power: 0 },
+  raw_fish: {
+    type: "raw_fish",
+    name: "Raw Fish",
+    kind: "food",
+    stack: 4,
+    color: "#7ab8c8",
+    power: 12,
+    cooksTo: "cooked_fish",
+    rawPenaltyHp: 5,
+  },
+  cooked_fish: { type: "cooked_fish", name: "Cooked Fish", kind: "food", stack: 4, color: "#c88050", power: 50 },
+
+  // Canteens
+  canteen_empty: {
+    type: "canteen_empty",
+    name: "Canteen (empty)",
+    kind: "tool",
+    stack: 1,
+    color: "#788888",
+    power: 0,
+    water: { fillsTo: "canteen_dirty" },
+  },
+  canteen_dirty: {
+    type: "canteen_dirty",
+    name: "Canteen (murky)",
+    kind: "drink",
+    stack: 1,
+    color: "#88a078",
+    power: 0,
+    water: {
+      boilsTo: "canteen_clean",
+      drink: { restore: 25, hpPenalty: 10, emptiesTo: "canteen_empty" },
+    },
+  },
+  canteen_clean: {
+    type: "canteen_clean",
+    name: "Canteen (clean)",
+    kind: "drink",
+    stack: 1,
+    color: "#78b8c8",
+    power: 0,
+    water: {
+      drink: { restore: 70, emptiesTo: "canteen_empty" },
+    },
+  },
+
+  // Torch — infinite, dimmer than the flashlight (no battery on either)
+  torch: {
+    type: "torch",
+    name: "Torch",
+    kind: "tool",
+    stack: 1,
+    color: "#e89040",
+    power: 0,
+    light: { color: "#ff9040", intensity: 1.8, range: 12 },
+  },
+
+  // Medical
+  first_aid_kit: { type: "first_aid_kit", name: "First Aid Kit", kind: "heal", stack: 2, color: "#e84040", power: 60 },
+
+  // Wearables
+  padded_jacket: {
+    type: "padded_jacket",
+    name: "Padded Jacket",
+    kind: "wear",
+    stack: 1,
+    color: "#5a7060",
+    power: 0,
+    wear: { slot: "body", insulation: 0.65 },
+  },
+  backpack: {
+    type: "backpack",
+    name: "Canvas Backpack",
+    kind: "wear",
+    stack: 1,
+    color: "#9a8060",
+    power: 0,
+    wear: { slot: "back", extraSlots: 4 },
+  },
+};
 
 /** Airdrop crates roll this many stacks from this table. */
 export const AIRDROP_ROLLS = 5;
@@ -109,6 +279,7 @@ export const AIRDROP_TABLE: LootTableEntry[] = [
   { type: "bandage", weight: 16, min: 2, max: 4 },
   { type: "flashlight", weight: 8, min: 1, max: 1 },
   { type: "cooked_venison", weight: 8, min: 1, max: 2 },
+  { type: "first_aid_kit", weight: 12, min: 1, max: 1 },
 ];
 
 export interface ItemStack {
@@ -118,11 +289,13 @@ export interface ItemStack {
 
 /** Small pickings found on zombie corpses (rolled at ZOMBIE_LOOT_CHANCE). */
 export const ZOMBIE_LOOT_TABLE: Array<{ type: ItemType; weight: number; min: number; max: number }> = [
-  { type: "bandage", weight: 30, min: 1, max: 1 },
-  { type: "beans", weight: 22, min: 1, max: 1 },
-  { type: "water_bottle", weight: 22, min: 1, max: 1 },
-  { type: "ammo_9mm", weight: 18, min: 4, max: 8 },
+  { type: "bandage", weight: 28, min: 1, max: 1 },
+  { type: "beans", weight: 20, min: 1, max: 1 },
+  { type: "water_bottle", weight: 20, min: 1, max: 1 },
+  { type: "ammo_9mm", weight: 16, min: 4, max: 8 },
   { type: "campfire_kit", weight: 8, min: 1, max: 1 },
+  { type: "cloth", weight: 12, min: 1, max: 2 },
+  { type: "scrap", weight: 6, min: 1, max: 1 },
 ];
 
 export type LootTier = "coastal" | "inland" | "military";
@@ -141,37 +314,65 @@ export interface LootTableEntry {
  */
 export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
   coastal: [
-    { type: "beans", weight: 24, min: 1, max: 2 },
-    { type: "water_bottle", weight: 24, min: 1, max: 2 },
-    { type: "bandage", weight: 16, min: 1, max: 2 },
-    { type: "ammo_9mm", weight: 12, min: 6, max: 14 },
-    { type: "axe", weight: 8, min: 1, max: 1 },
-    { type: "pistol", weight: 6, min: 1, max: 1 },
-    { type: "campfire_kit", weight: 9, min: 1, max: 1 },
-    { type: "flashlight", weight: 6, min: 1, max: 1 },
+    { type: "beans", weight: 22, min: 1, max: 2 },
+    { type: "water_bottle", weight: 22, min: 1, max: 2 },
+    { type: "bandage", weight: 14, min: 1, max: 2 },
+    { type: "ammo_9mm", weight: 10, min: 6, max: 14 },
+    { type: "axe", weight: 7, min: 1, max: 1 },
+    { type: "pistol", weight: 5, min: 1, max: 1 },
+    { type: "campfire_kit", weight: 8, min: 1, max: 1 },
+    { type: "flashlight", weight: 5, min: 1, max: 1 },
+    { type: "cloth", weight: 10, min: 1, max: 3 },
+    { type: "canteen_empty", weight: 8, min: 1, max: 1 },
+    { type: "rope", weight: 4, min: 1, max: 1 },
   ],
   inland: [
-    { type: "beans", weight: 18, min: 1, max: 2 },
-    { type: "water_bottle", weight: 18, min: 1, max: 2 },
-    { type: "bandage", weight: 18, min: 1, max: 2 },
-    { type: "ammo_9mm", weight: 14, min: 8, max: 16 },
-    { type: "axe", weight: 10, min: 1, max: 1 },
-    { type: "pistol", weight: 9, min: 1, max: 1 },
-    { type: "campfire_kit", weight: 8, min: 1, max: 1 },
+    { type: "beans", weight: 16, min: 1, max: 2 },
+    { type: "water_bottle", weight: 16, min: 1, max: 2 },
+    { type: "bandage", weight: 16, min: 1, max: 2 },
+    { type: "ammo_9mm", weight: 12, min: 8, max: 16 },
+    { type: "axe", weight: 9, min: 1, max: 1 },
+    { type: "pistol", weight: 8, min: 1, max: 1 },
+    { type: "campfire_kit", weight: 7, min: 1, max: 1 },
     { type: "shells", weight: 4, min: 3, max: 6 },
-    { type: "flashlight", weight: 7, min: 1, max: 1 },
+    { type: "flashlight", weight: 6, min: 1, max: 1 },
+    { type: "scrap", weight: 8, min: 1, max: 2 },
+    { type: "rope", weight: 5, min: 1, max: 1 },
+    { type: "canteen_empty", weight: 6, min: 1, max: 1 },
   ],
   military: [
     { type: "rifle", weight: 9, min: 1, max: 1 },
     { type: "shotgun", weight: 11, min: 1, max: 1 },
-    { type: "ammo_762", weight: 20, min: 5, max: 12 },
-    { type: "shells", weight: 17, min: 4, max: 8 },
-    { type: "ammo_9mm", weight: 12, min: 10, max: 20 },
-    { type: "bandage", weight: 16, min: 1, max: 3 },
-    { type: "beans", weight: 8, min: 1, max: 1 },
-    { type: "water_bottle", weight: 7, min: 1, max: 1 },
+    { type: "ammo_762", weight: 18, min: 5, max: 12 },
+    { type: "shells", weight: 15, min: 4, max: 8 },
+    { type: "ammo_9mm", weight: 10, min: 10, max: 20 },
+    { type: "bandage", weight: 14, min: 1, max: 3 },
+    { type: "beans", weight: 7, min: 1, max: 1 },
+    { type: "water_bottle", weight: 6, min: 1, max: 1 },
+    { type: "first_aid_kit", weight: 8, min: 1, max: 1 },
+    { type: "scrap", weight: 8, min: 2, max: 4 },
+    { type: "canteen_empty", weight: 6, min: 1, max: 1 },
   ],
 };
 
 /** Back-compat alias: the coastal table is the old global table's heir. */
 export const LOOT_TABLE = LOOT_TABLES.coastal;
+
+/**
+ * Fallback ItemDef for an unrecognised ItemType string (e.g. a server running
+ * a newer version sends a type this client has never heard of). Guards the
+ * `ITEM_DEFS[type] ?? UNKNOWN_DEF` pattern in HUD.tsx and NetSystem.tsx so old
+ * clients don't crash rendering a new item type after PROTOCOL_VERSION bumps.
+ *
+ * This sentinel is intentionally NOT in ITEM_DEFS — it has no valid ItemType
+ * — so TypeScript callers must opt in explicitly rather than accidentally
+ * relying on it.
+ */
+export const UNKNOWN_DEF: ItemDef = {
+  type: "beans" as ItemType, // safe placeholder — this field is never read for display
+  name: "Unknown Item",
+  kind: "material",
+  stack: 1,
+  color: "#888888",
+  power: 0,
+};

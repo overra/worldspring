@@ -11,7 +11,7 @@ import {
   MAX_WATER,
   TEMP_SHIVER,
 } from "@worldspring/shared/constants";
-import { ITEM_DEFS } from "@worldspring/shared/items";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import type { ItemKind, ItemStack } from "@worldspring/shared/items";
 import { doDrop, doEquip, doUse } from "@/client/net/connection";
 import { debugStats } from "@/client/runtime";
@@ -20,11 +20,18 @@ import { ChatPanel } from "./ChatPanel";
 import { RecapStats } from "./DeathScreen";
 import "./ui.css";
 
+// Transparent 1x1 GIF. When an item has no /icons/<type>.png, the onError
+// handlers swap this in as the src (and clear alt) so the browser shows neither
+// a broken-image glyph nor the alt text — only the inline color-swatch fallback.
+const BLANK_PX =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
 const USABLE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
   "food",
   "drink",
   "heal",
   "placeable",
+  "tool", // added M1: canteen fill/boil/drink, fishing rod, torch-equip parity with F key
 ]);
 
 function formatClock(hours: number): string {
@@ -114,13 +121,17 @@ function Hotbar(): ReactElement {
               <img
                 className="hotbar-swatch hotbar-icon"
                 src={`/icons/${stack.type}.png`}
-                alt={ITEM_DEFS[stack.type].name}
+                alt={(ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).name}
                 draggable={false}
                 onError={(e) => {
-                  // Missing icon: fall back to the flat color swatch.
-                  e.currentTarget.style.background = ITEM_DEFS[stack.type].color;
-                  e.currentTarget.style.visibility = "visible";
-                  e.currentTarget.removeAttribute("src");
+                  // Missing icon: fall back to the flat color swatch. Swap in a
+                  // blank pixel + clear alt so neither the broken-image glyph nor
+                  // the item name renders on top of the swatch.
+                  const img = e.currentTarget;
+                  img.style.background = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).color;
+                  img.style.visibility = "visible";
+                  img.alt = "";
+                  img.src = BLANK_PX;
                 }}
               />
             )}
@@ -217,7 +228,7 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
       </div>
     );
   }
-  const def = ITEM_DEFS[stack.type];
+  const def = ITEM_DEFS[stack.type] ?? UNKNOWN_DEF;
   return (
     <div className="inv-row">
       <span className="inv-slot-num">{slot + 1}</span>
@@ -227,8 +238,9 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
         alt=""
         draggable={false}
         onError={(e) => {
+          // Missing icon: flat color swatch (blank pixel avoids the broken glyph).
           e.currentTarget.style.background = def.color;
-          e.currentTarget.removeAttribute("src");
+          e.currentTarget.src = BLANK_PX;
         }}
       />
       <span className="inv-name">{def.name}</span>

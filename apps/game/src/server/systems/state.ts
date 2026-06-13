@@ -80,6 +80,11 @@ export interface ServerPlayer {
   movedThisTick: boolean;
   /** Sprint-moved during the current tick (ANIM_SPRINTING). */
   sprintedThisTick: boolean;
+  /**
+   * Fishing cooldown — seconds until the player may cast again.
+   * Transient (never persisted); 0 at spawn / on restore.
+   */
+  fishCooldownT: number;
 }
 
 /** Structurally compatible with ZombieCore so stepZombie applies directly. */
