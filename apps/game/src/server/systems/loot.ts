@@ -46,8 +46,24 @@ export function rollLootStack(tier: LootTier): ItemStack {
   return rollFromTable(LOOT_TABLES[tier]);
 }
 
+/**
+ * Resolved loot tier + effective density for a spawn under the active config.
+ * Military spawns roll the inland table when the garrison is disabled
+ * (threats.militaryZone=false); effective = density * tierDensity[resolved].
+ */
+function lootEffect(state: GameState, spawn: LootSpawn): { tier: LootTier; eff: number } {
+  const tier: LootTier =
+    spawn.tier === "military" && !state.config.threats.militaryZone ? "inland" : spawn.tier;
+  return { tier, eff: state.config.loot.density * state.config.loot.tierDensity[tier] };
+}
+
 function spawnLootAt(state: GameState, spawn: LootSpawn): void {
-  const stack = rollLootStack(spawn.tier);
+  const { tier, eff } = lootEffect(state, spawn);
+  const stack = rollLootStack(tier);
+  // density > 1 fattens stacks. The < 1 case is a per-spawn STOCKING probability
+  // owned by the callers — never a silent no-op here, which would orphan the
+  // spawn point (neither entity nor timer; see stockInitialLoot's invariant).
+  if (eff > 1) stack.count = Math.max(1, Math.round(stack.count * eff));
   const id = state.nextEntityId++;
   state.loot.set(id, {
     id,
@@ -61,17 +77,29 @@ function spawnLootAt(state: GameState, spawn: LootSpawn): void {
   });
 }
 
-/** Stock every world loot spawn once at room boot. */
+/**
+ * Stock every world loot spawn once at room boot. Binding invariant (doc 04
+ * §5): every spawn point ends up holding exactly one of {a stocked entity, a
+ * pending respawn timer}. Under density < 1 each point stocks with probability
+ * `eff` and otherwise arms a respawn timer, so it cycles forever at that rate
+ * rather than dying — a silent skip would leave neither entity nor timer.
+ */
 export function stockInitialLoot(state: GameState): void {
-  for (const spawn of state.world.lootSpawns) spawnLootAt(state, spawn);
+  for (const spawn of state.world.lootSpawns) {
+    const { eff } = lootEffect(state, spawn);
+    if (eff < 1 && Math.random() >= eff) {
+      startLootRespawn(state, spawn.id);
+    } else {
+      spawnLootAt(state, spawn);
+    }
+  }
 }
 
-/** Called when a spawn-point loot entity has been fully taken. */
+/** Called when a spawn-point loot entity has been fully taken. The respawn
+ * interval is divided by loot.respawnRate (2 = twice as fast). */
 export function startLootRespawn(state: GameState, spawnId: number): void {
-  state.lootRespawns.push({
-    spawnId,
-    t: LOOT_RESPAWN_MIN_S + Math.random() * (LOOT_RESPAWN_MAX_S - LOOT_RESPAWN_MIN_S),
-  });
+  const interval = LOOT_RESPAWN_MIN_S + Math.random() * (LOOT_RESPAWN_MAX_S - LOOT_RESPAWN_MIN_S);
+  state.lootRespawns.push({ spawnId, t: interval / state.config.loot.respawnRate });
 }
 
 function playerNear(state: GameState, x: number, z: number, dist: number): boolean {
@@ -98,22 +126,36 @@ export function tickLootRespawns(state: GameState, dt: number): void {
     if (!overdue && playerNear(state, spawn.x, spawn.z, LOOT_RESPAWN_MIN_PLAYER_DIST)) {
       continue;
     }
+    // density < 1 stocking gate (same as stockInitialLoot): a failed roll
+    // re-arms the timer instead of spawning, so the point is never left empty
+    // AND timerless — the §5 entity-XOR-timer invariant holds across cycles.
+    const { eff } = lootEffect(state, spawn);
+    if (eff < 1 && Math.random() >= eff) {
+      state.lootRespawns.splice(i, 1);
+      startLootRespawn(state, spawn.id);
+      continue;
+    }
     spawnLootAt(state, spawn);
     state.lootRespawns.splice(i, 1);
   }
 }
 
 /**
- * Leave the dead player's body where they fell, carrying their entire
- * inventory, and clear the inventory. The body spawns even when empty —
- * other players should see the corpse either way.
+ * Leave the dead player's body where they fell. On a full-loot server (default)
+ * the body carries the player's entire inventory and the player is emptied. On
+ * a keep-inventory server (pvp.fullLoot=false) the body spawns visibly but
+ * EMPTY and the inventory is left intact — respawn restores it (and the dead
+ * character row persists it for a death-screen-disconnect rejoin, see
+ * GameRoom.handleJoin). The body spawns either way so others see the corpse.
  */
 export function spawnPlayerCorpse(state: GameState, player: ServerPlayer): void {
   const contents: ItemStack[] = [];
-  for (const stack of player.inventory) {
-    if (stack) contents.push({ type: stack.type, count: stack.count });
+  if (state.config.pvp.fullLoot) {
+    for (const stack of player.inventory) {
+      if (stack) contents.push({ type: stack.type, count: stack.count });
+    }
+    player.inventory = Array.from({ length: INVENTORY_SLOTS }, () => null);
   }
-  player.inventory = Array.from({ length: INVENTORY_SLOTS }, () => null);
   const { x, z, yaw } = player.core;
   const id = state.nextEntityId++;
   state.corpses.set(id, {

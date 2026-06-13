@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -10,9 +13,10 @@
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "loadtest": "node scripts/loadtest.mjs",
-    "test": "pnpm test:persist && pnpm test:wipe",
+    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot",
     "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",
-    "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs"
+    "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs",
+    "test:loot": "node --experimental-strip-types scripts/loot-invariant.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
