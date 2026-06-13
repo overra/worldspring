@@ -12,6 +12,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege: this job only reads the checkout — it uses no secrets and
+# writes nothing back to the repo. Pin the token to read-only rather than
+# inheriting the repo default.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
