@@ -3,11 +3,18 @@
 // `exec(query, ...bindings)` returning a cursor) and
 // `ctx.storage.transactionSync(closure)` are available.
 //
-// Schema choice: world entities live in ONE `world_state` table as
-// (kind, payload-JSON) rows rather than four typed tables — the world snapshot
-// is tiny (<200 rows), is always rewritten wholesale inside a transaction and
-// never queried per-column, so JSON rows keep the schema and the save/load
-// code trivially in sync with the in-memory structs.
+// Schema choice: the entire dynamic world is persisted as ONE `world_state`
+// row — kind `snapshot`, payload a single JSON object holding loot/corpses/
+// fires/timers/drops plus game time/tick and scheduling. It is never queried
+// per-column, so one JSON blob keeps the save/load code trivially in sync with
+// the in-memory structs AND keeps rows-written per save at O(1): the prior
+// wipe-and-reinsert wrote one row per entity every 20s and exhausted the
+// Cloudflare free-plan SQLite rows-written cap ~80 min into a session.
+//
+// Forward-compatible with the old per-entity rows: loadWorld looks only for the
+// `snapshot` row, so a pre-migration database reads as "no snapshot" -> a fresh
+// dynamic world, and the next save clears the stale rows. So this change does
+// NOT bump SCHEMA_VERSION (characters survive; only the dynamic world resets).
 //
 // Versioning: meta rows `schema_version` and `world_seed`. When either
 // mismatches the current constants, characters + world state are cleared
@@ -30,7 +37,9 @@ import type {
 
 /** Bump when the persisted shape changes incompatibly (wipes world+characters). */
 export // v2: military compound changed worldgen — persisted world/character
-// positions from v1 are invalid (leaderboard survives the wipe).
+// positions from v1 are invalid (leaderboard survives the wipe). The later
+// single-row world snapshot did NOT bump this: it is forward-compatible (see
+// the snapshot note above) and preserves characters instead of wiping them.
 const SCHEMA_VERSION = 2;
 
 /** The serializable core of a character, stored as `characters.state_json`. */
@@ -118,49 +127,53 @@ export function initSchema(sql: SqlStorage): void {
 
 // --- World snapshot ---
 
+/** The whole persisted dynamic world — stored as the single `snapshot` row. */
+interface WorldSnapshot {
+  loot: LootEntity[];
+  corpses: Corpse[];
+  fires: Campfire[];
+  lootRespawns: LootRespawnTimer[];
+  drops: Airdrop[];
+  time: number;
+  tick: number;
+  nextEntityId: number;
+  weather: number;
+  weatherNextAt: number;
+  weatherRaining: boolean;
+  airdropNextAt: number;
+}
+
 /**
- * Persist the dynamic world: loot entities, corpses, campfires, loot-respawn
- * timers, plus game time/tick and the entity id counter. Volumes are tiny
- * (<200 rows), so the snapshot is a wholesale wipe + reinsert inside
- * transactionSync. Zombies are intentionally NOT persisted — the caller
- * respawns them fresh on boot.
+ * Persist the dynamic world (loot, corpses, campfires, loot-respawn timers,
+ * airdrop crates) plus game time/tick, the entity-id counter, and weather/
+ * airdrop scheduling — as ONE `snapshot` JSON row inside transactionSync.
+ * Zombies + deer are intentionally NOT persisted (respawned fresh on boot).
+ * Airdrop crates ARE kept: their timestamps are game-time, which is in the
+ * snapshot, so landsAt/expiresAt stay coherent across a restart.
  */
 export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: GameState): void {
+  const snapshot: WorldSnapshot = {
+    loot: [...game.loot.values()],
+    corpses: [...game.corpses.values()],
+    fires: game.fires,
+    lootRespawns: game.lootRespawns,
+    drops: [...game.drops.values()],
+    time: game.time,
+    tick: game.tick,
+    nextEntityId: game.nextEntityId,
+    weather: game.weather,
+    weatherNextAt: game.weatherNextAt,
+    weatherRaining: game.weatherRaining,
+    airdropNextAt: game.airdropNextAt,
+  };
   storage.transactionSync(() => {
+    // O(1) rows written: delete the prior single snapshot row, insert the new
+    // one — vs the old wipe-and-reinsert that wrote one row per entity.
     sql.exec("DELETE FROM world_state");
-    for (const loot of game.loot.values()) {
-      sql.exec("INSERT INTO world_state (kind, payload) VALUES ('loot', ?)", JSON.stringify(loot));
-    }
-    for (const corpse of game.corpses.values()) {
-      sql.exec(
-        "INSERT INTO world_state (kind, payload) VALUES ('corpse', ?)",
-        JSON.stringify(corpse),
-      );
-    }
-    for (const fire of game.fires) {
-      sql.exec("INSERT INTO world_state (kind, payload) VALUES ('fire', ?)", JSON.stringify(fire));
-    }
-    for (const timer of game.lootRespawns) {
-      sql.exec(
-        "INSERT INTO world_state (kind, payload) VALUES ('loot_timer', ?)",
-        JSON.stringify(timer),
-      );
-    }
-    // Airdrop crates survive restarts (their timestamps are game-time, which
-    // is itself persisted, so landsAt/expiresAt stay coherent). Deer are NOT
-    // persisted — like zombies they respawn fresh on boot.
-    for (const drop of game.drops.values()) {
-      sql.exec("INSERT INTO world_state (kind, payload) VALUES ('drop', ?)", JSON.stringify(drop));
-    }
-    setMeta(sql, "game_time", String(game.time));
-    setMeta(sql, "game_tick", String(game.tick));
-    setMeta(sql, "next_entity_id", String(game.nextEntityId));
-    // Weather phase + scheduling so a restart doesn't snap rain to clear sky.
-    setMeta(sql, "weather", String(game.weather));
-    setMeta(sql, "weather_next_at", String(game.weatherNextAt));
-    setMeta(sql, "weather_raining", game.weatherRaining ? "1" : "0");
-    setMeta(sql, "airdrop_next_at", String(game.airdropNextAt));
-    setMeta(sql, "world_saved", "1");
+    sql.exec(
+      "INSERT INTO world_state (kind, payload) VALUES ('snapshot', ?)",
+      JSON.stringify(snapshot),
+    );
   });
 }
 
@@ -178,66 +191,95 @@ export function pruneStaleCharacters(sql: SqlStorage): void {
   );
 }
 
-export function loadWorld(sql: SqlStorage, game: GameState): boolean {
-  if (getMeta(sql, "world_saved") !== "1") return false;
+/** A snapshot entity is only hydratable if it carries a finite numeric id. */
+function hasNumericId(v: unknown): v is { id: number } {
+  return typeof v === "object" && v !== null && Number.isFinite((v as { id?: unknown }).id);
+}
 
-  let maxId = 0;
+/**
+ * Structurally validate a parsed snapshot before any hydration. Valid JSON is
+ * not enough: a non-object payload, or a collection that deserialized to a
+ * non-array, would throw mid-hydration — leaving `game` half-populated AND
+ * skipping the fresh-world fallback. Missing collections are normalized to []
+ * (forward-compat with snapshots written before a field existed); a present
+ * but wrong-typed collection rejects the whole snapshot (null -> caller starts
+ * fresh). Scalars are left as-is; loadWorld finite-guards each as it applies it.
+ */
+function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops"] as const) {
+    const v = s[key];
+    if (v === undefined || v === null) s[key] = [];
+    else if (!Array.isArray(v)) return null;
+  }
+  return s as unknown as WorldSnapshot;
+}
+
+export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   const rows = sql
-    .exec<{ kind: string; payload: string }>("SELECT kind, payload FROM world_state")
+    .exec<{ payload: string }>("SELECT payload FROM world_state WHERE kind = 'snapshot'")
     .toArray();
-  for (const row of rows) {
-    try {
-    switch (row.kind) {
-      case "loot": {
-        const loot = JSON.parse(row.payload) as LootEntity;
-        game.loot.set(loot.id, loot);
-        maxId = Math.max(maxId, loot.id);
-        break;
-      }
-      case "corpse": {
-        const corpse = JSON.parse(row.payload) as Corpse;
-        game.corpses.set(corpse.id, corpse);
-        maxId = Math.max(maxId, corpse.id);
-        break;
-      }
-      case "fire": {
-        const fire = JSON.parse(row.payload) as Campfire;
-        game.fires.push(fire);
-        maxId = Math.max(maxId, fire.id);
-        break;
-      }
-      case "loot_timer": {
-        game.lootRespawns.push(JSON.parse(row.payload) as LootRespawnTimer);
-        break;
-      }
-      case "drop": {
-        const drop = JSON.parse(row.payload) as Airdrop;
-        game.drops.set(drop.id, drop);
-        maxId = Math.max(maxId, drop.id);
-        break;
-      }
-    }
-    } catch (err) {
-      // One corrupt row must never brick the whole world load — skip it.
-      console.error("persistence: corrupt world row skipped", row.kind, err);
-    }
+  if (rows.length === 0) return false;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rows[0].payload);
+  } catch (err) {
+    // A corrupt snapshot must not brick boot — start the world fresh.
+    console.error("persistence: corrupt world snapshot, starting fresh", err);
+    return false;
   }
 
-  const time = Number(getMeta(sql, "game_time"));
-  if (Number.isFinite(time)) game.time = time;
-  const tick = Number(getMeta(sql, "game_tick"));
-  if (Number.isFinite(tick)) game.tick = tick;
-  const nextId = Number(getMeta(sql, "next_entity_id"));
-  game.nextEntityId = Math.max(Number.isFinite(nextId) ? nextId : 1, maxId + 1, 1);
-  // Weather/airdrop scheduling — additive meta rows; snapshots written before
-  // these existed leave the defaults (0 = "initialize on first tick").
-  const weather = Number(getMeta(sql, "weather"));
-  if (Number.isFinite(weather)) game.weather = Math.min(1, Math.max(0, weather));
-  const weatherNextAt = Number(getMeta(sql, "weather_next_at"));
-  if (Number.isFinite(weatherNextAt)) game.weatherNextAt = weatherNextAt;
-  game.weatherRaining = getMeta(sql, "weather_raining") === "1";
-  const airdropNextAt = Number(getMeta(sql, "airdrop_next_at"));
-  if (Number.isFinite(airdropNextAt)) game.airdropNextAt = airdropNextAt;
+  // Guard the shape before touching `game`: a snapshot that is valid JSON but
+  // structurally wrong must take the fresh-world path, never throw partway
+  // through hydration and leave `game` half-populated.
+  const snapshot = asWorldSnapshot(parsed);
+  if (!snapshot) {
+    console.error("persistence: malformed world snapshot, starting fresh");
+    return false;
+  }
+
+  // Collections are guaranteed arrays by asWorldSnapshot; the per-entry id
+  // guard skips an individual null/garbage entry rather than throwing on it.
+  let maxId = 0;
+  for (const loot of snapshot.loot) {
+    if (!hasNumericId(loot)) continue;
+    game.loot.set(loot.id, loot);
+    maxId = Math.max(maxId, loot.id);
+  }
+  for (const corpse of snapshot.corpses) {
+    if (!hasNumericId(corpse)) continue;
+    game.corpses.set(corpse.id, corpse);
+    maxId = Math.max(maxId, corpse.id);
+  }
+  for (const fire of snapshot.fires) {
+    if (!hasNumericId(fire)) continue;
+    game.fires.push(fire);
+    maxId = Math.max(maxId, fire.id);
+  }
+  for (const timer of snapshot.lootRespawns) {
+    if (timer && typeof timer === "object") game.lootRespawns.push(timer);
+  }
+  for (const drop of snapshot.drops) {
+    if (!hasNumericId(drop)) continue;
+    game.drops.set(drop.id, drop);
+    maxId = Math.max(maxId, drop.id);
+  }
+
+  if (Number.isFinite(snapshot.time)) game.time = snapshot.time;
+  if (Number.isFinite(snapshot.tick)) game.tick = snapshot.tick;
+  game.nextEntityId = Math.max(
+    Number.isFinite(snapshot.nextEntityId) ? snapshot.nextEntityId : 1,
+    maxId + 1,
+    1,
+  );
+  // Weather/airdrop scheduling — older snapshots without these fields leave the
+  // defaults (0 = "initialize on first tick").
+  if (Number.isFinite(snapshot.weather)) game.weather = Math.min(1, Math.max(0, snapshot.weather));
+  if (Number.isFinite(snapshot.weatherNextAt)) game.weatherNextAt = snapshot.weatherNextAt;
+  game.weatherRaining = snapshot.weatherRaining === true;
+  if (Number.isFinite(snapshot.airdropNextAt)) game.airdropNextAt = snapshot.airdropNextAt;
   return true;
 }
 
