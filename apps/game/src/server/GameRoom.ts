@@ -8,12 +8,15 @@
 // longest-lives leaderboard. The tick interval keeps the object resident
 // while anyone is connected OR while a logged-out body lingers; when both are
 // gone, everything is persisted and the interval stops — the next connection
-// rebuilds the world from WORLD_SEED + the stored snapshot.
+// rebuilds the world from the effective seed + the stored snapshot.
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  parseWorldFingerprint,
   resolveServerConfig,
   summarizeRules,
+  wipeEpochOf,
+  worldFingerprintOf,
   worldParamsOf,
 } from "@worldspring/shared/config";
 import type {
@@ -35,7 +38,6 @@ import {
   RESPAWN_DELAY_S,
   TICK_MS,
   WORLD_SAVE_INTERVAL_S,
-  WORLD_SEED,
 } from "@worldspring/shared/constants";
 import { distSq2D } from "@worldspring/shared/math";
 import {
@@ -64,6 +66,7 @@ import {
 import { createWorld } from "@worldspring/shared/world";
 import {
   appendLeaderboard,
+  captureBookmark,
   clearPendingRecap,
   initSchema,
   loadCharacter,
@@ -74,6 +77,7 @@ import {
   saveWorld,
   topLeaderboard,
 } from "./persistence";
+import type { SchemaBootContext } from "./persistence";
 import { tickAirdrops } from "./systems/airdrops";
 import { performAttack } from "./systems/combat";
 import {
@@ -198,16 +202,35 @@ export class GameRoom extends DurableObject<Env> {
     super(ctx, env);
     // Resolve deploy-time config BEFORE schema init. resolveServerConfig never
     // throws (a throwing DO constructor crash-loops the object), so it is safe
-    // here even with hostile env input. M2 will feed resolved.{varAbsent,
-    // worldTainted} + the world fingerprint into initSchema's fail-closed wipe
-    // decision; M1 keeps initSchema unchanged and only logs the warnings.
+    // here even with hostile env input. The resolved {varAbsent, worldTainted}
+    // flags + the world fingerprint feed initSchema's fail-closed wipe decision
+    // (below); the warnings are logged here.
     this.resolved = resolveServerConfig(env.GAME_CONFIG);
     this.config = this.resolved.config;
     for (const w of this.resolved.warnings) {
       console.warn(`[config] ${w}`);
     }
     void ctx.blockConcurrencyWhile(async () => {
-      initSchema(ctx.storage.sql);
+      // Capture a PITR bookmark BEFORE the wipe decision (or "unavailable" in
+      // local dev), then run the fail-closed world-wipe check. initSchema returns
+      // the world the DO must actually generate — the running config's world, or,
+      // on the fail-closed refusal path, the persisted world the characters live
+      // in. Apply it so worldgen, the welcome message, and clients all agree.
+      const boot: SchemaBootContext = {
+        fingerprint: worldFingerprintOf(this.config.world),
+        seed: this.config.world.seed,
+        wipeSchedule: this.config.session.wipeSchedule,
+        wipeEpoch: wipeEpochOf(this.config.session.wipeSchedule, Date.now()),
+        configJson: JSON.stringify(this.config),
+        varAbsent: this.resolved.varAbsent,
+        worldTainted: this.resolved.worldTainted,
+        bookmark: await captureBookmark(ctx.storage),
+      };
+      // initSchema returns the effective world fingerprint (the running one, or
+      // the persisted one on a fail-closed refusal); parse it back so worldgen,
+      // the welcome message, and clients all agree on the world.
+      const effective = parseWorldFingerprint(initSchema(ctx.storage.sql, boot));
+      if (effective) this.config.world = effective;
       pruneStaleCharacters(ctx.storage.sql);
     });
     // killPlayer reports every finished life here (see survival.ts).
@@ -335,7 +358,7 @@ export class GameRoom extends DurableObject<Env> {
       schemaVersion: SERVER_INFO_SCHEMA_VERSION,
       gameVersion: GAME_VERSION,
       protocolVersion: PROTOCOL_VERSION,
-      worldSeed: game?.world.seed ?? WORLD_SEED,
+      worldSeed: game?.world.seed ?? this.config.world.seed,
       // Untrusted operator-set vars with code defaults. Strip controls/zero-
       // width/bidi and cap by code points (doc 03 §2). Deliberately NOT
       // sanitizeName: that forces a non-empty "Survivor" default and dedups
@@ -533,8 +556,9 @@ export class GameRoom extends DurableObject<Env> {
 
   private ensureGame(): GameState {
     if (this.game) return this.game;
-    // worldParamsOf returns { seed } only in M1 (createWorld unchanged); seed is
-    // coerced to WORLD_SEED by resolveServerConfig until M2's fingerprint gate.
+    // worldParamsOf returns { seed } only (createWorld unchanged; size/water land
+    // in doc 07). M2 honors a custom seed — the fail-closed fingerprint gate in
+    // initSchema, not coercion, guards persisted state against a world change.
     const world = createWorld(worldParamsOf(this.config.world).seed);
     // Boot determinism check: the generated world's seed MUST equal the config's.
     // Log + coerce, NEVER throw — a throwing constructor/boot crash-loops the DO.

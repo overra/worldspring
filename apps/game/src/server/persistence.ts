@@ -21,7 +21,8 @@
 // (positions/inventories from an old world layout would be nonsense) but the
 // leaderboard survives — finished lives stay comparable across wipes.
 
-import { LEADERBOARD_MAX, WORLD_SEED } from "@worldspring/shared/constants";
+import { LEADERBOARD_MAX } from "@worldspring/shared/constants";
+import type { WipeSchedule } from "@worldspring/shared/config";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, LeaderboardEntry, PlayerCore, Vitals } from "@worldspring/shared/protocol";
 import type {
@@ -79,13 +80,34 @@ function setMeta(sql: SqlStorage, key: string, value: string): void {
 
 // --- Schema ---
 
-/**
- * Create tables and enforce schema/seed versioning. On any mismatch the
- * characters and world tables are cleared (NOT the leaderboard) and fresh
- * meta rows are written. Run once in the DO constructor under
- * blockConcurrencyWhile.
- */
-export function initSchema(sql: SqlStorage): void {
+/** Boot-time inputs to the fail-closed wipe decision (doc 04 M2). Assembled in
+ * the GameRoom constructor from the resolved config + a PITR bookmark. */
+export interface SchemaBootContext {
+  /** worldFingerprintOf(config.world) — the running config's WIPE-class identity
+   * (seed/size/water), compared by exact string equality against the persisted
+   * fingerprint. */
+  fingerprint: string;
+  /** config.world.seed — lets the pre-M2 migration match the legacy world_seed
+   * row without this module having to parse the fingerprint string. */
+  seed: number;
+  /** config.session.wipeSchedule — drives the scheduled-wipe epoch counter. */
+  wipeSchedule: WipeSchedule;
+  /** wipeEpochOf(wipeSchedule, Date.now()) — the current scheduled-wipe period. */
+  wipeEpoch: number;
+  /** JSON.stringify(config) — stored as meta.config_json for admin/debug. */
+  configJson: string;
+  /** No GAME_CONFIG var was set (config is DEFAULT_CONFIG). A fingerprint
+   * mismatch under this flag is treated as an accident (dropped var), not intent. */
+  varAbsent: boolean;
+  /** A world.* field came from a fallback/coercion (unparseable JSON, unknown
+   * preset, bad value). Same fail-closed treatment as varAbsent. */
+  worldTainted: boolean;
+  /** PITR bookmark captured BEFORE any wipe (or "unavailable" in local dev),
+   * stored as meta.pre_wipe_bookmark so a mistaken wipe is recoverable. */
+  bookmark: string;
+}
+
+function createTables(sql: SqlStorage): void {
   sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
   sql.exec(
     `CREATE TABLE IF NOT EXISTS characters (
@@ -98,9 +120,7 @@ export function initSchema(sql: SqlStorage): void {
       updated_at INTEGER NOT NULL
     )`,
   );
-  sql.exec(
-    "CREATE TABLE IF NOT EXISTS world_state (kind TEXT NOT NULL, payload TEXT NOT NULL)",
-  );
+  sql.exec("CREATE TABLE IF NOT EXISTS world_state (kind TEXT NOT NULL, payload TEXT NOT NULL)");
   sql.exec(
     `CREATE TABLE IF NOT EXISTS leaderboard (
       name TEXT NOT NULL,
@@ -112,17 +132,170 @@ export function initSchema(sql: SqlStorage): void {
       ended_at INTEGER NOT NULL
     )`,
   );
+}
 
-  const version = getMeta(sql, "schema_version");
-  const seed = getMeta(sql, "world_seed");
-  if (version === String(SCHEMA_VERSION) && seed === String(WORLD_SEED)) return;
-  // Fresh database, or a schema/seed change: old world + character state is
-  // meaningless against the new world. The leaderboard is kept.
+/**
+ * Create tables and run the fail-closed world-wipe decision (doc 04 M2).
+ * Returns the world fingerprint the DO must actually generate: normally
+ * boot.fingerprint, but the fail-closed refusal returns the PERSISTED fingerprint
+ * so the server keeps generating the world its characters live in (GameRoom
+ * parses it back into config.world). Run once in the DO constructor under
+ * blockConcurrencyWhile. NEVER throws — a throwing constructor crash-loops the
+ * object. The leaderboard survives every wipe.
+ *
+ * Works in fingerprint STRINGS (the comparison is exact string equality) so this
+ * module keeps no runtime dependency on the config package — that keeps the
+ * node-based persistence tests resolvable. The canonical string format lives in
+ * @worldspring/shared/config `worldFingerprintOf` (pinned by config.test.ts).
+ */
+export function initSchema(sql: SqlStorage, boot: SchemaBootContext): string {
+  createTables(sql);
+
+  // 1. Schema bump or fresh DB → unconditional wipe. Old-shape rows may not parse
+  //    under new code, and a bump is always a deliberate code change, so this
+  //    must NEVER be reachable by the fail-closed refusal below.
+  if (getMeta(sql, "schema_version") !== String(SCHEMA_VERSION)) {
+    wipeWorld(sql, boot);
+    return boot.fingerprint;
+  }
+
+  const stored = getMeta(sql, "world_fingerprint");
+
+  // 2. Pre-M2 database (schema 2 from the single-row persist fix, no fingerprint
+  //    row yet). If the legacy world_seed matches the running seed, adopt it
+  //    WITHOUT wiping so the live deployed world survives M2 landing. (Pre-M2 and
+  //    current builds are both default-shape — size/water aren't wired until doc
+  //    07 — so a matching seed is sufficient.)
+  if (stored === null && getMeta(sql, "world_seed") === String(boot.seed)) {
+    setMeta(sql, "world_fingerprint", boot.fingerprint);
+    setMeta(sql, "config_json", boot.configJson);
+    reconcileWipeSchedule(sql, boot);
+    return boot.fingerprint;
+  }
+
+  // 3. Fingerprint matches → benign boot (only LIVE fields, which are not in the
+  //    fingerprint, can have changed). Refresh config_json, run the scheduled-
+  //    wipe epoch check; no world wipe.
+  if (stored !== null && stored === boot.fingerprint) {
+    setMeta(sql, "config_json", boot.configJson);
+    reconcileWipeSchedule(sql, boot);
+    return boot.fingerprint;
+  }
+
+  // 4. Fingerprint MISMATCH. The persisted fingerprint is the world the
+  //    characters live in. Fail closed: if the config justifying the change is
+  //    untrustworthy (no var set, or a world field fell back/coerced), REFUSE to
+  //    wipe and boot the persisted world — a dropped or typo'd GAME_CONFIG must
+  //    never nuke a live world. Only an explicit, clean change (case 5) wipes.
+  const persistedFp = recoverableFingerprint(stored ?? legacyFingerprint(sql));
+
+  if (boot.varAbsent || boot.worldTainted) {
+    if (persistedFp !== null) {
+      console.error(
+        `[persist] world fingerprint mismatch (persisted ${persistedFp} != config ${boot.fingerprint})` +
+          ` with ${boot.varAbsent ? "no GAME_CONFIG var" : "a tainted world config"}; REFUSING to wipe,` +
+          ` booting the persisted world.`,
+      );
+      setMeta(sql, "world_fingerprint", persistedFp);
+      setMeta(sql, "config_json", boot.configJson);
+      reconcileWipeSchedule(sql, boot);
+      return persistedFp;
+    }
+    // The persisted world is unknowable (the stored fingerprint is absent or
+    // malformed). Preserving the characters would rehydrate them into the wrong
+    // generated world — the exact desync this path exists to prevent — so treat
+    // it as unrecoverable and start fresh.
+    console.error(
+      `[persist] world fingerprint mismatch but the persisted fingerprint (${stored ?? "absent"}) is` +
+        ` unreadable; wiping to a fresh world rather than rehydrate into the wrong one.`,
+    );
+    wipeWorld(sql, boot);
+    return boot.fingerprint;
+  }
+
+  // 5. Explicit, clean, non-tainted config deliberately changed a WIPE-class
+  //    field → sanctioned wipe. The operator asked for a new world.
+  console.warn(
+    `[persist] sanctioned world change (${persistedFp ?? "fresh"} -> ${boot.fingerprint});` +
+      ` clearing characters + world_state, keeping the leaderboard.`,
+  );
+  wipeWorld(sql, boot);
+  return boot.fingerprint;
+}
+
+/** The fingerprint a pre-M2 database was running: the legacy world_seed at the
+ * default shape. The format mirrors config `worldFingerprintOf` for a default-
+ * shape world (both pinned to the same literal by config.test.ts); used as the
+ * "persisted world" when no fingerprint row exists yet. */
+function legacyFingerprint(sql: SqlStorage): string | null {
+  const raw = getMeta(sql, "world_seed");
+  if (raw === null || !Number.isFinite(Number(raw))) return null;
+  return `v1|seed:${Number(raw)}|size:standard|water:0`;
+}
+
+/** A stored fingerprint is usable on the refusal path only if it round-trips the
+ * canonical v1 format. A malformed value would make GameRoom's parseWorldFingerprint
+ * return null, booting the preserved characters into the running world instead —
+ * so the refusal path rejects it and starts fresh rather than serve a desynced
+ * world. This regex MUST match @worldspring/shared/config `parseWorldFingerprint`
+ * (kept string-only here so persistence needs no runtime config dependency; the
+ * corrupt-fingerprint case is covered by persist-wipe.mjs). */
+function recoverableFingerprint(fp: string | null): string | null {
+  if (fp === null) return null;
+  return /^v1\|seed:-?\d+\|size:(standard|large|huge)\|water:[01]$/.test(fp) ? fp : null;
+}
+
+/** Clear characters + world_state (NEVER the leaderboard), capturing the PITR
+ * bookmark first, then rewrite the meta rows enumerated in full. Used by schema
+ * bumps and sanctioned world changes. */
+function wipeWorld(sql: SqlStorage, boot: SchemaBootContext): void {
   sql.exec("DELETE FROM characters");
   sql.exec("DELETE FROM world_state");
   sql.exec("DELETE FROM meta");
   setMeta(sql, "schema_version", String(SCHEMA_VERSION));
-  setMeta(sql, "world_seed", String(WORLD_SEED));
+  setMeta(sql, "world_fingerprint", boot.fingerprint);
+  setMeta(sql, "config_json", boot.configJson);
+  setMeta(sql, "wipe_schedule", boot.wipeSchedule);
+  setMeta(sql, "wipe_epoch", String(boot.wipeEpoch));
+  setMeta(sql, "pre_wipe_bookmark", boot.bookmark);
+}
+
+/** Maintain the wipe-schedule meta pair and fire a scheduled wipe once per
+ * crossed epoch (a first write or a schedule change re-anchors without wiping).
+ * Returns true if a scheduled wipe fired. */
+function reconcileWipeSchedule(sql: SqlStorage, boot: SchemaBootContext): boolean {
+  const schedule = getMeta(sql, "wipe_schedule");
+  const epoch = getMeta(sql, "wipe_epoch");
+  if (schedule === null || epoch === null || schedule !== boot.wipeSchedule) {
+    setMeta(sql, "wipe_schedule", boot.wipeSchedule);
+    setMeta(sql, "wipe_epoch", String(boot.wipeEpoch));
+    return false;
+  }
+  if (boot.wipeSchedule !== "never" && boot.wipeEpoch > Number(epoch)) {
+    console.warn(
+      `[persist] scheduled ${boot.wipeSchedule} wipe (epoch ${epoch} -> ${boot.wipeEpoch});` +
+        ` clearing characters + world_state.`,
+    );
+    sql.exec("DELETE FROM characters");
+    sql.exec("DELETE FROM world_state");
+    setMeta(sql, "wipe_epoch", String(boot.wipeEpoch));
+    setMeta(sql, "pre_wipe_bookmark", boot.bookmark);
+    return true;
+  }
+  return false;
+}
+
+/** Capture the PITR bookmark before a potential wipe, or "unavailable" when PITR
+ * is unsupported (local dev) or errors — a wipe must never be blocked, and the
+ * DO constructor must never crash, on bookmark capture. */
+export async function captureBookmark(storage: {
+  getCurrentBookmark(): Promise<string>;
+}): Promise<string> {
+  try {
+    return await storage.getCurrentBookmark();
+  } catch {
+    return "unavailable";
+  }
 }
 
 // --- World snapshot ---

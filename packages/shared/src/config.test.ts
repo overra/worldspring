@@ -223,11 +223,16 @@ describe("resolveServerConfig", () => {
     expect(r.config.loot.density).toBe(DEFAULT_CONFIG.loot.density);
   });
 
-  it("M1 coerces a non-default world.seed back to WORLD_SEED + taints", () => {
+  it("M2 honors a clean custom world.seed (the M1 coercion was lifted)", () => {
     const r = resolveServerConfig({ overrides: { world: { seed: 4242 } } });
+    expect(r.config.world.seed).toBe(4242);
+    expect(r.worldTainted).toBe(false);
+  });
+
+  it("a non-finite world.seed is still clamped to WORLD_SEED + taints", () => {
+    const r = resolveServerConfig({ overrides: { world: { seed: "not-a-number" } } });
     expect(r.config.world.seed).toBe(WORLD_SEED);
     expect(r.worldTainted).toBe(true);
-    expect(r.warnings.join(" ")).toMatch(/seed/);
   });
 
   it("M1 coerces a non-standard sizeTier to standard + taints", () => {

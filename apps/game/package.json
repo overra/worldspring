@@ -10,7 +10,9 @@
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "loadtest": "node scripts/loadtest.mjs",
-    "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs"
+    "test": "pnpm test:persist && pnpm test:wipe",
+    "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",
+    "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
