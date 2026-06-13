@@ -74,14 +74,26 @@ const fireDist = Math.hypot(fire.x - player.core.x, fire.z - player.core.z);
 check(fireDist < FIRE_WARMTH_RADIUS, `fire within warmth radius (dist = ${fireDist.toFixed(2)})`);
 check(fire.burnRemaining > 0, "fire is lit (burnRemaining > 0)");
 
-// Loadout: every id present on THIS build is granted; absent ids are skipped.
+// Loadout: every id present on THIS build is granted at its EXACT quantity;
+// absent ids are skipped (no-op). Sum counts across slots so the check holds
+// even if a quantity ever spans multiple stacks.
 const present = new Set(player.inventory.filter(Boolean).map((s) => s.type));
-for (const { id } of TESTBED_LOADOUT) {
-  if (id in ITEM_DEFS) check(present.has(id), `loadout has "${id}"`);
-  else check(!present.has(id), `absent id "${id}" correctly skipped (no-op)`);
+const qtyByType = new Map();
+for (const stack of player.inventory) {
+  if (stack) qtyByType.set(stack.type, (qtyByType.get(stack.type) ?? 0) + stack.count);
+}
+for (const { id, count } of TESTBED_LOADOUT) {
+  if (id in ITEM_DEFS) {
+    check(present.has(id), `loadout has "${id}"`);
+    check((qtyByType.get(id) ?? 0) === count, `loadout "${id}" quantity is ${count} (got ${qtyByType.get(id) ?? 0})`);
+  } else {
+    check(!present.has(id), `absent id "${id}" correctly skipped (no-op)`);
+  }
 }
 // Sanity: at least the known survival staples are granted on main.
 check(present.has("beans") && present.has("raw_venison"), "core items (beans, raw_venison) granted");
+// selectedSlot is reset to 0 by the provisioning contract (player started at 5).
+check(player.selectedSlot === 0, "selectedSlot reset to 0");
 
 // Vitals: known baseline; attack cooldown cleared.
 check(player.vitals.hp === TESTBED_VITALS.hp, `hp baseline ${TESTBED_VITALS.hp}`);
