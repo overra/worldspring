@@ -31,6 +31,7 @@ import {
   ANIM_ATTACKING,
   ANIM_MOVING,
   ANIM_SPRINTING,
+  PROTOCOL_VERSION,
   parseClientMsg,
   type DeathRecap,
   type GameEvent,
@@ -255,7 +256,7 @@ export class GameRoom extends DurableObject<Env> {
 
     const game = this.ensureGame();
     if (msg.t === "join") {
-      await this.handleJoin(ws, game, msg.name, msg.token);
+      await this.handleJoin(ws, game, msg.name, msg.token, msg.proto);
       this.flushOutbox(game);
       return;
     }
@@ -409,8 +410,26 @@ export class GameRoom extends DurableObject<Env> {
     game: GameState,
     rawName: string,
     token: string,
+    proto: number | undefined,
   ): Promise<void> {
     if (this.playerBySocket.has(ws)) return; // already joined
+    // Server-side half of the two-sided protocol gate (doc 03 §1) — the ONLY
+    // enforcement that binds clients we don't ship. Checked FIRST: before the
+    // token hash, before any character create/restore or persist, before any
+    // "joined" broadcast — so a refused client never makes a character row and
+    // never leaves a defenseless lingering body. An ABSENT proto is accepted
+    // only while PROTOCOL_VERSION === 1 (pre-gate clients are sim-compatible
+    // with v1 by definition); once it bumps, absent is rejected like any other
+    // mismatch — those clients carry no gate code, so this is the only closure.
+    if (proto !== PROTOCOL_VERSION && !(proto === undefined && PROTOCOL_VERSION === 1)) {
+      this.send(ws, { t: "error", msg: "incompatible version" });
+      try {
+        ws.close(1008, "incompatible version");
+      } catch {
+        // Already closed.
+      }
+      return;
+    }
     const tokenHash = await sha256Hex(token);
     // Re-check after the await: a duplicate join racing across the digest.
     if (this.playerBySocket.has(ws)) return;
@@ -515,6 +534,7 @@ export class GameRoom extends DurableObject<Env> {
       t: "welcome",
       id: player.id,
       seed: game.world.seed,
+      proto: PROTOCOL_VERSION,
       time: game.time,
       you: this.youState(player),
       inv: player.inventory.map((stack) => (stack ? { ...stack } : null)),
