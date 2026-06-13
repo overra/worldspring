@@ -27,7 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       # No secrets → skip the rest cleanly (green, not red). Lets this very PR
       # pass before the token is added; the preview activates once it lands.
@@ -44,9 +46,9 @@ jobs:
           fi
 
       - if: steps.gate.outputs.ok == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - if: steps.gate.outputs.ok == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -64,7 +66,7 @@ jobs:
       - name: Deploy preview worker
         id: deploy
         if: steps.gate.outputs.ok == 'true'
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -76,7 +78,7 @@ jobs:
 
       - name: Comment preview URL
         if: steps.gate.outputs.ok == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
         with:
@@ -118,34 +120,41 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      # --force is required to delete a Worker that owns a Durable Object
-      # namespace. continue-on-error: if no preview was ever deployed for this
-      # PR the delete 404s — that's fine, nothing to tear down.
+      # Delete by worker NAME in an isolated dir. Do NOT use cloudflare/
+      # wrangler-action here: with no prior `pnpm install` it falls back to
+      # `npm i wrangler` in apps/game, which dies on the repo's `workspace:*`
+      # deps (EUNSUPPORTEDPROTOCOL) — so the delete silently never ran and every
+      # preview worker leaked. `npx wrangler` in runner.temp (an empty dir)
+      # installs cleanly from the registry. `delete <name> --force` needs only
+      # the name + token/account (no config or build); --force is required to
+      # delete a Worker that owns a Durable Object namespace.
       - name: Delete preview worker
+        id: delete
         continue-on-error: true
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: "4.99.0"
-          workingDirectory: apps/game
-          command: delete worldspring-pr-${{ github.event.pull_request.number }} --force
+        working-directory: ${{ runner.temp }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.99.0 delete worldspring-pr-${{ github.event.pull_request.number }} --force
 
+      # Reflect the ACTUAL delete outcome — never claim a teardown that didn't
+      # happen. Only touches our own bot+marker comment (never CodeRabbit/humans).
       - name: Comment teardown
-        uses: actions/github-script@v7
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          DELETE_OUTCOME: ${{ steps.delete.outcome }}
         with:
           script: |
             const marker = "<!-- worldspring-preview -->";
             const n = context.issue.number;
-            const body = `${marker}\n### 🎮 Game preview\n\nTorn down — \`worldspring-pr-${n}\` deleted now that this PR is closed.`;
+            const ok = process.env.DELETE_OUTCOME === "success";
+            const body = ok
+              ? `${marker}\n### 🎮 Game preview\n\nTorn down — \`worldspring-pr-${n}\` deleted now that this PR is closed.`
+              : `${marker}\n### 🎮 Game preview\n\n⚠️ Couldn't confirm teardown of \`worldspring-pr-${n}\` — it may already be gone, or may need a manual \`wrangler delete worldspring-pr-${n} --force\`. See the cleanup job logs.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: n,
             });
-            // Only ever touch OUR own comment: the github-actions bot author
-            // AND our hidden marker. Never overwrites CodeRabbit, other bots,
-            // or humans (even if one quotes the marker).
             const prev = comments.find(
               (c) => c.user.login === "github-actions[bot]" && c.body.startsWith(marker),
             );
