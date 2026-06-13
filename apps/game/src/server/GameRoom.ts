@@ -8,7 +8,7 @@
 // longest-lives leaderboard. The tick interval keeps the object resident
 // while anyone is connected OR while a logged-out body lingers; when both are
 // gone, everything is persisted and the interval stops — the next connection
-// rebuilds the world from WORLD_SEED + the stored snapshot.
+// rebuilds the world from the effective seed + the stored snapshot.
 
 import { DurableObject } from "cloudflare:workers";
 import {
@@ -556,8 +556,9 @@ export class GameRoom extends DurableObject<Env> {
 
   private ensureGame(): GameState {
     if (this.game) return this.game;
-    // worldParamsOf returns { seed } only in M1 (createWorld unchanged); seed is
-    // coerced to WORLD_SEED by resolveServerConfig until M2's fingerprint gate.
+    // worldParamsOf returns { seed } only (createWorld unchanged; size/water land
+    // in doc 07). M2 honors a custom seed — the fail-closed fingerprint gate in
+    // initSchema, not coercion, guards persisted state against a world change.
     const world = createWorld(worldParamsOf(this.config.world).seed);
     // Boot determinism check: the generated world's seed MUST equal the config's.
     // Log + coerce, NEVER throw — a throwing constructor/boot crash-loops the DO.
