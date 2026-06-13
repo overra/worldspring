@@ -187,21 +187,30 @@ export function initSchema(sql: SqlStorage, boot: SchemaBootContext): string {
   //    untrustworthy (no var set, or a world field fell back/coerced), REFUSE to
   //    wipe and boot the persisted world — a dropped or typo'd GAME_CONFIG must
   //    never nuke a live world. Only an explicit, clean change (case 5) wipes.
-  const persistedFp = stored ?? legacyFingerprint(sql);
+  const persistedFp = recoverableFingerprint(stored ?? legacyFingerprint(sql));
 
   if (boot.varAbsent || boot.worldTainted) {
-    console.error(
-      `[persist] world fingerprint mismatch (persisted ${persistedFp ?? "none"} != config ${boot.fingerprint})` +
-        ` with ${boot.varAbsent ? "no GAME_CONFIG var" : "a tainted world config"}; REFUSING to wipe,` +
-        ` booting the persisted world.`,
-    );
     if (persistedFp !== null) {
+      console.error(
+        `[persist] world fingerprint mismatch (persisted ${persistedFp} != config ${boot.fingerprint})` +
+          ` with ${boot.varAbsent ? "no GAME_CONFIG var" : "a tainted world config"}; REFUSING to wipe,` +
+          ` booting the persisted world.`,
+      );
       setMeta(sql, "world_fingerprint", persistedFp);
       setMeta(sql, "config_json", boot.configJson);
       reconcileWipeSchedule(sql, boot);
       return persistedFp;
     }
-    return boot.fingerprint; // no recoverable persisted world — nothing to keep.
+    // The persisted world is unknowable (the stored fingerprint is absent or
+    // malformed). Preserving the characters would rehydrate them into the wrong
+    // generated world — the exact desync this path exists to prevent — so treat
+    // it as unrecoverable and start fresh.
+    console.error(
+      `[persist] world fingerprint mismatch but the persisted fingerprint (${stored ?? "absent"}) is` +
+        ` unreadable; wiping to a fresh world rather than rehydrate into the wrong one.`,
+    );
+    wipeWorld(sql, boot);
+    return boot.fingerprint;
   }
 
   // 5. Explicit, clean, non-tainted config deliberately changed a WIPE-class
@@ -222,6 +231,18 @@ function legacyFingerprint(sql: SqlStorage): string | null {
   const raw = getMeta(sql, "world_seed");
   if (raw === null || !Number.isFinite(Number(raw))) return null;
   return `v1|seed:${Number(raw)}|size:standard|water:0`;
+}
+
+/** A stored fingerprint is usable on the refusal path only if it round-trips the
+ * canonical v1 format. A malformed value would make GameRoom's parseWorldFingerprint
+ * return null, booting the preserved characters into the running world instead —
+ * so the refusal path rejects it and starts fresh rather than serve a desynced
+ * world. This regex MUST match @worldspring/shared/config `parseWorldFingerprint`
+ * (kept string-only here so persistence needs no runtime config dependency; the
+ * corrupt-fingerprint case is covered by persist-wipe.mjs). */
+function recoverableFingerprint(fp: string | null): string | null {
+  if (fp === null) return null;
+  return /^v1\|seed:-?\d+\|size:(standard|large|huge)\|water:[01]$/.test(fp) ? fp : null;
 }
 
 /** Clear characters + world_state (NEVER the leaderboard), capturing the PITR

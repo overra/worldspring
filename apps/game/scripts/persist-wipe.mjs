@@ -38,15 +38,14 @@ function makeDb(meta = {}) {
         world = 0;
         return { toArray: () => [] };
       }
-      if (/^DELETE FROM leaderboard/i.test(q)) {
-        leaderboard = 0;
-        return { toArray: () => [] };
-      }
       if (/^DELETE FROM meta/i.test(q)) {
         m.clear();
         return { toArray: () => [] };
       }
-      return { toArray: () => [] };
+      // No DELETE FROM leaderboard handler on purpose: initSchema must NEVER wipe
+      // the leaderboard, so such a statement (or any other unhandled SQL) throws —
+      // failing fast on stub/persistence drift instead of silently passing.
+      throw new Error(`Unhandled SQL in persist-wipe stub: ${q}`);
     },
   };
   return {
@@ -149,6 +148,18 @@ scenario("a tainted world config refuses to wipe", () => {
   const fp = initSchema(db.sql, boot({ fingerprint: FP_1337, seed: 1337, worldTainted: true }));
   eq(fp, FP_9999, "boots the persisted world");
   eq(db.counts().characters, 5, "characters preserved");
+});
+
+// 6b. Corrupt persisted fingerprint under refusal: the persisted world is
+//     unknowable, so preserving characters would desync — wipe to fresh instead
+//     of rehydrating them into the running world.
+scenario("a corrupt persisted fingerprint under refusal wipes instead of desyncing", () => {
+  const db = makeDb({ schema_version: "2", world_fingerprint: "garbage-not-a-fingerprint" });
+  db.seed(5, 2, 3);
+  const fp = initSchema(db.sql, boot({ fingerprint: FP_1337, seed: 1337, varAbsent: true }));
+  eq(fp, FP_1337, "returns the running fingerprint (fresh world)");
+  eq(db.counts().characters, 0, "characters wiped (unrecoverable, not misbooted)");
+  eq(db.counts().leaderboard, 3, "leaderboard survives");
 });
 
 // 7. Schema bump overrides the refusal: even with an absent/garbage config, a

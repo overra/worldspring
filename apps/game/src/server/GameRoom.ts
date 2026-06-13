@@ -38,7 +38,6 @@ import {
   RESPAWN_DELAY_S,
   TICK_MS,
   WORLD_SAVE_INTERVAL_S,
-  WORLD_SEED,
 } from "@worldspring/shared/constants";
 import { distSq2D } from "@worldspring/shared/math";
 import {
@@ -359,7 +358,7 @@ export class GameRoom extends DurableObject<Env> {
       schemaVersion: SERVER_INFO_SCHEMA_VERSION,
       gameVersion: GAME_VERSION,
       protocolVersion: PROTOCOL_VERSION,
-      worldSeed: game?.world.seed ?? WORLD_SEED,
+      worldSeed: game?.world.seed ?? this.config.world.seed,
       // Untrusted operator-set vars with code defaults. Strip controls/zero-
       // width/bidi and cap by code points (doc 03 §2). Deliberately NOT
       // sanitizeName: that forces a non-empty "Survivor" default and dedups
