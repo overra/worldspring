@@ -110,7 +110,7 @@ export interface ItemDef {
   cooksTo?: ItemType;
   /**
    * HP cost of consuming this item raw (power still restores food first).
-   * Floor at 1 hp, never lethal. Replaces RAW_VENISON_HP_PENALTY constant.
+   * Floor at 1 hp, never lethal.
    */
   rawPenaltyHp?: number;
   /** Water vessel behavior (canteen variants). */
@@ -266,12 +266,6 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     wear: { slot: "back", extraSlots: 4 },
   },
 };
-
-/**
- * @deprecated Use `ITEM_DEFS[type].rawPenaltyHp` — retained only for any
- * external code that hasn't migrated. Will be removed post-M1 cleanup.
- */
-export const RAW_VENISON_HP_PENALTY = 8;
 
 /** Airdrop crates roll this many stacks from this table. */
 export const AIRDROP_ROLLS = 5;
