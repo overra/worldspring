@@ -1,0 +1,16 @@
+# Keep GitHub Actions SHA-pins current. Actions are pinned to commit SHAs for
+# supply-chain hardening (esp. the secret-using preview deploy); without this
+# they'd silently rot and miss security patches. Grouped so all bumps land in
+# one PR, which then goes through CI like any other change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
