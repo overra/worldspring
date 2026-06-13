@@ -95,7 +95,12 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: n,
             });
-            const prev = comments.find((c) => c.user.type === "Bot" && c.body.includes(marker));
+            // Only ever touch OUR own comment: the github-actions bot author
+            // AND our hidden marker. Never overwrites CodeRabbit, other bots,
+            // or humans (even if one quotes the marker).
+            const prev = comments.find(
+              (c) => c.user.login === "github-actions[bot]" && c.body.startsWith(marker),
+            );
             if (prev) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body,
@@ -138,7 +143,12 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: n,
             });
-            const prev = comments.find((c) => c.user.type === "Bot" && c.body.includes(marker));
+            // Only ever touch OUR own comment: the github-actions bot author
+            // AND our hidden marker. Never overwrites CodeRabbit, other bots,
+            // or humans (even if one quotes the marker).
+            const prev = comments.find(
+              (c) => c.user.login === "github-actions[bot]" && c.body.startsWith(marker),
+            );
             if (prev) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner, repo: context.repo.repo, comment_id: prev.id, body,
