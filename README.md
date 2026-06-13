@@ -24,7 +24,10 @@ pnpm deploy:game    # also: deploy:web, deploy:prober
 ```
 
 Agent skills are restored from the committed `skills-lock.json`, not vendored —
-on a fresh clone run `npx skills experimental_install`.
+on a fresh clone (or new git worktree) run `npx skills experimental_install`.
+That fetches skill content into `.agents/skills/` (gitignored); the committed
+`.claude/skills` → `../.agents/skills` symlink bridges it into the directory
+Claude Code reads, so the one command is enough.
 
 ## Controls
 

@@ -19,6 +19,11 @@ dist/
 # Agent skills: the lock file (skills-lock.json) is tracked; the fetched skill
 # contents are restored via `npx skills experimental_install` — like
 # package-lock.json vs node_modules (docs/plans/09 — lock-only hygiene).
+# `.claude/skills` itself is a committed symlink → ../.agents/skills that bridges
+# the restored content into the dir Claude Code reads. The trailing-slash rules
+# below ignore directory *content*; the negation keeps the symlink blob tracked
+# (git never traverses the symlink, so no content is vendored through it).
 .agents/skills/
 .claude/skills/
+!/.claude/skills
 .skills.json
