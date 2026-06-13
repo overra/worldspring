@@ -148,9 +148,9 @@ worldgen wipes) and is deliberately not exposed.
 
 ### 2. `ServerInfo` — full types
 
-New file `src/shared/serverInfo.ts` (shared so the game worker, the `site/` directory
-worker, and the client can all import it; the `site/` worker imports via relative path —
-same repo):
+New file `packages/shared/src/serverInfo.ts` (shared so the game worker, the `apps/web`
+directory worker, and the client can all import it via the `@worldspring/shared` workspace
+package):
 
 ```ts
 // src/shared/serverInfo.ts
