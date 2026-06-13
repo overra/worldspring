@@ -4,12 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
     "./items": "./src/items.ts",
     "./math": "./src/math.ts",
     "./movement": "./src/movement.ts",
     "./protocol": "./src/protocol.ts",
     "./rng": "./src/rng.ts",
+    "./serverInfo": "./src/serverInfo.ts",
     "./version": "./src/version.ts",
     "./world": "./src/world.ts"
   },

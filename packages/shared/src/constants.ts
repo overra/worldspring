@@ -178,3 +178,24 @@ export const LOGOUT_LINGER_S = 60;
 export const WORLD_SAVE_INTERVAL_S = 20;
 /** Completed lives kept for the longest-lives leaderboard. */
 export const LEADERBOARD_MAX = 50;
+
+// --- Server info & directory ---
+/** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */
+export const SERVER_INFO_CACHE_TTL_S = 15;
+/** ServerInfo.name max length, code points (doc 03 §2/§5). */
+export const MAX_SERVER_NAME_LENGTH = 32;
+/** ServerInfo.motd max length, code points (doc 03 §2/§5). */
+export const MAX_MOTD_LENGTH = 140;
+/** Periodic heartbeat cadence while occupied (doc 03 §5/§6). M3 sends them. */
+export const HEARTBEAT_INTERVAL_S = 60;
+/** ± jitter on the periodic cadence, anti thundering-herd (doc 03 §5/§6). */
+export const HEARTBEAT_JITTER_S = 10;
+/**
+ * The floor between ANY two beats from one sender: edge beats are debounced to
+ * one per this window, and every sent beat reschedules the periodic timer
+ * (§6) — so this is also the cap on legal sustained send rate (3/min). Must
+ * stay above the directory intake refill period (§9: 15s) with headroom — a
+ * compliant sender must never be able to trip the directory's rate limit, and
+ * §9's sizing arithmetic depends on the reschedule rule.
+ */
+export const HEARTBEAT_EDGE_DEBOUNCE_S = 20;
