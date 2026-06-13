@@ -26,6 +26,17 @@ closes** (`wrangler delete … --force`, required because the Worker owns a DO).
 Only the **game** is previewed today (web/prober are not). Fork PRs are skipped
 (they can't access secrets).
 
+### Testbed provisioning (doc 10 M1)
+
+Preview deploys pass `--var TESTBED:1`, which turns on the **preview-only
+testbed**: on any fresh join you spawn fully kitted at a coast station next to a
+lit campfire, with a known vitals baseline — so you can QA a change without
+scavenging for items or walking to the coast first. It is gated entirely on
+`env.TESTBED` (read once in the `GameRoom` constructor) and is **never** set on
+the production deploy (`wrangler.jsonc` carries no `TESTBED`; a guard in `ci.yml`
+fails the build if it ever appears there), so prod join behavior is
+byte-identical. See [`docs/plans/10-preview-testbed-qa.md`](../../docs/plans/10-preview-testbed-qa.md).
+
 ### Required setup (one-time, by a maintainer)
 
 1. **Repo secrets** (Settings → Secrets and variables → Actions):
