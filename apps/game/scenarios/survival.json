@@ -1,0 +1,31 @@
+{
+  "name": "survival",
+  "provision": [
+    { "kind": "position", "zone": "coastal", "face": "ocean" },
+    { "kind": "fire", "atFeet": true },
+    {
+      "kind": "loadout",
+      "items": [
+        { "type": "beans", "count": 3 },
+        { "type": "water_bottle", "count": 2 },
+        { "type": "bandage", "count": 2 },
+        { "type": "raw_venison", "count": 3 },
+        { "type": "canteen_empty", "count": 1 },
+        { "type": "canteen_dirty", "count": 1 },
+        { "type": "canteen_clean", "count": 1 },
+        { "type": "fishing_rod", "count": 1 }
+      ]
+    },
+    { "kind": "vitals", "hp": 50, "food": 50, "water": 20, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack", "item"] }
+  ],
+  "checklist": [
+    "Spawn on the beach facing the ocean with a lit campfire at your feet.",
+    "Eat beans (slot 1) — food goes up, no hp change.",
+    "Drink a water bottle — water goes up.",
+    "Eat raw venison away from the fire — food up a little, hp drops 8.",
+    "Eat raw venison standing in the campfire — it cooks first (cooked_venison), bigger food gain, no hp loss.",
+    "Apply a bandage — hp goes up toward 100.",
+    "Fill an empty canteen at the water's edge, boil it on the fire, then drink (canteen_* / fishing_rod are no-ops until doc 05 lands)."
+  ]
+}
