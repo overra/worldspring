@@ -28,22 +28,42 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+
+      # No secrets → skip the rest cleanly (green, not red). Lets this very PR
+      # pass before the token is added; the preview activates once it lands.
+      - name: Check for Cloudflare secret
+        id: gate
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping preview deploy (see .github/workflows/README.md)."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.ok == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.gate.outputs.ok == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: pnpm
       - name: Install
+        if: steps.gate.outputs.ok == 'true'
         run: pnpm install --frozen-lockfile
 
       # Emits apps/game/dist/worldspring/{index.js,wrangler.json} + dist/client.
       - name: Build game
+        if: steps.gate.outputs.ok == 'true'
         run: pnpm --filter @worldspring/game build
 
       # Deploy the built config under a per-PR name. --name overrides the script
       # name; the v1 migration creates a fresh GameRoom DO namespace under it.
       - name: Deploy preview worker
         id: deploy
+        if: steps.gate.outputs.ok == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -55,6 +75,7 @@ jobs:
             --name worldspring-pr-${{ github.event.pull_request.number }}
 
       - name: Comment preview URL
+        if: steps.gate.outputs.ok == 'true'
         uses: actions/github-script@v7
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
