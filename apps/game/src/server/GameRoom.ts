@@ -321,7 +321,12 @@ export class GameRoom extends DurableObject<Env> {
       // against live players — both wrong for a server name/MOTD. STRIP_TEXT_RE
       // does NOT escape < > & or quotes; rendering as text is the consumer's
       // job (§10 rule 8), so no HTML-escaping here.
-      name: sanitizeServerText(this.env.SERVER_NAME ?? "Worldspring", MAX_SERVER_NAME_LENGTH),
+      // The contract requires name to be 1..MAX_SERVER_NAME_LENGTH: a
+      // whitespace/control-only SERVER_NAME sanitizes to "", so fall back to
+      // the clean default here (motd, below, may legitimately stay empty).
+      name:
+        sanitizeServerText(this.env.SERVER_NAME ?? "Worldspring", MAX_SERVER_NAME_LENGTH) ||
+        "Worldspring",
       motd: sanitizeServerText(this.env.SERVER_MOTD ?? "", MAX_MOTD_LENGTH),
       rules: summarizeRules(DEFAULT_CONFIG),
       players,
