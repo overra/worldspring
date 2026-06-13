@@ -7,6 +7,13 @@ vitest + the game persist/wipe/loot scripts), `pnpm -w build`, and the worldgen
 **determinism fingerprint** (fails on any drift vs
 `packages/shared/scripts/world.fingerprint.txt`). No secrets, runs on fork PRs.
 
+Node is pinned exact via `.nvmrc` (currently `22.21.1`). The fingerprint is
+**Linux-canonical** — it mixes exact Float64 height bytes, and V8 transcendentals
+differ by an ULP across OSes (seed 0 diverges macOS↔Linux). Linux is the
+deployment platform (workerd), so the baseline is the Linux value; regenerate it
+**in CI / on Linux**, and expect `pnpm fingerprint` on a Mac to mismatch seed 0.
+Bumping `.nvmrc` may shift hashes too — regenerate then.
+
 ## `preview.yml` — per-PR game preview
 
 Each PR deploys its own throwaway Worker **`worldspring-pr-<N>`** with its own

@@ -9,6 +9,15 @@
 // is load-bearing (client prediction must match server authority bit-for-bit),
 // so re-run this on anything that touches packages/shared/src/world.ts.
 //
+// PLATFORM-CANONICAL = Linux (the deployment platform: workerd runs on Linux).
+// The hash mixes the EXACT Float64 bytes of the height grid (below), and V8's
+// transcendental (sin/cos/…) results differ by an ULP across OSes — seed 0
+// diverges between macOS and Linux today. So the committed baseline is the
+// LINUX value (regenerate in CI, not on a Mac); `pnpm fingerprint` on macOS
+// will mismatch seed 0 — a known cross-platform artifact, not a regression.
+// (The cross-platform divergence itself is a separate latent client/server
+// hazard tracked outside this gate; prod seed 1337 is stable on both.)
+//
 // esbuild bundles the target module (resolving the extensionless ./ imports and
 // simplex-noise, fully transpiling TS). It only transpiles for this hash — the
 // numeric worldgen semantics are unchanged vs the game's own bundler, so the
