@@ -62,49 +62,27 @@ __gl.getPixelRatio()                                            // expect 2
 __gl.getContext().getContextAttributes()                        // expect antialias:true (the waste we'll remove)
 ```
 
-## 1. CPU-vs-GPU blame splitter (arbitrates everything — run FIRST)
+## 1. CPU-vs-submit blame splitter (read the live overlay — arbitrates everything)
+
+Under `?debug=1` (or any DEV build) the in-tab overlay already installs the
+`gl.render` wrap + standalone-rAF loop and shows **frame / JS / submit ms** live
+(`DebugCollector` → `perfSplitter.ts`; F3 toggles the panel). Only one wrap can own
+the renderer instance, so read the live numbers from the console instead of
+installing a second one:
 
 ```js
-(() => {
-  const gl = window.__gl; if (!gl) return console.warn('open with ?debug=1');
-  const raw = gl.getContext();
-  const ext = raw.getExtension('EXT_disjoint_timer_query_webgl2');
-  const S = (window.__split = { gap: 0, js: 0, submit: 0, gpu: 0, gpuN: 0, n: 0, qs: [], inPass: false });
-  if (!gl.__origRender) {
-    gl.__origRender = gl.render; // wrap the INSTANCE — composer passes all call gl.render
-    gl.render = function (...a) {
-      let q = null;
-      if (ext && !S.inPass) { q = raw.createQuery(); raw.beginQuery(ext.TIME_ELAPSED_EXT, q); S.inPass = true; }
-      const t0 = performance.now();
-      gl.__origRender.apply(this, a);
-      S.submit += performance.now() - t0;
-      if (q) { raw.endQuery(ext.TIME_ELAPSED_EXT); S.inPass = false; S.qs.push(q); }
-    };
-  }
-  let last = performance.now();
-  const tick = (ts) => {
-    const now = performance.now();
-    S.gap += now - last; last = now;
-    S.js += now - ts;
-    for (let i = S.qs.length - 1; i >= 0; i--) {
-      const q = S.qs[i];
-      if (raw.getQueryParameter(q, raw.QUERY_RESULT_AVAILABLE)) {
-        if (!raw.getParameter(ext.GPU_DISJOINT_EXT)) { S.gpu += raw.getQueryParameter(q, raw.QUERY_RESULT) / 1e6; S.gpuN++; }
-        raw.deleteQuery(q); S.qs.splice(i, 1);
-      }
-    }
-    if (++S.n === 240) {
-      console.log(`frame ${(S.gap/S.n).toFixed(2)}ms | JS(all rAF) ${(S.js/S.n).toFixed(2)}ms | gl.render CPU ${(S.submit/S.n).toFixed(2)}ms | GPU ${S.gpuN ? (S.gpu/(S.gpuN/6)/6).toFixed(2) : 'n/a'}ms`);
-      S.gap = S.js = S.submit = S.gpu = 0; S.gpuN = 0; S.n = 0;
-    }
-    requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-})();
-// JS small + GPU≈frame → GPU/fill-bound (dpr+postfx levers win).
-// gl.render CPU dominant → submit/matrix-bound (draw-count + matrix levers win).
-// Reload tab to remove the wrap.
+window.__perfSplit                                  // { frameMs, jsMs, submitMs } live getters
+const s = window.__perfSplit; ({ frame: +s.frameMs.toFixed(2), js: +s.jsMs.toFixed(2), submit: +s.submitMs.toFixed(2) })
 ```
+
+Reading it:
+- **JS small + frame ≈ vsync → GPU/fill-bound** (dpr + postfx levers win).
+- **submit (gl.render CPU) dominant → submit/matrix-bound** (draw-count + matrix levers win).
+- `frame − JS` ≈ GPU/vsync wait.
+
+GPU per-pass time over-counts on Apple's tile GPU, so the overlay reports CPU/submit,
+not a GPU row. For the one GPU pass that actually matters (AO is ~46% of the frame)
+use §3's `__fx.n8ao.lastTime`.
 
 ## 2. Visibility census — ground-truth per-set share (L0)
 

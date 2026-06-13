@@ -82,6 +82,13 @@ export function triggerLocalAttackAnim(): void {
 export interface DebugStats {
   fps: number;
   frameMs: number;
+  /** Main-thread JS time spent inside the rAF tick (sim + camera + composer),
+   * EMA-smoothed. Written by the perf splitter (perfSplitter.ts) only under
+   * ?debug=1 / DEV; stays 0 otherwise. frameMs − jsMs ≈ GPU/vsync wait. */
+  jsMs: number;
+  /** CPU time inside gl.render across one frame's composer passes, EMA-smoothed.
+   * Same ?debug-only gating as jsMs. submit dominant ⇒ submit/matrix-bound. */
+  submitMs: number;
   drawCalls: number;
   triangles: number;
   geometries: number;
@@ -96,6 +103,8 @@ export interface DebugStats {
 export const debugStats: DebugStats = {
   fps: 0,
   frameMs: 0,
+  jsMs: 0,
+  submitMs: 0,
   drawCalls: 0,
   triangles: 0,
   geometries: 0,

@@ -19,6 +19,8 @@ const REFRESH_MS = 250;
 interface DebugSnapshot {
   fps: number;
   frameMs: number;
+  jsMs: number;
+  submitMs: number;
   drawCalls: number;
   triangles: number;
   geometries: number;
@@ -39,6 +41,8 @@ function takeSnapshot(): DebugSnapshot {
   return {
     fps: debugStats.fps,
     frameMs: debugStats.frameMs,
+    jsMs: debugStats.jsMs,
+    submitMs: debugStats.submitMs,
     drawCalls: debugStats.drawCalls,
     triangles: debugStats.triangles,
     geometries: debugStats.geometries,
@@ -108,6 +112,12 @@ export function DebugOverlay(): ReactElement | null {
   return (
     <div className="debug-overlay">
       <Row label="fps" value={`${snap.fps} (${snap.frameMs.toFixed(1)} ms)`} />
+      {snap.jsMs > 0 && (
+        <Row
+          label="js/submit"
+          value={`${snap.jsMs.toFixed(1)} / ${snap.submitMs.toFixed(1)} ms`}
+        />
+      )}
       <Row label="draws" value={String(snap.drawCalls)} />
       <Row label="tris" value={`${(snap.triangles / 1000).toFixed(1)}k`} />
       <Row label="geo/tex" value={`${snap.geometries}/${snap.textures}`} />
