@@ -26,4 +26,9 @@ interface Env {
    * wrangler.jsonc) so the var-less official deploy leaves it undefined and the
    * prod join path is byte-identical. isTestbedEnabled() checks it === "1". */
   TESTBED?: string;
+  /** doc 10 M3: deploy-time DEFAULT testbed set name (preview only; resolved by
+   * systems/scenarios.ts and consulted only when TESTBED is on). Like TESTBED it
+   * stays OUT of wrangler.jsonc — set per-preview via `--var SCENARIO:<name>` if
+   * a PR wants a non-default set; the per-join `scenario` field overrides it. */
+  SCENARIO?: string;
 }
