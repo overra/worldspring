@@ -183,6 +183,10 @@ function attackBlocked(state: GameState, zombie: Zombie, target: ServerPlayer): 
 }
 
 export function tickZombies(state: GameState, dt: number): void {
+  // Master toggle: threats.zombies=false means no spawn, tick, OR respawn —
+  // never advance AI/damage/separation even if the set were somehow non-empty
+  // (e.g. a future live M5 admin disable). Spawn + respawn are gated separately.
+  if (!state.config.threats.zombies) return;
   for (const zombie of state.zombies.values()) {
     if (zombie.attackCooldown > 0) zombie.attackCooldown -= dt;
 

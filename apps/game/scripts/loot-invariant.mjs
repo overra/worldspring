@@ -59,7 +59,7 @@ function makeState(config, spawns) {
 function assertInvariant(state, label) {
   const seen = new Map();
   for (const loot of state.loot.values()) {
-    if (loot.spawnId == null) continue; // player-dropped loot has no spawn point
+    if (loot.spawnId === null) continue; // player-dropped loot has no spawn point
     seen.set(loot.spawnId, (seen.get(loot.spawnId) ?? 0) + 1);
   }
   for (const timer of state.lootRespawns) {
@@ -86,7 +86,7 @@ function assertInvariant(state, label) {
 /** Mimic players clearing the map: take every stocked entity and re-arm its point. */
 function pickUpEverything(state) {
   for (const [id, loot] of [...state.loot]) {
-    if (loot.spawnId == null) continue;
+    if (loot.spawnId === null) continue;
     state.loot.delete(id);
     startLootRespawn(state, loot.spawnId);
   }
