@@ -59,12 +59,34 @@ function freshGame() {
 
 function sampleGame() {
   const g = freshGame();
-  g.loot.set(11, { id: 11, type: 3, x: 1, z: 2, stack: { type: 3, count: 5 } });
-  g.loot.set(12, { id: 12, type: 4, x: 3, z: 4 });
-  g.corpses.set(21, { id: 21, x: 5, z: 6, inventory: [{ type: 1, count: 1 }], ttl: 60 });
-  g.fires.push({ id: 31, x: 7, z: 8, fuel: 100 });
-  g.lootRespawns.push({ spawnId: 0, at: 123 });
-  g.drops.set(41, { id: 41, x: 9, z: 10, landsAt: 200, expiresAt: 400 });
+  // Fixtures mirror the server interfaces in src/server/systems/state.ts
+  // exactly (field names, nesting, and value types — note ItemType is a string
+  // union, not a number) so a shape regression there breaks this round-trip
+  // instead of silently passing.
+  g.loot.set(11, { id: 11, type: "rifle", count: 1, x: 1, y: 0, z: 2, spawnId: 7, ttl: null });
+  g.loot.set(12, { id: 12, type: "ammo_762", count: 30, x: 3, y: 0, z: 4, spawnId: null, ttl: 120 });
+  g.corpses.set(21, {
+    id: 21,
+    kind: "player",
+    name: "Casey",
+    x: 5,
+    y: 0,
+    z: 6,
+    yaw: 1.57,
+    contents: [{ type: "bandage", count: 2 }],
+    ttl: 600,
+  });
+  g.fires.push({ id: 31, x: 7, y: 0, z: 8, burnRemaining: 300 });
+  g.lootRespawns.push({ spawnId: 0, t: 45 });
+  g.drops.set(41, {
+    id: 41,
+    x: 9,
+    y: 12,
+    z: 10,
+    landsAt: 200,
+    expiresAt: 400,
+    contents: [{ type: "cooked_venison", count: 1 }],
+  });
   g.time = 1234.5;
   g.tick = 5678;
   g.nextEntityId = 42;
@@ -128,4 +150,47 @@ if (loadWorld(empty.sql, freshGame()) !== false) {
   fail("loadWorld on an empty world_state should return false");
 }
 
-console.log("ROUND-TRIP: PASS — world preserved exactly, false-on-empty, O(1) writes/save");
+const writeSnapshot = (obj) => {
+  const f = makeFakeSql();
+  f.sql.exec("INSERT INTO world_state (kind, payload) VALUES ('snapshot', ?)", JSON.stringify(obj));
+  return f.sql;
+};
+
+// Valid JSON, wrong shape: a collection that isn't an array must reject the
+// WHOLE snapshot (fresh-world path) and must NOT partially hydrate the valid
+// collections first — even though `loot` here is a perfectly good array.
+const malformed = writeSnapshot({
+  loot: [{ id: 99, type: "beans", count: 1, x: 0, y: 0, z: 0, spawnId: null, ttl: null }],
+  corpses: "corrupt",
+});
+const g2 = freshGame();
+if (loadWorld(malformed, g2) !== false) {
+  fail("loadWorld must reject a snapshot whose collection is the wrong type");
+}
+if (g2.loot.size !== 0) {
+  fail("loadWorld must not partially hydrate before rejecting a malformed snapshot");
+}
+
+// A non-object payload (valid JSON) must also take the fresh-world path.
+if (loadWorld(writeSnapshot(42), freshGame()) !== false) {
+  fail("loadWorld must reject a non-object snapshot payload");
+}
+
+// A single garbage entry inside an otherwise valid array is skipped, not fatal.
+const dirty = writeSnapshot({
+  loot: [
+    null,
+    { id: 7, type: "beans", count: 1, x: 0, y: 0, z: 0, spawnId: null, ttl: null },
+  ],
+});
+const g3 = freshGame();
+if (loadWorld(dirty, g3) !== true) {
+  fail("loadWorld should load a snapshot that has a skippable bad entry");
+}
+if (g3.loot.size !== 1 || !g3.loot.has(7)) {
+  fail("loadWorld should skip the null entry and keep the valid one");
+}
+
+console.log(
+  "ROUND-TRIP: PASS — world preserved exactly, false-on-empty, malformed-shape rejected, bad-entry skipped, O(1) writes/save",
+);

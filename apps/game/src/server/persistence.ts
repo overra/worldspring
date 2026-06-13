@@ -191,36 +191,78 @@ export function pruneStaleCharacters(sql: SqlStorage): void {
   );
 }
 
+/** A snapshot entity is only hydratable if it carries a finite numeric id. */
+function hasNumericId(v: unknown): v is { id: number } {
+  return typeof v === "object" && v !== null && Number.isFinite((v as { id?: unknown }).id);
+}
+
+/**
+ * Structurally validate a parsed snapshot before any hydration. Valid JSON is
+ * not enough: a non-object payload, or a collection that deserialized to a
+ * non-array, would throw mid-hydration — leaving `game` half-populated AND
+ * skipping the fresh-world fallback. Missing collections are normalized to []
+ * (forward-compat with snapshots written before a field existed); a present
+ * but wrong-typed collection rejects the whole snapshot (null -> caller starts
+ * fresh). Scalars are left as-is; loadWorld finite-guards each as it applies it.
+ */
+function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const s = raw as Record<string, unknown>;
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops"] as const) {
+    const v = s[key];
+    if (v === undefined || v === null) s[key] = [];
+    else if (!Array.isArray(v)) return null;
+  }
+  return s as unknown as WorldSnapshot;
+}
+
 export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   const rows = sql
     .exec<{ payload: string }>("SELECT payload FROM world_state WHERE kind = 'snapshot'")
     .toArray();
   if (rows.length === 0) return false;
 
-  let snapshot: WorldSnapshot;
+  let parsed: unknown;
   try {
-    snapshot = JSON.parse(rows[0].payload) as WorldSnapshot;
+    parsed = JSON.parse(rows[0].payload);
   } catch (err) {
     // A corrupt snapshot must not brick boot — start the world fresh.
     console.error("persistence: corrupt world snapshot, starting fresh", err);
     return false;
   }
 
+  // Guard the shape before touching `game`: a snapshot that is valid JSON but
+  // structurally wrong must take the fresh-world path, never throw partway
+  // through hydration and leave `game` half-populated.
+  const snapshot = asWorldSnapshot(parsed);
+  if (!snapshot) {
+    console.error("persistence: malformed world snapshot, starting fresh");
+    return false;
+  }
+
+  // Collections are guaranteed arrays by asWorldSnapshot; the per-entry id
+  // guard skips an individual null/garbage entry rather than throwing on it.
   let maxId = 0;
-  for (const loot of snapshot.loot ?? []) {
+  for (const loot of snapshot.loot) {
+    if (!hasNumericId(loot)) continue;
     game.loot.set(loot.id, loot);
     maxId = Math.max(maxId, loot.id);
   }
-  for (const corpse of snapshot.corpses ?? []) {
+  for (const corpse of snapshot.corpses) {
+    if (!hasNumericId(corpse)) continue;
     game.corpses.set(corpse.id, corpse);
     maxId = Math.max(maxId, corpse.id);
   }
-  for (const fire of snapshot.fires ?? []) {
+  for (const fire of snapshot.fires) {
+    if (!hasNumericId(fire)) continue;
     game.fires.push(fire);
     maxId = Math.max(maxId, fire.id);
   }
-  for (const timer of snapshot.lootRespawns ?? []) game.lootRespawns.push(timer);
-  for (const drop of snapshot.drops ?? []) {
+  for (const timer of snapshot.lootRespawns) {
+    if (timer && typeof timer === "object") game.lootRespawns.push(timer);
+  }
+  for (const drop of snapshot.drops) {
+    if (!hasNumericId(drop)) continue;
     game.drops.set(drop.id, drop);
     maxId = Math.max(maxId, drop.id);
   }
