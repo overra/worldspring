@@ -357,6 +357,12 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
       // Floor at 1 hp, but never raise hp that was already below 1.
       vitals.hp = Math.max(Math.min(vitals.hp, 1), vitals.hp - RAW_VENISON_HP_PENALTY);
       consumeFromSlot(player.inventory, slot);
+      // The cook-vs-raw split is otherwise an invisible, instant binary: tell the
+      // player WHY they took the hit and the exact range to avoid it next time.
+      sendTo(state, player.id, {
+        t: "notice",
+        msg: `Ate it raw — stand within ${FIRE_WARMTH_RADIUS}m of a fire to cook it`,
+      });
     }
     sendInventory(state, player);
     return;
