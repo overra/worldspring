@@ -29,9 +29,13 @@ const SETS: SetInfo[] = Object.values(
 // that so the panel opens showing the set the player actually landed in.
 const DEFAULT_SET = SETS.find((s) => s.name === "survival")?.name ?? SETS[0]?.name ?? "survival";
 
-/** Per-PR preview origin only (worldspring-pr-<N>.*); never prod. `?qa=0` hides it. */
+/** Per-PR preview origin only (worldspring-pr-<N>.*); never prod. An explicit
+ * `?qa=0` hides it — parsed exactly, so unrelated params can't false-match. */
 function isPreviewOrigin(): boolean {
-  return /^worldspring-pr-\d+(\.|$)/.test(location.hostname) && !location.search.includes("qa=0");
+  return (
+    /^worldspring-pr-\d+(\.|$)/.test(location.hostname) &&
+    new URLSearchParams(location.search).get("qa") !== "0"
+  );
 }
 
 const wrapStyle: React.CSSProperties = {
