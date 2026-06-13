@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       # pnpm BEFORE setup-node so the node cache can key on the pnpm store.
       # Version comes from the root package.json `packageManager` field.
