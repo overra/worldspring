@@ -25,9 +25,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # The game's test scripts use `node --experimental-strip-types`
-          # (Node >= 22.6, per apps/game/package.json engines).
-          node-version: "22"
+          # Pinned exact via .nvmrc. The worldgen fingerprint depends on V8's
+          # transcendental (sin/cos/…) results, which drift across Node patches
+          # — this gate caught seed 0 diverging on 22.22.3 vs the reference's
+          # 22.21.1. Bumping Node means regenerating world.fingerprint.txt.
+          # (Also satisfies the game tests' Node >= 22.6 / strip-types need.)
+          node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install
