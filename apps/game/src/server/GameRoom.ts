@@ -104,6 +104,7 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
+import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -196,6 +197,10 @@ export class GameRoom extends DurableObject<Env> {
   private tickMsPrevWindowMax = 0;
   private tickMsWindowStart = 0;
 
+  /** doc 10 M1: preview-only testbed provisioning gate (env.TESTBED === "1").
+   * Set once from the deploy-time var; undefined in prod → false → never seeds. */
+  private readonly testbed: boolean;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Resolve deploy-time config BEFORE schema init. resolveServerConfig never
@@ -205,6 +210,7 @@ export class GameRoom extends DurableObject<Env> {
     // (below); the warnings are logged here.
     this.resolved = resolveServerConfig(env.GAME_CONFIG);
     this.config = this.resolved.config;
+    this.testbed = isTestbedEnabled(env);
     for (const w of this.resolved.warnings) {
       console.warn(`[config] ${w}`);
     }
@@ -746,6 +752,10 @@ export class GameRoom extends DurableObject<Env> {
       player.inventory = saved.state.inventory.map((stack) => (stack ? { ...stack } : null));
       player.selectedSlot = saved.state.selectedSlot;
     }
+    // doc 10 M1: on a preview only (env.TESTBED), seed this fresh life so a
+    // tester lands ready. After the keep-inventory restore (so it isn't
+    // clobbered) and before sendWelcome (so the welcome carries it). No-op in prod.
+    if (this.testbed) provisionTestbed(game, player);
     const recap = saved ? saved.pendingRecap : null;
     if (recap) clearPendingRecap(sql, tokenHash);
     this.playerBySocket.set(ws, id);
