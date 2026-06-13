@@ -5,13 +5,11 @@
 
 import {
   CHAT_MAX_LENGTH,
-  DAY_DURATION_S,
   MAX_NAME_LENGTH,
-  START_HOUR,
 } from "@worldspring/shared/constants";
-import { clampConfig } from "@worldspring/shared/config";
+import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
 import { ITEM_DEFS } from "@worldspring/shared/items";
-import { gameHours, PROTOCOL_VERSION } from "@worldspring/shared/protocol";
+import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
 import { createWorld } from "@worldspring/shared/world";
 import { clientWorld, resetClientWorld } from "@/client/runtime";
@@ -304,7 +302,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   ui.setRecap(msg.recap);
   ui.setInventory(msg.inv, msg.selected);
   ui.setVitals(vitalsOf(msg.you));
-  ui.setClockHours(gameHours(msg.time, DAY_DURATION_S, START_HOUR));
+  ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.you.hp > 0) {
     ui.setPhase("playing");
   } else {
@@ -336,7 +334,7 @@ function onSnap(msg: SnapMsg): void {
 
   ui.setVitals(vitalsOf(msg.you));
   ui.setPlayerCount(msg.count);
-  ui.setClockHours(gameHours(msg.time, DAY_DURATION_S, START_HOUR));
+  ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.events.length > 0) {
     clientWorld.events.push(...msg.events);
     clientWorld.audioEvents.push(...msg.events);
