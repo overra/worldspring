@@ -5,6 +5,7 @@ import { HUD } from "./ui/HUD";
 import { DeathScreen } from "./ui/DeathScreen";
 import { EscapeMenu } from "./ui/EscapeMenu";
 import { DebugOverlay } from "./ui/DebugOverlay";
+import { QaPanel } from "./ui/QaPanel";
 import { TouchControls } from "./ui/TouchControls";
 
 // Lazy boundary: GameCanvas.tsx owns the <Canvas> subtree and every three.js /
@@ -35,6 +36,7 @@ export function App(): React.ReactElement {
       <HUD />
       <TouchControls />
       <DebugOverlay />
+      <QaPanel />
       <EscapeMenu />
       {phase === "dead" && <DeathScreen />}
     </div>
