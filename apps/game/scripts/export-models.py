@@ -31,18 +31,26 @@ def export_collection(name: str, out_path: str) -> bool:
     if coll is None:
         print(f"[export-models] ERROR: no collection '{name}' in the blend")
         return False
-    for obj in coll.all_objects:
-        if obj.parent is None:
+    # Zero each TOP-LEVEL object's location for the export, then RESTORE it in a
+    # finally — so this stays pure: it never leaves the in-memory grid layout
+    # mutated, even across the other collections' exports or when run inside an
+    # interactive Blender (only `location` is touched; rotation/scale are not).
+    saved = {obj: obj.location.copy() for obj in coll.all_objects if obj.parent is None}
+    try:
+        for obj in saved:
             obj.location = (0.0, 0.0, 0.0)
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in coll.all_objects:
-        obj.select_set(True)
-    bpy.ops.export_scene.gltf(
-        filepath=out_path,
-        export_format="GLB",
-        use_selection=True,
-        export_yup=True,
-    )
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in coll.all_objects:
+            obj.select_set(True)
+        bpy.ops.export_scene.gltf(
+            filepath=out_path,
+            export_format="GLB",
+            use_selection=True,
+            export_yup=True,
+        )
+    finally:
+        for obj, loc in saved.items():
+            obj.location = loc
     print(f"[export-models] {name} -> {out_path} ({len(coll.all_objects)} objects)")
     return True
 
