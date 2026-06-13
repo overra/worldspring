@@ -29,6 +29,11 @@ export function scenarioNames(): readonly string[] {
  * somehow missing, the shared BUILTIN_SCENARIO. Never throws.
  */
 export function resolveScenario(name: string | undefined): Scenario {
-  const hit = name ? SCENARIOS[name] : undefined;
+  // OWN-property lookup only. The wire charset for join.scenario ([a-z0-9_-])
+  // admits prototype keys like "__proto__" and "constructor"; a bare
+  // SCENARIOS[name] would return a prototype object for those, bypassing the
+  // allowlist and handing provisionTestbed a non-scenario. hasOwnProperty.call
+  // accepts only the real set names, so anything else falls through to default.
+  const hit = name && Object.prototype.hasOwnProperty.call(SCENARIOS, name) ? SCENARIOS[name] : undefined;
   return hit ?? SCENARIOS[DEFAULT_SCENARIO_NAME] ?? BUILTIN_SCENARIO;
 }
