@@ -369,7 +369,7 @@ const RANGES = {
     offlineRaidMult: [0, 1],
   },
   session: {
-    maxPlayers: [2, 24],
+    maxPlayers: [2, MAX_PLAYERS],
     respawnDelayS: [0, 30],
     logoutLingerS: [0, 300],
   },
@@ -544,11 +544,13 @@ function clampInto(
       typeof rtime.fixedHour === "number" &&
       Number.isFinite(rtime.fixedHour)
     ) {
-      fixedHour = clamp(
-        rtime.fixedHour,
-        RANGES.time.fixedHour[0],
-        RANGES.time.fixedHour[1],
-      );
+      const rawFixedHour = rtime.fixedHour;
+      fixedHour = clamp(rawFixedHour, RANGES.time.fixedHour[0], RANGES.time.fixedHour[1]);
+      if (fixedHour !== rawFixedHour) {
+        warnings.push(
+          `time.fixedHour: ${rawFixedHour} out of range [${RANGES.time.fixedHour[0]}, ${RANGES.time.fixedHour[1]}], clamped to ${fixedHour}`,
+        );
+      }
     } else {
       warnings.push(
         `time.fixedHour: not null or a finite number, using ${String(base.time.fixedHour)}`,
@@ -673,6 +675,10 @@ export function resolveServerConfig(raw: unknown): ResolvedConfig {
     ) {
       try {
         value = JSON.parse(trimmed);
+        // A JSON string literal (e.g. '"warpath"') parses to a bare string —
+        // treat it as a preset name, not an invalid object (which would silently
+        // fall back to deadcoast).
+        if (typeof value === "string") value = { preset: value.trim() };
       } catch {
         warnings.push(
           "GAME_CONFIG: unparseable JSON string, using deadcoast defaults",

@@ -150,6 +150,21 @@ describe("resolveServerConfig", () => {
     expect(json).toEqual(bare);
   });
 
+  it("a JSON string-literal preset resolves the same as the bare name", () => {
+    const bare = resolveServerConfig("warpath").config;
+    const jsonLiteral = resolveServerConfig('"warpath"').config;
+    expect(jsonLiteral).toEqual(bare);
+  });
+
+  it("clampConfig bounds an out-of-range time.fixedHour", () => {
+    const hi = clampConfig({ time: { fixedHour: 99 } }).time.fixedHour;
+    const lo = clampConfig({ time: { fixedHour: -5 } }).time.fixedHour;
+    expect(hi).not.toBe(99);
+    expect(lo).not.toBe(-5);
+    expect(hi).toBeLessThanOrEqual(24);
+    expect(lo).toBeGreaterThanOrEqual(0);
+  });
+
   it("an object with overrides marks preset custom and applies clamped values", () => {
     const r = resolveServerConfig({
       preset: "warpath",
