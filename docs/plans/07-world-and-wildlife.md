@@ -3,7 +3,7 @@
 ## Summary
 
 Three coupled expansions, all gated behind doc 04's `ServerConfig`
-(`docs/plans/04-gameplay-presets.md` owns `src/shared/config.ts`; this doc adds fields and
+(`docs/plans/04-gameplay-presets.md` owns `packages/shared/src/config.ts`; this doc adds fields and
 values to that schema and defines no rival config file, env var, preset registry, or wire
 field). Worldgen fields ride doc 04's `welcome.config` exactly like `seed` does today, and
 the client re-clamps them on receipt (`clampConfig` — welcome is attacker-controlled in
@@ -69,10 +69,10 @@ All verified against this worktree.
 
 **World gen / terrain**
 
-- `WORLD_SIZE = 800` (`src/shared/constants.ts:7`), `WATER_LEVEL = 0` (`:8`),
+- `WORLD_SIZE = 800` (`packages/shared/src/constants.ts:7`), `WATER_LEVEL = 0` (`:8`),
   `WATER_WALK_MIN = -0.55` (`:9`), `TERRAIN_MAX_HEIGHT = 22` (`:10`), `TOWN_COUNT = 4`,
   `CABIN_COUNT = 6`, `TREE_COUNT = 700` (`:11-13`), `ROCK_COUNT = 70` (`:172`).
-- `makeHeightFn` (`src/shared/world.ts:178-190`): 3 simplex octaves × radial island mask;
+- `makeHeightFn` (`packages/shared/src/world.ts:178-190`): 3 simplex octaves × radial island mask;
   the mask divides by `WORLD_SIZE * 0.5` (`world.ts:185`) — world size is baked into the
   height *formula*, so a bigger world is a different world by construction.
 - Sequential rng streams in creation order (`world.ts:343-676`): base `rng` (one burned draw
@@ -89,48 +89,48 @@ All verified against this worktree.
   buildings, a scaling hazard at ~200.
 - Spawn points: 48 angles, no rng, marching inward from `WORLD_SIZE*0.49` (`world.ts:533-548`).
 - Client terrain: ONE `PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 200, 200)` — 4m vertex spacing,
-  40,401 verts, `frustumCulled={false}` (`src/client/render/world/Terrain.tsx:11,25,80`).
+  40,401 verts, `frustumCulled={false}` (`apps/game/src/client/render/world/Terrain.tsx:11,25,80`).
   Vertex colors from height + central-difference slope (`Terrain.tsx:39-53`).
-- Fog: day near/far 40/320, night 20/140 (`src/client/render/world/SkyAndLighting.tsx:42-45`);
-  camera far 600 (`src/client/GameCanvas.tsx:39`). Nothing past ~320m is visible **today** —
+- Fog: day near/far 40/320, night 20/140 (`apps/game/src/client/render/world/SkyAndLighting.tsx:42-45`);
+  camera far 600 (`apps/game/src/client/GameCanvas.tsx:39`). Nothing past ~320m is visible **today** —
   the current 800m mesh is already mostly fog-hidden.
 - Ocean: translucent plane sized `WORLD_SIZE * 1.6`, 64×64 segments, patched
   `MeshStandardMaterial` with sine displacement + fresnel
-  (`src/client/render/world/WaterPlane.tsx:13-14,49-75`). Render-only.
+  (`apps/game/src/client/render/world/WaterPlane.tsx:13-14,49-75`). Render-only.
 
 **Water in the sim**
 
 - Deep water is a movement wall: `heightAt < WATER_WALK_MIN` blocks with axis-separated
-  sliding for players (`src/shared/movement.ts:86-95`) and a hard stop for zombies/deer
+  sliding for players (`packages/shared/src/movement.ts:86-95`) and a hard stop for zombies/deer
   (`movement.ts:158-161`). No swim state, no depth concept, no fresh water anywhere.
-- Thirst exists: `Vitals.water` decays (`src/server/systems/survival.ts:132-133`), refilled
-  only by `water_bottle` (kind `drink`, `src/server/systems/players.ts:364-366`;
-  `src/shared/items.ts:58`).
+- Thirst exists: `Vitals.water` decays (`apps/game/src/server/systems/survival.ts:132-133`), refilled
+  only by `water_bottle` (kind `drink`, `apps/game/src/server/systems/players.ts:364-366`;
+  `packages/shared/src/items.ts:58`).
 
 **Wildlife**
 
-- One species. `Deer` (`src/server/systems/state.ts:148-161`) is structurally a `ZombieCore`;
+- One species. `Deer` (`apps/game/src/server/systems/state.ts:148-161`) is structurally a `ZombieCore`;
   states `idle | wander | flee`. Spawn: `DEER_COUNT = 10` inland via Math.random rejection
-  sampling against `WORLD_SIZE * 0.45` (`src/server/systems/wildlife.ts:58-78`). Flee blends
+  sampling against `WORLD_SIZE * 0.45` (`apps/game/src/server/systems/wildlife.ts:58-78`). Flee blends
   away-vectors from all players within 22m at 8.5 m/s (`wildlife.ts:111-149`). Kill drops
   2-3 `raw_venison` as timed loot + schedules a 120s respawn (`wildlife.ts:92-109`);
   `state.deerRespawns` is a bare `number[]` (`state.ts:243`). Never persisted
-  (`src/server/GameRoom.ts:359-361`).
+  (`apps/game/src/server/GameRoom.ts:359-361`).
 - Combat treats deer as player-sized cylinders: `PLAYER_HEIGHT` × `HIT_CAPSULE_RADIUS`
-  (`src/server/systems/combat.ts:358-369` ranged, `:226-234` melee). Lag-comp rewinds
+  (`apps/game/src/server/systems/combat.ts:358-369` ranged, `:226-234` melee). Lag-comp rewinds
   animals (`combat.ts:164`, `state.ts:305-308`).
 - Wire: `WireAnimal {id, x, y, z, yaw, state}` — **no species field**
-  (`src/shared/protocol.ts:133-142`); snapshot loop at `GameRoom.ts:815-826`, filtered at
+  (`packages/shared/src/protocol.ts:133-142`); snapshot loop at `GameRoom.ts:815-826`, filtered at
   `INTEREST_RADIUS = 220` computed per player (`GameRoom.ts:722-725` — verified per-player).
 - Render: `Animals.tsx` pools `DEER_COUNT + 4` rigs cloned from the `deer` node in
   `public/models/props.glb`, gait via `leg_fl/fr/bl/br` hip-pivot nodes, procedural box
-  fallback (`src/client/render/entities/Animals.tsx:18-156`). Pool size depends on a shared
+  fallback (`apps/game/src/client/render/entities/Animals.tsx:18-156`). Pool size depends on a shared
   compile-time constant — this changes once counts come from config (`welcome.config` makes
   them client-visible; pool rule in §7).
 - `CharacterRig` is humanoid-only: `CharacterKind = "survivor" | "zombie"`
-  (`src/client/render/entities/CharacterRig.ts:16`). Quadrupeds use the Animals.tsx pattern,
+  (`apps/game/src/client/render/entities/CharacterRig.ts:16`). Quadrupeds use the Animals.tsx pattern,
   not CharacterRig.
-- Audio: `SfxName` manifest is the contract (`src/client/audio/manifest.ts:5-37`); no wildlife
+- Audio: `SfxName` manifest is the contract (`apps/game/src/client/audio/manifest.ts:5-37`); no wildlife
   sounds beyond zombie set.
 
 **Config & capacity**
@@ -139,10 +139,10 @@ All verified against this worktree.
   (`protocol.ts:196`; server `GameRoom.ts:354` / client `connection.ts:260` per
   `docs/plans/research/codebase-sim.md`). No `PROTOCOL_VERSION` exists — doc 03's M1
   creates it (as the two-sided `proto` field on `join` and `welcome`), and doc 04's M1
-  creates `src/shared/config.ts`/`welcome.config`. Both are designed, not yet
+  creates `packages/shared/src/config.ts`/`welcome.config`. Both are designed, not yet
   implemented; this doc consumes both rather than re-creating either.
 - Persistence guard: `schema_version` (=2) + `world_seed` meta mismatch wipes characters +
-  world, keeps leaderboard (`src/server/persistence.ts:34,107-117` per research docs).
+  world, keeps leaderboard (`apps/game/src/server/persistence.ts:34,107-117` per research docs).
 - Capacity envelope (verified loadtest, `docs/plans/research/codebase-server.md`): 20 bots /
   120s → tick 0.51ms EMA / 3ms max at 60 zombies + 10 deer. `persistAll` wipe-and-reinsert
   costs ~74K SQLite rows written per active hour at 1x — already the free-plan killer
@@ -152,7 +152,7 @@ All verified against this worktree.
 
 ### 1. Config plumbing — extending doc 04's `ServerConfig`
 
-**Ownership (binding):** `docs/plans/04-gameplay-presets.md` owns `src/shared/config.ts` —
+**Ownership (binding):** `docs/plans/04-gameplay-presets.md` owns `packages/shared/src/config.ts` —
 the grouped `ServerConfig` (`{preset, world, threats, loot, survival, pvp, time, wildlife,
 building, session}`), the `PRESETS: Record<string, DeepPartial<ServerConfig>>` registry
 (deadcoast/driftwood/ironcoast/warpath/homestead/nightfall), `resolveServerConfig`
@@ -243,7 +243,7 @@ pattern).
   checked client-side (`03-server-info-contract.md` §1). This doc consumes that gate
   verbatim — no `join.v`, no second constant. **Bump policy for this doc's milestones:**
   M1-M6 and M8-M12 are wire-additive and MUST NOT bump; **M7 MUST bump** — it changes
-  `stepPlayer` semantics everywhere (doc 03's bump criteria name `src/shared/movement.ts`
+  `stepPlayer` semantics everywhere (doc 03's bump criteria name `packages/shared/src/movement.ts`
   behavior explicitly). The bump converts "stale tab mispredicts in shallows" into
   "stale tab is cleanly refused at rejoin": a worker deploy restarts the DO and drops
   sockets, and the client has no auto-reconnect (`connection.ts:80-87,193-197` — close
@@ -252,7 +252,7 @@ pattern).
   on builds where `PROTOCOL_VERSION ≥ 2` (post-M7), so absent-`proto` clients that would
   build the wrong world from the bare seed are refused — the same hard dependency
   doc 04's M6 declares.
-- `WORLDGEN_VERSION` (new, `src/shared/constants.ts`, starts 1) is bumped whenever a
+- `WORLDGEN_VERSION` (new, `packages/shared/src/constants.ts`, starts 1) is bumped whenever a
   carve/derivation formula change alters the world generated from identical config. It
   does NOT ride the wire — both sides compile it in, and a formula change is by
   definition a shared-sim behavior change, so every `WORLDGEN_VERSION` bump is
@@ -731,11 +731,11 @@ neither. Then M1 → M2 → {M3, M4, M5}; M5 → {M6, M7}; M8 → {M9, M10}; M11
 M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
 
 1. **M1 — Config consumption + fingerprint extension + harness** *(Opus 4.8)*
-   Files: `src/shared/config.ts` (extend doc 04's schema per §1: tier value set,
+   Files: `packages/shared/src/config.ts` (extend doc 04's schema per §1: tier value set,
    `waterFeatures` default false, wildlife density fields, `riverlands`/`frontier`
-   DeepPartial presets, `effectiveAnimalMax`), `src/shared/constants.ts`
-   (`WORLDGEN_VERSION`), `src/server/persistence.ts` (`gen:` fingerprint component,
-   absent-fingerprint ADOPT rule, `world_seed` poison rule), `src/server/GameRoom.ts`
+   DeepPartial presets, `effectiveAnimalMax`), `packages/shared/src/constants.ts`
+   (`WORLDGEN_VERSION`), `apps/game/src/server/persistence.ts` (`gen:` fingerprint component,
+   absent-fingerprint ADOPT rule, `world_seed` poison rule), `apps/game/src/server/GameRoom.ts`
    (`ensureGame` consumes the constructor-resolved config — resolution itself is
    doc 04's), `scripts/worldgen-fingerprint.ts` + committed baselines, `ARCHITECTURE.md`
    (NET contract: welcome carries `config`; client builds via
@@ -748,8 +748,8 @@ M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
    verified to ignore unknown `e`/`t`.
 
 2. **M2 — `createWorld` parameterization** *(Opus 4.8 — determinism-critical refactor)*
-   Files: `src/shared/world.ts` (GenParams threading, `World.size`, `groundHeight` grid
-   fix), `src/shared/constants.ts` (tier tables), consumers of `WORLD_SIZE`
+   Files: `packages/shared/src/world.ts` (GenParams threading, `World.size`, `groundHeight` grid
+   fix), `packages/shared/src/constants.ts` (tier tables), consumers of `WORLD_SIZE`
    (`zombies.ts:110`, `wildlife.ts:63`, `airdrops.ts:38`, `Terrain.tsx:25`,
    `WaterPlane.tsx:13`).
    Accept: `deadcoast`-default fingerprints unchanged; large/huge worlds generate with
@@ -757,7 +757,7 @@ M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
    returns identical values to the linear scan on 10K probe points.
 
 3. **M3 — Chunked terrain renderer** *(Opus 4.8 — the risky render milestone)*
-   Files: `src/client/render/world/Terrain.tsx` (chunk manager, LOD rings, skirts, build
+   Files: `apps/game/src/client/render/world/Terrain.tsx` (chunk manager, LOD rings, skirts, build
    queue, frustum culling), `WaterPlane.tsx` (size/segments per scale), `ARCHITECTURE.md`
    (replace the one-plane Terrain spec at ARCHITECTURE.md:107-110 with the chunk/LOD
    manager description — downstream parallel sessions treat that file as the contract).
@@ -771,7 +771,7 @@ M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
 4. **M4 — Tier content: scaled counts + satellite outposts** *(Sonnet 4.8, fingerprint
    harness as the guard)*
    Files: `world.ts` (`outpost|${seed}` stream, town-name pool), `constants.ts`,
-   `src/server/systems/zombies.ts` (outpost garrisons: per-tier base counts ×
+   `apps/game/src/server/systems/zombies.ts` (outpost garrisons: per-tier base counts ×
    `threats.zombieDensity`), `Trees.tsx` (measure huge-tier instancing; distance-culled
    rebuild if needed).
    Accept: `deadcoast`-default fingerprint unchanged; outposts never overlap
@@ -788,16 +788,16 @@ M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
 
 6. **M6 — Fresh water rendering + ambience** *(Sonnet 4.8)*
    Files: `WaterPlane.tsx` (export `createWaterMaterial`), new
-   `src/client/render/world/FreshWater.tsx` (merged ribbon/disc mesh), audio manifest +
+   `apps/game/src/client/render/world/FreshWater.tsx` (merged ribbon/disc mesh), audio manifest +
    `river_loop`/`splash` assets, AudioSystem distance fade.
    Accept: one draw call for all fresh water; surfaces never z-fight banks; river audio
    audible ≤40m.
 
 7. **M7 — Wading + drink-from-source + PROTOCOL_VERSION bump** *(Opus 4.8 — touches
    shared `stepPlayer` prediction)*
-   Files: `src/shared/movement.ts` (waterAt block/slowdown/jump-gate), `protocol.ts`
+   Files: `packages/shared/src/movement.ts` (waterAt block/slowdown/jump-gate), `protocol.ts`
    (`drink` msg, `PROTOCOL_VERSION` bump — the §1 policy: this is the milestone that
-   changes predicted movement semantics everywhere), `src/server/systems/players.ts`
+   changes predicted movement semantics everywhere), `apps/game/src/server/systems/players.ts`
    (handler + penalty), client prompt + cue.
    Accept: water-less worlds byte-identical movement traces on a recorded input script
    (golden-file test); prediction error stays <1cm wading in live test; drink restores 30

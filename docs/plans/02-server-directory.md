@@ -9,19 +9,23 @@
 > probe-first liveness, and trust boundaries here all still apply — only the
 > framework and worker layout changed.
 
-Design doc for `site/` — the deadcoast landing page that doubles as the flagship server
+Design doc for `apps/web` — the Worldspring landing page that doubles as the flagship server
 directory. Companion to doc-01 (hosted deploy flow), doc-03 (the `/api/server-info` +
-heartbeat contract, `src/shared/serverInfo.ts`) and doc-04 (ServerConfig / presets,
-`src/shared/config.ts`). Research grounding: `docs/plans/research/directory-prior-art.md`,
+heartbeat contract, `@worldspring/shared/serverInfo`) and doc-04 (ServerConfig / presets,
+`@worldspring/shared/config`). Research grounding: `docs/plans/research/directory-prior-art.md`,
 `research/codebase-server.md`, `research/cf-costs.md`, `research/cf-deploy.md`,
 `research/cf-oauth.md`.
 
 ## Summary
 
-A second Cloudflare Worker in `site/` (own `wrangler.jsonc` + `package.json`, deployed
-independently of the game worker) serves SSR HTML via Hono + `hono/jsx` — no client
-framework, one small progressive-enhancement script for client-measured ping and the
-join interstitial. State lives in D1: `servers`, `owners`, `probes`, `stats_hourly`,
+The Worldspring landing + directory is **one Astro 6 app, `apps/web`** (own `wrangler.jsonc`
++ `package.json`, deployed independently of the game worker) on `@astrojs/cloudflare` v13. It
+serves a prerendered marketing landing + Starlight docs, and the directory as per-route SSR
+pages (`export const prerender = false`) plus `/api/v1/*` JSON endpoints backed by D1 — no
+React/three, just `.astro` templates with small vanilla island scripts for client-measured
+ping and the join interstitial. The 5-minute cron prober is a **separate `apps/prober`
+Worker** (Astro is request-driven and can't host a Cron Trigger). State lives in D1:
+`servers`, `owners`, `probes`, `stats_hourly`,
 `reports`, `moderation_actions`. Registration issues a self-contained **server token**
 (`dcd1.<serverId>.<secret>`); the doc-01 deploy flow injects it as a secret automatically,
 wrangler-CLI deployers set it manually and prove URL control via a **challenge hash**
@@ -39,7 +43,7 @@ probed like everyone else.
 
 **Goals**
 
-- One place to discover community DEADCOAST servers; landing page = directory.
+- One place to discover community Worldspring servers; landing page = directory.
 - Registration that takes < 5 minutes for a wrangler-CLI deployer and zero extra steps
   for someone who used the doc-01 hosted deploy flow.
 - Honest liveness, player counts, and uptime — probe-verified where possible, capped and
@@ -50,7 +54,7 @@ probed like everyone else.
 
 **Non-goals**
 
-- Verifying that a listed server runs unmodified DEADCOAST code (impossible off-site —
+- Verifying that a listed server runs unmodified Worldspring code (impossible off-site —
   see Trust model).
 - A first-party join path (official client + `?server=wss://…`) — designed-for but not
   built in v1 (see Open questions).
@@ -64,67 +68,87 @@ probed like everyone else.
 
 Verified against this worktree:
 
-- The game worker (`src/server/worker.ts:6-22`) routes exactly `/ws`,
+- The game worker (`apps/game/src/server/worker.ts:6-22`) routes exactly `/ws`,
   `/api/leaderboard`, `/api/health` to the single `GameRoom` DO
   (`env.GAME.getByName("main")`, worker.ts:13); everything else 404s (worker.ts:20).
   Static assets are served platform-first with
   `not_found_handling: "single-page-application"` (`wrangler.jsonc:6-8`), so browser
   *navigation* requests to non-asset paths get `index.html` without invoking the worker
   (codebase-server.md §1) — one reason the site must NOT live on the game worker.
-- `/api/health` (`src/server/GameRoom.ts:175-197`) returns in-memory counts
+- `/api/health` (`apps/game/src/server/GameRoom.ts:175-197`) returns in-memory counts
   (`players`, `zombies`, …, `tickMsEma`, `uptime`) with
   `access-control-allow-origin: *` and deliberately never wakes the sim (comment at
   GameRoom.ts:173-174). This is the precedent `/api/server-info` follows.
 - No `PROTOCOL_VERSION`, no `ServerConfig`, no `/api/server-info`, no `PRESETS` exist
   yet (grepped `src/` — zero hits). Doc-04 owns `ServerConfig`/`PRESETS` in
-  `src/shared/config.ts` (doc-03 only stubs the file until doc-04 lands); this doc
+  `packages/shared/src/config.ts` (doc-03 only stubs the file until doc-04 lands); this doc
   consumes them.
-- The `welcome` message carries `seed` (`src/shared/protocol.ts:194-206`) — the existing
+- The `welcome` message carries `seed` (`packages/shared/src/protocol.ts:194-206`) — the existing
   transport for anything that must reach the client; `PROTOCOL_VERSION` rides here too.
-- Sanitization precedent: `STRIP_TEXT_RE` (`src/server/systems/players.ts:41-44`) strips
+- Sanitization precedent: `STRIP_TEXT_RE` (`apps/game/src/server/systems/players.ts:41-44`) strips
   C0/C1 controls, zero-width (U+200B-200F), bidi embeddings/overrides/isolates,
   word-joiners, BOM; `sanitizeName` (players.ts:46-60) strips → trims → caps by **code
   points** (spread + slice, never splits surrogate pairs); chat additionally collapses
   whitespace (`GameRoom.ts:317-340`). The site reuses this exact recipe.
 - Env surface of the game worker is exactly one binding, `GAME` (`wrangler.jsonc:9-16`);
   zero vars, zero secrets. `MAX_PLAYERS = 24`, `MAX_NAME_LENGTH = 16`
-  (`src/shared/constants.ts:30-31`).
-- Deploys: root `npm run deploy` = `vite build && wrangler deploy` through the Vite
-  plugin's `.wrangler/deploy/config.json` redirect (codebase-server.md §4). A sibling
-  `site/` worker deployed via `wrangler deploy -c site/wrangler.jsonc` is fully
-  independent (codebase-server.md §6).
+  (`packages/shared/src/constants.ts:30-31`).
+- Deploys: the game worker ships via `pnpm --filter @worldspring/game deploy` =
+  `vite build && wrangler deploy` through the Vite plugin's `.wrangler/deploy/config.json`
+  redirect (codebase-server.md §4, doc 09 §4). `apps/web` and `apps/prober` are independent
+  workspace packages with their own `wrangler.jsonc`, deployed via
+  `pnpm --filter @worldspring/web deploy` / `pnpm --filter @worldspring/prober deploy`
+  (doc 09 §3, §5–§6).
 - Cost reality (cf-costs.md): heartbeats are unbilled subrequests for senders; a
   free-plan directory absorbs ~69 servers at 60 s heartbeats; directory-side probes are
   unbilled subrequests capped at 50/invocation on free, 10,000 on paid.
 
 ## Design
 
-### 1. Architecture: the `site/` worker
+### 1. Architecture: the `apps/web` Astro app (+ `apps/prober`)
+
+The landing + docs + directory are **one Astro 6 app on `@astrojs/cloudflare` v13**,
+`apps/web`, deployed as its own Worker (`worldspring-web`). It pulls **no React/three** —
+plain `.astro` pages + minimal vanilla island scripts — so it does not inherit the game
+client's heavy deps. The cron prober that polls community servers lives in a **separate
+`apps/prober` Worker**, because an Astro app is request-driven and cannot host a Cron
+Trigger (doc 09 §5–§6).
 
 ```
-site/
-  wrangler.jsonc        # name: "deadcoast-site", D1 binding, cron, assets
-  package.json          # hono only; own lockfile entry
-  tsconfig.json         # jsx: "react-jsx", jsxImportSource: "hono/jsx", strict
-  public/               # logo, CSS, ping.js (the one client script)
+apps/web/                  # @worldspring/web — Astro 6 + @astrojs/cloudflare v13
+  astro.config.mjs         #   adapter cloudflare() + starlight(); vite.ssr.noExternal ["@worldspring/shared"]
+  wrangler.jsonc           #   name "worldspring-web", D1 binding — NO main/assets (adapter generates them), NO cron
+  package.json             #   astro + @astrojs/cloudflare + @astrojs/starlight + @worldspring/shared
   src/
-    index.tsx           # Hono app: routes + scheduled() cron handler
-    db.ts               # typed D1 query helpers (no ORM)
-    tokens.ts           # server-token mint/parse/hash, challenge hash
-    sanitize.ts         # listing caps + sanitizeListingText (imports shared STRIP_TEXT_RE)
-    probe.ts            # SSRF-guarded server-info fetch + validation
-    rank.ts             # score(), region map
-    pages/              # hono/jsx components: Landing, Browse, Detail, Join, Register, Admin
-  migrations/           # D1 migration .sql files (wrangler d1 migrations)
+    content.config.ts      #   Content Layer docs collection (REQUIRED on Astro 6)
+    pages/
+      index.astro          #   landing (prerendered)
+      policy.astro         #   listing policy (prerendered)
+      servers/             #   index.astro, [id].astro — directory (SSR: prerender = false)
+      join/[id].astro      #   interstitial (SSR)
+      register.astro       #   manual claim wizard (SSR)
+      admin.astro          #   moderation (SSR)
+      api/v1/              #   JSON endpoints (SSR): servers, servers/[id], heartbeat, latest, report, …
+    content/docs/          #   Starlight PUBLIC docs (prerendered) — hosting guide, server-info contract, presets
+    lib/                   #   db.ts, tokens.ts, probe.ts, rank.ts, sanitize.ts (the directory logic)
+    env.d.ts
+  migrations/              #   D1 schema .sql (§3) — apps/web OWNS the schema
+
+apps/prober/               # @worldspring/prober — standalone cron Worker (§6)
+  wrangler.jsonc           #   name "worldspring-prober", triggers.crons ["*/5 * * * *"], SAME D1 id as apps/web
+  src/index.ts             #   scheduled() handler only — the probe sweep
+  package.json  tsconfig.json
 ```
 
-**SSR, not SPA.** This is a content + browse site next to a 3D game; it must be
-crawlable, instant on first paint, and cacheable at the edge. Hono + `hono/jsx`
-(server-side JSX, auto-escaping, ~tiny, Workers-native; hono 4.x as of 2026-06 — pin at
-implementation time) renders full HTML per request. Exactly one client script,
-`public/ping.js` (~120 lines vanilla): measures per-server RTT against
-`/api/server-info` (CORS `*` already the game-side precedent), fills the Ping column,
-enables client-side re-sort by ping, and remembers interstitial opt-outs in
+**Prerender + SSR, not SPA.** This is a content + browse site next to a 3D game; it must be
+crawlable, instant on first paint, and cacheable at the edge. Astro **prerenders by default**
+(Astro 6 `static` mode): the marketing landing, `policy`, and the Starlight docs build to
+static HTML; the directory pages and every `/api/v1/*` endpoint opt into per-request SSR with
+`export const prerender = false`, running on the Worker. Auto-escaping `.astro` templates
+render full HTML per request — no client framework, no second bundle pipeline. Exactly one
+client island (~120 lines vanilla, loaded only where the table renders): measures per-server
+RTT against `/api/server-info` (CORS `*` already the game-side precedent), fills the Ping
+column, enables client-side re-sort by ping, and remembers interstitial opt-outs in
 `localStorage`. **Ping fan-out is strictly bounded**, because every measurement is a
 billed Worker request + billed DO request on the TARGET server's Cloudflare account
 (§2b, §11): only rows currently in the viewport are pinged (IntersectionObserver), ≤6
@@ -132,53 +156,61 @@ in flight, one measurement per server per browser session (memoized in
 `sessionStorage`), and pages past the first measure only on an explicit "measure ping"
 click. Never ping every listed server — 500 listings must not mean 500 cross-origin
 GETs per pageview. Filters and sorting are **query params rendered server-side** so
-every filtered view is a cacheable URL. A React SPA here would mean a second bundle
-pipeline, worse caching, and no benefit — rejected.
+every filtered view is a cacheable URL. A client-rendered SPA here would mean worse
+caching and no benefit — rejected.
 
-**Assets config:** `site/wrangler.jsonc` declares `assets: { directory: "./public" }`
-with **no `not_found_handling`** — unmatched requests (all the SSR routes) fall through
-to the worker. This avoids the SPA-navigation-swallowing gotcha documented for the game
-worker (codebase-server.md §1).
+**`apps/web/wrangler.jsonc` — no `main`, no `assets`, no cron.** On v13 the
+`@astrojs/cloudflare` adapter generates `main` (`dist/_worker.js/index.js`) and the `assets`
+binding over `./dist` itself, and writes the `.wrangler/deploy/config.json` redirect
+`wrangler deploy` auto-discovers — exactly like the game worker. A hand-set `main` is not
+just redundant: `@cloudflare/vite-plugin` validates it at config time, *before* `astro build`
+produces `dist/_worker.js`, and **errors the build** (doc 09 §5). So the file carries only
+name, compat, and the D1 binding. The cron lives in `apps/prober`, never here:
 
 ```jsonc
-// site/wrangler.jsonc
+// apps/web/wrangler.jsonc
 {
-  "name": "deadcoast-site",
-  "main": "src/index.tsx",
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "worldspring-web",
   "compatibility_date": "2026-06-01",
-  "assets": { "directory": "./public" },
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // NO `main`, NO `assets` — @astrojs/cloudflare v13 generates both.
   "d1_databases": [
-    { "binding": "DB", "database_name": "deadcoast-directory", "database_id": "<created at setup>" }
+    { "binding": "DB", "database_name": "worldspring-directory", "database_id": "<created at setup>" }
   ],
-  "triggers": { "crons": ["*/5 * * * *"] },
   "observability": { "enabled": true }
-  // secrets (wrangler secret put -c site/wrangler.jsonc): ADMIN_TOKEN, SESSION_SECRET
+  // secrets (wrangler secret put -c apps/web/wrangler.jsonc): ADMIN_TOKEN, SESSION_SECRET, REPORT_SALT
 }
 ```
 
-Root `package.json` gains `"deploy:site": "wrangler deploy -c site/wrangler.jsonc"`.
-The site does NOT touch the root build redirect, the root tsconfigs, or the game deploy.
+Deploys are workspace scripts, not a root `deploy:site`: `pnpm --filter @worldspring/web
+deploy` (= `astro build && wrangler deploy`) and `pnpm --filter @worldspring/prober deploy`.
+`apps/web` does not touch the game's build, tsconfigs, or deploy.
 
-**Imports from the game tree — one rule, stated once.** `site/` may import
-dependency-light (constants/types-only) modules from `src/shared/` via relative path
-(`../src/shared/...`), and NEVER from `src/server/` or `src/client/`. This is the same
-rule doc-03 already sets for `src/shared/serverInfo.ts` ("the `site/` worker imports
-via relative path — same repo"). Concretely the site imports: `PROTOCOL_VERSION`
-(`src/shared/protocol.ts` — its only import is `import type` from `./items`, erased at
-compile, so nothing transitive reaches the bundle), `GAME_VERSION`
-(`src/shared/version.ts`, new per doc-03 Open Q4), `ServerInfo`/`RulesSummary`
-(`src/shared/serverInfo.ts`), the `PRESETS` registry (`src/shared/config.ts`, doc-04),
-and `STRIP_TEXT_RE` (hoisted to `src/shared/text.ts` in M1 — §7). Mechanics: there are
-no npm workspaces (root `package.json` has none) and none are added — wrangler's
-esbuild happily bundles relative imports that reach outside `site/`, and
-`site/tsconfig.json` sets `"include": ["src", "../src/shared"]` with no `rootDir` so
-typechecking follows them. The site build stays free of the game's npm deps because
-every imported module is constants/types only — enforced by review in v1 (Open
-questions #6).
+**Bindings on v13 — `cloudflare:workers`, not `Astro.locals.runtime`.** Every SSR endpoint
+reads D1 via `import { env } from "cloudflare:workers"` (`env.DB`); the `Astro.locals.runtime`
+object an earlier sketch of this doc implied was **removed** in `@astrojs/cloudflare` v13 (the
+`cf` object now comes from `Astro.request.cf`, `ExecutionContext` from
+`Astro.locals.cfContext`). See §2/§4 for endpoint shapes and doc 09 §5 for the full API note.
 
-Doc-01's hosted deploy flow lives on this same worker (routes under `/host`); it shares
-`owners`, sessions, and `tokens.ts`. That integration is doc-01's spec; this doc only
-defines the registration call it makes (§5).
+**Importing the sim — the `@worldspring/shared` package boundary.** `apps/web` depends on
+the workspace package **`@worldspring/shared`** (`"@worldspring/shared": "workspace:*"`) and
+imports its dependency-light (constants/types-only) modules by package subpath, NEVER from
+`@worldspring/game`'s client or server tree. Concretely it imports: `PROTOCOL_VERSION`
+(`@worldspring/shared/protocol` — its only import is an erased `import type` from `./items`,
+so nothing transitive reaches the bundle), `GAME_VERSION` (`@worldspring/shared/version`, new
+per doc-03 Open Q4), `ServerInfo`/`RulesSummary` (`@worldspring/shared/serverInfo`), the
+`PRESETS` registry (`@worldspring/shared/config`, doc-04), and `STRIP_TEXT_RE` (hoisted to
+`@worldspring/shared/text` in M1 — §7). The old "constants/types-only, via a relative
+`../src/shared/...` path" rule is now enforced **mechanically as a package boundary** —
+`apps/web` simply does not depend on any game package, so a heavy game-side import cannot leak
+in (this retires Open question #6's review-only stance; doc 09 §5). `@worldspring/shared`
+ships raw `.ts` with no build, so add it to `vite.ssr.noExternal` in `astro.config.mjs` and
+Astro's SSR build bundles the workspace source instead of trying to externalize it (doc 09 §5).
+
+Doc-01's hosted deploy flow lives on this same `apps/web` worker (routes under `/host`); it
+shares `owners`, sessions, and `lib/tokens.ts`. That integration is doc-01's spec; this doc
+only defines the registration call it makes (§5).
 
 ### 2. Shared contracts with the game worker
 
@@ -186,7 +218,7 @@ Three additions to the game repo (coordinate with doc-03, which owns the
 `ServerInfo`/heartbeat contract, and doc-04, which owns `ServerConfig`/`PRESETS`):
 
 **(a) `PROTOCOL_VERSION`** — `export const PROTOCOL_VERSION = 1;` in
-`src/shared/protocol.ts`, bumped on any wire-protocol or sim-determinism break. Carried
+`packages/shared/src/protocol.ts`, bumped on any wire-protocol or sim-determinism break. Carried
 in `welcome` (additive field), `/api/server-info`, and heartbeats. The directory compares
 it against the latest release.
 
@@ -213,7 +245,7 @@ constants.ts:176) and would inflate directory counts after every disconnect. Rou
 added to the worker if-chain (worker.ts:16-19) and the DO fetch.
 
 ```ts
-// The shared type is doc-03's ServerInfo (src/shared/serverInfo.ts) — doc-03
+// The shared type is doc-03's ServerInfo (packages/shared/src/serverInfo.ts) — doc-03
 // owns this contract; an earlier sketch here with its own field names
 // (protocol/version/playersMax/uptime/preset) is superseded. The directory
 // consumes doc-03's fields: schemaVersion, gameVersion, protocolVersion,
@@ -226,7 +258,7 @@ added to the worker if-chain (worker.ts:16-19) and the DO fetch.
 //
 // Probe validation keys on doc-03's shape (schemaVersion a number, required
 // fields present), not on a `game` discriminator — the earlier sketch's
-// `game: "deadcoast"` field does not exist in the canonical type.
+// `game: "worldspring"` field does not exist in the canonical type.
 ```
 
 `colo`: obtained once per DO boot via `fetch("https://cloudflare.com/cdn-cgi/trace")`
@@ -237,13 +269,13 @@ field is nullable so the directory tolerates absence. Region display falls back 
 client-measured ping when null.
 
 **(c) Heartbeat sender** — two optional env additions to the game worker
-(`Env` regenerated via `npm run cf-typegen`): `DIRECTORY_URL?: string` (var, defaults
-unset; the doc-01 flow and docs set `https://deadcoast-site.<sub>.workers.dev`) and
+(`Env` regenerated via `pnpm --filter @worldspring/game cf-typegen`): `DIRECTORY_URL?: string` (var, defaults
+unset; the doc-01 flow and docs set `https://worldspring-web.<sub>.workers.dev`) and
 `DIRECTORY_TOKEN?: string` (secret). When both are set, the tick sends beats per
 **doc-03 §6's sender protocol, which owns cadence, events, and body shape**: `boot` on
 idle→occupied, debounced `edge` beats on player-count change, `periodic` every
 `HEARTBEAT_INTERVAL_S = 60` ±`HEARTBEAT_JITTER_S = 10` jitter, and a final `quiet` beat
-when the room goes idle (constants in `src/shared/constants.ts`, doc-03 §5 — an earlier
+when the room goes idle (constants in `packages/shared/src/constants.ts`, doc-03 §5 — an earlier
 draft's single `DIRECTORY_HEARTBEAT_S` modulo cadence is superseded).
 Fire-and-forget from the tick: `void fetch(...).catch(log)` — never awaited, never
 throws into the tick, an unreachable directory must not affect gameplay. Outbound
@@ -251,7 +283,7 @@ fetches from the DO are unbilled subrequests (cf-costs.md §1). Idle rooms (no t
 nothing — by design; probes cover idle servers (§6).
 
 ```ts
-// Doc-03 §6 owns this shape (src/shared/serverInfo.ts). Auth is the full
+// Doc-03 §6 owns this shape (packages/shared/src/serverInfo.ts). Auth is the full
 // server token in an `Authorization: Bearer dcd1.<serverId>.<secretHex>`
 // header — never in the body (an earlier flat body sketch here is superseded).
 type HeartbeatEvent = "boot" | "edge" | "periodic" | "quiet";
@@ -274,7 +306,7 @@ persists is **two hashes, both computed by `tokens.ts` at mint time**:
 
 - `token_hash = sha256hex(secretHex)` — compared against the token presented in
   heartbeats and owner DELETEs.
-- `challenge_hash = sha256hex("deadcoast-directory-challenge:" + token)` — the value
+- `challenge_hash = sha256hex("worldspring-directory-challenge:" + token)` — the value
   verification probes expect back from `/api/server-info.directoryChallenge`. This MUST
   be precomputed and stored at mint: once the token is returned to the owner and
   discarded, the directory can never derive the challenge from `token_hash` — that is
@@ -306,7 +338,7 @@ CREATE TABLE servers (
   id          TEXT PRIMARY KEY,            -- ulid; public handle, also in the token
   url         TEXT NOT NULL UNIQUE,        -- normalized https origin, no path/port
   token_hash  TEXT NOT NULL,               -- sha256(secretHex); heartbeat/DELETE auth
-  challenge_hash TEXT NOT NULL,            -- sha256("deadcoast-directory-challenge:" + token),
+  challenge_hash TEXT NOT NULL,            -- sha256("worldspring-directory-challenge:" + token),
                                            -- precomputed at mint (§2) — underivable later
   owner_id    TEXT REFERENCES owners(id),  -- NULL = token-only registration
   source      TEXT NOT NULL CHECK (source IN ('deploy','manual','official')),
@@ -395,10 +427,10 @@ Reports need no ledger — every report already inserts a `reports` row keyed by
 `unsafe` config namespace (re-verify at implementation if that changed); two D1 ops per
 attempt at these volumes is nothing.
 
-"Latest release" is NOT a table: `site/` imports `PROTOCOL_VERSION`
-(`src/shared/protocol.ts`) and `GAME_VERSION` (`src/shared/version.ts`) at build time
-under the §1 import rule. Releasing the game = redeploy the site too (one npm script,
-documented). A `releases` table is deferred until release cadence makes build-time
+"Latest release" is NOT a table: `apps/web` imports `PROTOCOL_VERSION`
+(`@worldspring/shared/protocol`) and `GAME_VERSION` (`@worldspring/shared/version`) at build
+time under the §1 import rule. Releasing the game = redeploy `apps/web` too (one
+`pnpm --filter @worldspring/web deploy`, documented). A `releases` table is deferred until release cadence makes build-time
 import painful.
 
 ### 4. HTTP API (site worker)
@@ -470,14 +502,17 @@ and shows real uptime. Pinning is presentation-only.
 
 ### 6. Liveness: probes first, heartbeats for freshness
 
-The serverless twist (this is where DEADCOAST differs from every studied directory): an
+The serverless twist (this is where Worldspring differs from every studied directory): an
 idle workers.dev game server has zero sockets, no tick, sends no heartbeats — and is
 still perfectly joinable; the platform cold-starts the DO on the next `/ws`. So
 **absence of heartbeats means "empty", never "offline"**. Truth about reachability comes
 from directory-side probes (the prior-art synthesis: heartbeats = identity, probes =
 truth, policy = backstop).
 
-**Cron prober** (`scheduled()`, every 5 min — terraria-servers cadence):
+**Cron prober — the standalone `apps/prober` Worker** (`scheduled()` handler,
+`triggers.crons: ["*/5 * * * *"]`, every 5 min — terraria-servers cadence; it binds the SAME
+D1 as `apps/web` and runs no migrations, only reading `servers` and writing
+`probes`/`servers`/`stats_hourly`):
 
 - Probes `live` and `pending` servers' `/api/server-info` **on doc-03 §7's schedule
   (binding)**, with the 5-min cron as the scheduler granularity: occupied servers
@@ -487,8 +522,15 @@ truth, policy = backstop).
   accepted beat (not just `boot`; doc-03's fallback can resume with an `edge`) ends the
   suspension; `unreachable` servers back off to every 60 min. Probes are unbilled
   subrequests; on the free plan they cap
-  at 50/invocation, paid 10,000 (cf-costs.md §5) — run the official directory on Workers
-  Paid ($5) and batch with `Promise.allSettled` in chunks of 20.
+  at 50/invocation, paid 10,000 (cf-costs.md §5) — run the directory account on Workers
+  Paid ($5). **Concurrency model (doc 09 §6, corrected):** every `fetch` AND every D1 op
+  counts against the **50-subrequest/invocation cap**, and at most **6 outgoing connections**
+  are open per invocation — so cap the due-set `SELECT` to ~45 servers/invocation
+  (`ORDER BY last_probe_at ASC`, draining the backlog round-robin across runs), probe with a
+  **worker pool of 6** (NOT "chunks of 20" — 20 concurrent fetches can still only open 6
+  connections, and uncancelled bodies pin them; call `res.body?.cancel()` on every non-2xx),
+  and fold ALL writeback into ONE `db.batch([...])` (a single atomic subrequest), never
+  per-server `UPDATE`s (which blow the cap at ~16 servers).
 - Per probe, on success: append `probes` row (ok, rtt, players), reset
   `consecutive_failures`, overwrite `players`/`players_max`/`version`/`protocol`/
   `preset`/`name`/`motd`/`colo` from the response (sanitized again, §7), and re-check
@@ -530,19 +572,19 @@ breached outright at roughly **85–115 listed servers**, not merely "uncomforta
 
 ### 7. Trust & abuse model
 
-**Sanitization (site-side twin of the game's).** Never trust server-supplied text —
-servers are open source and freely modifiable. `site/src/sanitize.ts`:
+**Sanitization (the directory's twin of the game's).** Never trust server-supplied text —
+servers are open source and freely modifiable. `apps/web/src/lib/sanitize.ts`:
 
-M1 hoists `STRIP_TEXT_RE` from `src/server/systems/players.ts:41-44` (today it lives
+M1 hoists `STRIP_TEXT_RE` from `apps/game/src/server/systems/players.ts:41-44` (today it lives
 inside the game-state-coupled server tree) to a new dependency-free
-`src/shared/text.ts`; `players.ts` imports it from there — a pure move, zero behavior
+`packages/shared/src/text.ts`; `players.ts` imports it from there — a pure move, zero behavior
 change. The site then imports the one true regex under the §1 rule instead of keeping
 a copy-sync hazard:
 
 ```ts
-// STRIP_TEXT_RE is imported from src/shared/text.ts (hoisted there in M1; importing
-// src/server/systems/players.ts directly stays forbidden — it drags game-state types).
-import { STRIP_TEXT_RE } from "../../src/shared/text";
+// STRIP_TEXT_RE comes from @worldspring/shared/text (hoisted there in M1; importing from
+// @worldspring/game's server tree stays forbidden — it drags game-state types).
+import { STRIP_TEXT_RE } from "@worldspring/shared/text";
 
 export const SERVER_NAME_MAX = 48;   // code points
 export const SERVER_MOTD_MAX = 140;
@@ -558,7 +600,8 @@ export function sanitizeListingText(raw: string, maxCodePoints: number): string 
 ```
 
 Applied on every write path (registration, heartbeat, probe refresh). Rendering is
-`hono/jsx`, which escapes by default — no `dangerouslySetInnerHTML` equivalents, no
+Astro `.astro` templates, which auto-escape `{expr}` interpolations by default — no
+`set:html` equivalents, no
 HTML/markdown in MOTD, no favicons/images in v1 (image hosting is its own abuse
 surface; presets get built-in icons instead).
 
@@ -593,8 +636,8 @@ What v1 does:
 **What the directory vouches for — and what it does not.** This goes on `/policy` and
 under every Join button, because it is the honest core of the whole feature:
 
-> Listed servers are community-run copies of DEADCOAST at their own web addresses. We
-> verify that the owner controls the address and that it answers as a DEADCOAST server.
+> Listed servers are community-run copies of Worldspring at their own web addresses. We
+> verify that the owner controls the address and that it answers as a Worldspring server.
 > **We do not review or control the code it runs** — it may be modified, and its
 > version of the game (including its login screen and everything you type there) is
 > served by that operator, not by us.
@@ -668,7 +711,7 @@ button to link straight out).
 Interstitial content: server name, the literal destination host in large type, age +
 uptime %, the vouch/no-vouch paragraph (§7), and:
 
-- **Continue** — `<a rel="noopener noreferrer" href="https://<host>/?ref=deadcoast-directory[&name=<urlencoded>]">`.
+- **Continue** — `<a rel="noopener noreferrer" href="https://<host>/?ref=worldspring-directory[&name=<urlencoded>]">`.
 - Optional name field (prefilled from the site's own `localStorage["dcd_name"]`):
   appends `?name=`. Requires a small game-client change — the menu prefills its name
   input from `location.search` `name` param (sanitized client-side; the server re-runs
@@ -688,7 +731,7 @@ breaks a join** — a v3 server with a v3 client is self-consistent. Skew matter
 information: the directory (built from this repo) knows the latest `GAME_VERSION` +
 `PROTOCOL_VERSION` at its own build time and renders an "outdated" badge + score
 penalty for `protocol < latest`. The badge tooltip: "runs an older version of
-DEADCOAST — content and fixes may be missing." A hard version gate (Factorio precedent)
+Worldspring — content and fixes may be missing." A hard version gate (Factorio precedent)
 only becomes relevant with the first-party join path, where the official client would
 refuse `welcome.proto !== PROTOCOL_VERSION` (doc-03 §1's field name); `welcome` carries `proto` from M1 so
 that gate is already plumbed when the tier arrives.
@@ -740,23 +783,24 @@ that gate is already plumbed when the tier arrives.
 
 **Complicates**
 
-- Two deploy targets in one repo: releasing the game now implies redeploying the site
-  (build-time `latest` constants) — one extra npm script, but a real cadence coupling.
+- Three deploy targets in the monorepo (`apps/game`, `apps/web`, `apps/prober`): releasing
+  the game now implies redeploying `apps/web` (build-time `latest` constants) — one extra
+  `pnpm --filter @worldspring/web deploy`, but a real cadence coupling.
 - The game worker gains its first env vars/secrets (`DIRECTORY_URL`, `DIRECTORY_TOKEN`)
   — `Env` typegen, README, and doc-01's metadata templates all need them.
 - Heartbeat sender adds outbound I/O to the tick path; it is fire-and-forget, but it is
   the first non-game side effect inside `timedTick` and must stay exception-proof.
-- `site/` imports constants/types-only modules from `src/shared/` (§1 rule), so the
-  site build is coupled to the game tree: a game-side refactor that drags a heavy
-  runtime import into `protocol.ts`/`text.ts`/`version.ts`/`config.ts` breaks or bloats
-  the site build. Cheap to police, but real — review-enforced in v1 (see Open
-  questions #6).
+- `apps/web` depends on `@worldspring/shared` (§1 rule), so its build is coupled to the
+  shared sim: a refactor that drags a heavy runtime import into
+  `protocol.ts`/`text.ts`/`version.ts`/`config.ts` would bloat the `apps/web` SSR bundle.
+  Now a mechanical package boundary (`apps/web` depends on no game package), not a
+  review-only convention — see Open questions #6.
 
 **Breaks**
 
 - Nothing existing in code. All game-side changes are additive (new route, new optional
   envs, new `welcome` field old clients ignore, new shared constants; the
-  `STRIP_TEXT_RE` hoist to `src/shared/text.ts` is a pure move). No `SCHEMA_VERSION`
+  `STRIP_TEXT_RE` hoist to `packages/shared/src/text.ts` is a pure move). No `SCHEMA_VERSION`
   bump, no worldgen impact, no rng-stream changes. One honest qualifier: LISTING a
   server is not cost-neutral for its owner — probes and visitor pings consume the
   listed server's own Worker/DO request quotas (§11) — so "additive" describes the
@@ -766,7 +810,7 @@ that gate is already plumbed when the tier arrives.
 
 - **Reputation laundering**: our domain ranks listings we cannot code-review. The
   interstitial + policy language is mitigation, not elimination — one phishing incident
-  on a listed server lands on deadcoast's name. The malware-phishing report category and
+  on a listed server lands on Worldspring's name. The malware-phishing report category and
   fast admin delisting are the response path; accept this risk consciously or don't
   ship a directory.
 - **Count-faking arms race**: v1's capped ranking removes most incentive but a lying
@@ -792,7 +836,7 @@ that gate is already plumbed when the tier arrives.
   next regular deploy; gets listed when Adam sets its `DIRECTORY_TOKEN`.
 - **Community servers deployed before M1**: cannot register — verification requires
   `/api/server-info` with the challenge field. The `/register` page detects this
-  (probe returns 426/404) and says "update your server: git pull && npm run deploy".
+  (probe returns 426/404) and says "update your server: git pull && pnpm --filter @worldspring/game deploy".
   Acceptable: today there are approximately zero community deploys.
 - **Token/secret rotation**: rotating `DIRECTORY_TOKEN` on a server breaks the challenge
   → probes fail with `challenge-mismatch` → `unreachable` → owner re-registers. Crude
@@ -810,27 +854,30 @@ overlaps doc-03's M1–M3 (version gate, `/api/server-info`, heartbeat sender), 
 spec is canonical — implement once, against it.
 
 1. **M1 — Game-side contracts** *(Opus 4.8 — protocol + tick-path changes)*.
-   Add `PROTOCOL_VERSION = 1` to `src/shared/protocol.ts` and the `ServerInfo` type per
-   doc-03 (`src/shared/serverInfo.ts`; `GAME_VERSION` in `src/shared/version.ts`);
-   hoist `STRIP_TEXT_RE` from `src/server/systems/players.ts:41-44` to a new
-   dependency-free `src/shared/text.ts` (pure move; `players.ts` imports it from
+   Add `PROTOCOL_VERSION = 1` to `packages/shared/src/protocol.ts` and the `ServerInfo` type per
+   doc-03 (`packages/shared/src/serverInfo.ts`; `GAME_VERSION` in `packages/shared/src/version.ts`);
+   hoist `STRIP_TEXT_RE` from `apps/game/src/server/systems/players.ts:41-44` to a new
+   dependency-free `packages/shared/src/text.ts` (pure move; `players.ts` imports it from
    there); `proto` field in `join`/`welcome` (doc-03 §1's two-sided gate); doc-03 §5's
    heartbeat constants (`HEARTBEAT_INTERVAL_S` etc.) in
-   `src/shared/constants.ts`;
-   `/api/server-info` route in `src/server/worker.ts` + `GameRoom.fetch` (never wakes
+   `packages/shared/src/constants.ts`;
+   `/api/server-info` route in `apps/game/src/server/worker.ts` + `GameRoom.fetch` (never wakes
    sim, CORS `*`, challenge hash cached, colo via cdn-cgi/trace with null fallback —
    verify the colo trick on a real deploy, it is UNCONFIRMED); heartbeat sender in the
    tick (fire-and-forget, only when `DIRECTORY_URL` + `DIRECTORY_TOKEN` set); `Env`
-   typegen. Acceptance: `npm run typecheck` green; local `curl /api/server-info`
+   typegen. Acceptance: `pnpm --filter @worldspring/game typecheck` green; local `curl /api/server-info`
    returns the documented shape idle AND with a connected client; loadtest
    (`apps/game/scripts/loadtest.mjs`) unchanged-green; tick EMA unchanged with heartbeats enabled
    against a mock directory.
-2. **M2 — Site scaffold** *(Sonnet 4.8)*. `site/` per §1: wrangler.jsonc, package.json
-   (hono pinned), tsconfig (strict, hono/jsx), D1 migrations for the §3 schema,
-   `sanitize.ts` + unit tests (zero-width/bidi/surrogate cases mirrored from the game's
-   precedent), layout shell + static landing page, `deploy:site` root script.
-   Acceptance: `wrangler dev -c site/wrangler.jsonc` serves `/`; migrations apply
-   clean; sanitize tests pass.
+2. **M2 — `apps/web` scaffold** *(Sonnet 4.8)*. `apps/web` per §1: `astro.config.mjs`
+   (cloudflare adapter + starlight, `vite.ssr.noExternal: ["@worldspring/shared"]`),
+   `wrangler.jsonc` (no main/assets, D1 `DB`, no cron), `content.config.ts` (Content Layer),
+   `package.json` (astro + @astrojs/cloudflare + @astrojs/starlight + `@worldspring/shared`),
+   D1 migrations for the §3 schema, `src/lib/sanitize.ts` + unit tests
+   (zero-width/bidi/surrogate cases mirrored from the game's precedent), a prerendered
+   landing, `deploy:web` workspace script.
+   Acceptance: `pnpm --filter @worldspring/web dev` serves `/`; `astro build` emits
+   `dist/_worker.js/index.js`; migrations apply clean; sanitize tests pass.
 3. **M3 — Registration, verification, heartbeat ingest** *(Opus 4.8 — this is the trust
    boundary)*. `tokens.ts` (mint/parse; computes BOTH `token_hash` and `challenge_hash`
    at mint time — §2, the challenge is underivable later), `probe.ts` (SSRF guard per
@@ -855,7 +902,7 @@ spec is canonical — implement once, against it.
    local servers.
 6. **M6 — Join flow** *(Sonnet 4.8)*. `/join/:id` interstitial, don't-warn-again,
    `?ref`/`?name` pass-through, game-client menu prefill from `?name=` (small change in
-   `src/client/ui`, name still re-sanitized server-side). Acceptance: interstitial
+   `apps/game/src/client/ui`, name still re-sanitized server-side). Acceptance: interstitial
    wording matches §7 verbatim-or-better; name survives the hop into the join message;
    no token or other storage crosses origins.
 7. **M7 — Reports + moderation** *(Sonnet 4.8)*. Report endpoint + form, ip_hash rate
@@ -866,7 +913,7 @@ spec is canonical — implement once, against it.
 8. **M8 — Launch wiring** *(Sonnet 4.8; depends on doc-01 for the auto-registration
    hook)*. Register the official instance (`source='official'`), expose the §5
    registration call for doc-01's deploy flow, README + in-repo hosting docs (include
-   cf-costs.md's player-hours language), deploy `deadcoast-site`, post-deploy smoke
+   cf-costs.md's player-hours language), deploy `worldspring-web`, post-deploy smoke
    script (register→verify→heartbeat→list against production). Acceptance: official
    server visible and pinned on the live landing page with real uptime after 24 h.
 
@@ -877,7 +924,7 @@ spec is canonical — implement once, against it.
    and the 50-subrequest cron cap binds at 50. **Recommendation: yes, $5/mo from
    day one** — it also removes the probe-batching constraint.
 2. **Custom domain now or later?** The directory works fine on
-   `deadcoast-site.<sub>.workers.dev`, but cf-oauth.md found public OAuth-client
+   `worldspring-web.<sub>.workers.dev`, but cf-oauth.md found public OAuth-client
    visibility (needed for doc-01's "any Cloudflare user" login) hard-requires a
    TXT-verifiable custom domain, and a directory that ranks community servers should
    not itself live on a workers.dev subdomain forever. **Recommendation: buy the domain
@@ -896,15 +943,16 @@ spec is canonical — implement once, against it.
    public-visibility OAuth is blocked on Q2's domain anyway. **Recommendation: allow
    token-only at launch (Luanti's openness + our probe gate); add optional OAuth
    attachment when doc-01's login lands.**
-6. **How hard to police the `src/shared/` import boundary?** The §1 rule (site imports
-   constants/types-only modules from `src/shared/`, never `src/server/`/`src/client/`)
-   is review-enforced in v1; an ESLint `no-restricted-imports` rule or a tsconfig
-   project reference would make it mechanical. **Recommendation: review-only for v1;
-   add lint enforcement the first time someone breaks it.** (An earlier draft instead
-   kept a verbatim `STRIP_TEXT_RE` copy to avoid importing from `src/` at all — that
-   contradicted the build-time `PROTOCOL_VERSION`/`PRESETS` imports §3/§8 already
-   required and doc-03's shared `serverInfo.ts`; superseded by the M1 hoist to
-   `src/shared/text.ts`.)
+6. **Policing the shared-import boundary — now a package boundary (largely resolved).** The
+   §1 rule (the directory imports constants/types-only modules from `@worldspring/shared`,
+   never from a game package) is enforced **mechanically by the monorepo**: `apps/web` lists
+   only `@worldspring/shared` as a workspace dep, so a game-side import won't resolve. This
+   **retires the original v1 review-only stance** (doc 09 §5). Optional belt-and-suspenders:
+   a lint `no-restricted-imports` guard on the `@worldspring/shared` subpaths that must stay
+   constants/types-only (`protocol`, `text`, `version`, `config`). (An earlier draft instead
+   kept a verbatim `STRIP_TEXT_RE` copy to avoid importing from the game at all — that
+   contradicted the build-time `PROTOCOL_VERSION`/`PRESETS` imports §3/§8 already required and
+   doc-03's shared `serverInfo`; superseded by the M1 hoist to `@worldspring/shared/text`.)
 7. **Name pass-through privacy stance**: `?name=` leaks the chosen display name to the
    destination server in the URL (referrer-adjacent). It is opt-in per join and the
    name is about to be typed there anyway. **Recommendation: keep it, opt-in field on

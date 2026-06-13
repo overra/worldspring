@@ -688,7 +688,8 @@ import starlight from '@astrojs/starlight';
 export default defineConfig({
   site: 'https://worldspring-web.<sub>.workers.dev', // or custom domain
   adapter: cloudflare({
-    platformProxy: { enabled: true }, // local D1 in `astro dev`
+    // v13 wires local bindings (D1, etc.) for `astro dev` automatically via
+    // @cloudflare/vite-plugin — there is NO `platformProxy` option (that was v12).
     imageService: 'compile',          // build-time transforms; avoids an Images binding
   }),
   integrations: [
@@ -757,17 +758,22 @@ client/server package — retiring doc 02 Open-Q6's review-only stance. Add
 monorepo safeguard so Astro's SSR build bundles the workspace source instead of
 externalizing it.
 
-`apps/web/wrangler.jsonc` (v13 adapter entrypoint shape — the adapter emits
-`dist/_worker.js/index.js` and binds `ASSETS` over `./dist`):
+`apps/web/wrangler.jsonc` — **do NOT set `main` or `assets`**. On v13 the adapter
+generates both itself: it wires `@cloudflare/vite-plugin`, which emits
+`dist/_worker.js/index.js` and binds the assets over `./dist`, and writes the deploy
+redirect (`.wrangler/deploy/config.json`) that `wrangler deploy` auto-discovers — exactly
+like `apps/game`. Worse than redundant, a hand-set `main` **breaks the build**:
+`@cloudflare/vite-plugin` validates the `main` path at config time, *before* `astro build`
+has produced `dist/_worker.js`, so it errors out. The file carries only name, compat, and
+bindings:
 
 ```jsonc
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "worldspring-web",
-  "main": "dist/_worker.js/index.js",
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  "assets": { "binding": "ASSETS", "directory": "./dist" },
+  // NO `main`, NO `assets` — @astrojs/cloudflare v13 generates both (see above).
   "d1_databases": [
     { "binding": "DB", "database_name": "worldspring-directory", "database_id": "<created at setup>" }
   ],
@@ -933,7 +939,8 @@ reset is unrecoverable); **Sonnet 4.8** for mechanical moves and scaffolds.
    set + endpoints are doc 02/03/04 scope — this milestone proves the shell deploys.)
    **Accept:** `pnpm --filter @worldspring/web build` emits `dist/_worker.js/index.js` +
    the docs routes (Content Layer wired); `astro check` green; `pnpm --filter
-   @worldspring/web exec wrangler deploy --dry-run` resolves `main` + D1; landing prerenders
+   @worldspring/web exec wrangler deploy --dry-run` resolves the adapter-generated worker
+   entry + D1 (no hand-set `main`); landing prerenders
    and `/docs/*` resolves without colliding with `/`; the one SSR endpoint reads D1 via
    `cloudflare:workers` (not `Astro.locals.runtime`).
 

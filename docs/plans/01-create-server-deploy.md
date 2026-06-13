@@ -1,8 +1,8 @@
-# Create Your Server: one-click DEADCOAST deploys into the user's own Cloudflare account
+# Create Your Server: one-click Worldspring deploys into the user's own Cloudflare account
 
 ## Summary
 
-A visitor on the official DEADCOAST site clicks **Create Server**, signs in with Cloudflare
+A visitor on the official Worldspring site clicks **Create Server**, signs in with Cloudflare
 (self-managed OAuth, confidential client owned by us), picks a preset + server name, and the
 site Worker deploys a prebuilt copy of the official game — Worker bundle, 4.8 MB of client
 assets, the `GameRoom` DO with its `new_sqlite_classes` migration, a `GAME_CONFIG` var, and
@@ -38,7 +38,7 @@ Decisions, up front:
 
 Hard prerequisite flagged early: **public OAuth client visibility requires DNS TXT
 verification of the client URL's domain — workers.dev cannot be verified**
-(research/cf-oauth.md §6, §8). DEADCOAST needs a custom domain before strangers can use this
+(research/cf-oauth.md §6, §8). Worldspring needs a custom domain before strangers can use this
 flow. Everything below can be built and tested today under private visibility on Adam's
 account.
 
@@ -69,7 +69,7 @@ account.
 
 Verified against this worktree:
 
-- **The game worker is fully self-contained and parameter-free.** `src/server/worker.ts:6-22`
+- **The game worker is fully self-contained and parameter-free.** `apps/game/src/server/worker.ts:6-22`
   routes `/ws`, `/api/leaderboard`, `/api/health` to `env.GAME.getByName("main")` and 404s
   everything else. The only binding is `GAME: DurableObjectNamespace<GameRoom>`
   (`worker-configuration.d.ts:5`). Zero vars, zero secrets.
@@ -80,26 +80,26 @@ Verified against this worktree:
   emits `dist/survival_game/index.js` (34 KB gzip) + generated `wrangler.json` +
   `dist/client/**` (60 files, 4.8 MB) and a `.wrangler/deploy/config.json` redirect
   (research/cf-deploy.md §0, verified against the main checkout's build output).
-- **Seed flow**: `WORLD_SEED = 1337` (`src/shared/constants.ts:4`) is consumed server-side in
-  exactly two places — `ensureGame()` (`src/server/GameRoom.ts:354`,
+- **Seed flow**: `WORLD_SEED = 1337` (`packages/shared/src/constants.ts:4`) is consumed server-side in
+  exactly two places — `ensureGame()` (`apps/game/src/server/GameRoom.ts:354`,
   `createWorld(WORLD_SEED)`) and the wipe-on-mismatch check in `initSchema`
-  (`src/server/persistence.ts:109-117`). The client builds its world from the welcome
+  (`apps/game/src/server/persistence.ts:109-117`). The client builds its world from the welcome
   message, not a local constant: `createWorld(msg.seed)` at
-  `src/client/net/connection.ts:260`; the `welcome` shape carries `seed` at
-  `src/shared/protocol.ts:194-206`. This is why per-server config is cheap: the server is
+  `apps/game/src/client/net/connection.ts:260`; the `welcome` shape carries `seed` at
+  `packages/shared/src/protocol.ts:194-206`. This is why per-server config is cheap: the server is
   the only place deploy-time vars need to land.
 - **Wipe semantics**: `schema_version` or `world_seed` mismatch wipes `characters` +
-  `world_state` + `meta` but keeps the leaderboard (`src/server/persistence.ts:107-117`).
+  `world_state` + `meta` but keeps the leaderboard (`apps/game/src/server/persistence.ts:107-117`).
   This is the sanctioned path for breaking releases and directly shapes the update UX.
 - **No site exists.** There is no `site/` directory, no `.github/` workflows, no version
-  constant, no `PROTOCOL_VERSION` in `src/shared/protocol.ts`, and **no `/api/server-info`
+  constant, no `PROTOCOL_VERSION` in `packages/shared/src/protocol.ts`, and **no `/api/server-info`
   route** — `grep -rn "server-info\|GAME_VERSION\|PROTOCOL_VERSION" src/ scripts/` returns
   nothing today. All three are designed (not yet implemented) in
   `docs/plans/03-server-info-contract.md`: its M1 creates `GAME_VERSION`
-  (`src/shared/version.ts`) and `PROTOCOL_VERSION`; its M2 adds the route. This doc's
+  (`packages/shared/src/version.ts`) and `PROTOCOL_VERSION`; its M2 adds the route. This doc's
   verify step depends on them — the §3 release gate makes that dependency mechanical.
 - **Companion-doc map** — this doc's "doc 02"/"doc 03" shorthand predates the final file
-  numbering: "doc 02" (`ServerConfig`/`PRESETS`, `src/shared/config.ts`) =
+  numbering: "doc 02" (`ServerConfig`/`PRESETS`, `packages/shared/src/config.ts`) =
   `docs/plans/04-gameplay-presets.md`; "doc 03" (directory tables, heartbeats, delisting)
   = `docs/plans/02-server-directory.md`; the `/api/server-info` + version-constants
   contract both lean on = `docs/plans/03-server-info-contract.md`.
@@ -117,7 +117,7 @@ Verified against this worktree:
 ```
 repo root            — game worker (unchanged deploy story, gains optional env bindings)
 site/                — NEW second Worker: official site + directory + create-server flow
-  wrangler.jsonc     — name "deadcoast-site", custom domain route, bindings:
+  wrangler.jsonc     — name "worldspring-web", custom domain route, bindings:
                        D1 (site/directory DB, shared with doc 03), R2 (release artifacts),
                        DEPLOYER (DO), secrets: OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY
   package.json       — own toolchain (site is a small SSR/static Worker, not part of the
@@ -143,7 +143,7 @@ for a server-side Worker:
 
 ```json
 {
-  "client_name": "DEADCOAST",
+  "client_name": "Worldspring",
   "logo_uri": "https://<site-domain>/icon-512.png",
   "client_uri": "https://<site-domain>",
   "redirect_uris": ["https://<site-domain>/oauth/callback"],
@@ -207,9 +207,9 @@ GitHub Actions workflow `.github/workflows/release.yml`, triggered on tag `v*` a
        "version": "0.4.0",
        "commit": "<sha>",
        "builtAt": "2026-06-11T00:00:00Z",
-       "schemaVersion": 2,            // from src/server/persistence.ts SCHEMA_VERSION
+       "schemaVersion": 2,            // from apps/game/src/server/persistence.ts SCHEMA_VERSION
        "wipesWorld": false,           // set true when schemaVersion bumped vs previous release
-       "protocolVersion": 1,          // PROTOCOL_VERSION from src/shared/protocol.ts —
+       "protocolVersion": 1,          // PROTOCOL_VERSION from packages/shared/src/protocol.ts —
                                       // created by 03-server-info-contract.md M1; the
                                       // release gate below guarantees it exists
        "worker": { "path": "index.js", "sha256": "…", "bytes": 126976 },
@@ -240,12 +240,12 @@ GitHub Actions workflow `.github/workflows/release.yml`, triggered on tag `v*` a
      artifact without the endpoint cannot exist in R2, so the deployer needs no fallback
      verification path. The dependency fails loudly at build time, not as a 90-second
      verify timeout at deploy time.
-3. Upload to R2 bucket `deadcoast-releases` (CI-scoped API token, write-only to that
+3. Upload to R2 bucket `worldspring-releases` (CI-scoped API token, write-only to that
    bucket): `releases/v0.4.0/meta.json`, `releases/v0.4.0/index.js`,
    `releases/v0.4.0/assets/<hash>` (raw bytes, one object per unique asset), and overwrite
    `releases/latest.json` → `{ "version": "0.4.0" }`.
 4. Mirror the same files as a GitHub Release (transparency + CLI users + disaster recovery).
-5. Inject `GAME_VERSION` at build: the workflow overwrites `src/shared/version.ts` —
+5. Inject `GAME_VERSION` at build: the workflow overwrites `packages/shared/src/version.ts` —
    the file itself is created by 03-server-info-contract.md M1 with a hand-maintained
    default — with `export const GAME_VERSION = "0.4.0";` from the tag before building, so
    `/api/server-info` and directory heartbeats report the release version. Local/dev
@@ -262,11 +262,11 @@ UI sequence on `https://<site-domain>/create`:
 1. **Sign in with Cloudflare** (§2). Returning users with a live session skip to 2.
 2. **Pick account** (only if multiple granted).
 3. **Name + preset + cost panel**:
-   - Server name → script name `deadcoast-<slug>` (lowercased, `[a-z0-9-]`, ≤63 chars
+   - Server name → script name `worldspring-<slug>` (lowercased, `[a-z0-9-]`, ≤63 chars
      total, no leading/trailing dash — workers.dev constraints,
-     research/cf-deploy.md §2.5). The `deadcoast-` prefix is mandatory: it is the clobber
+     research/cf-deploy.md §2.5). The `worldspring-` prefix is mandatory: it is the clobber
      guard (§5 step 3) and makes created workers self-identifying in the user's dashboard.
-   - Preset: a named entry from the `PRESETS` registry in `src/shared/config.ts` (doc 02
+   - Preset: a named entry from the `PRESETS` registry in `packages/shared/src/config.ts` (doc 02
      owns the registry). The flow serializes the **`{preset, overrides?}` payload — doc
      02's canonical `GAME_CONFIG` carrier shape — into the `GAME_CONFIG` var**, never a
      fully-resolved `ServerConfig` object (doc 02's `resolveServerConfig` accepts
@@ -306,7 +306,7 @@ UI sequence on `https://<site-domain>/create`:
        both numbers and recommend Paid for anything public.
 4. **Deploy** → site POSTs `/api/deploy-jobs`, Deployer DO starts the state machine, UI
    polls `GET /api/deploy-jobs/:id` and renders step progress.
-5. **Done** → shows `https://deadcoast-<slug>.<their-subdomain>.workers.dev`, "open your
+5. **Done** → shows `https://worldspring-<slug>.<their-subdomain>.workers.dev`, "open your
    server", directory listing status (pending → live on first heartbeat), and a link to the
    server-owner guide (costs, deleting, updating).
 
@@ -321,7 +321,7 @@ export interface DeployJob {
   id: string;                        // ulid
   ownerSub: string;
   accountId: string;
-  scriptName: string;                // "deadcoast-<slug>"
+  scriptName: string;                // "worldspring-<slug>"
   releaseVersion: string;            // resolved from releases/latest.json at job start
   preset: string;
   serverConfigJson: string;          // serialized GAME_CONFIG payload {preset, overrides?} (doc 02's carrier shape)
@@ -353,16 +353,16 @@ asset upload):
    row (it ships as a binding in step 6, then is dropped). Pending listings older than 1 h
    are reaped by the directory.
 2. **check-existing-script** — `GET /accounts/{id}/workers/scripts/{name}` (or the script
-   list). 404 → fresh create. Exists → require the script's tags to include `deadcoast`
-   (we set `tags: ["deadcoast", …]` on every upload, research/cf-deploy.md §2.4); if a
-   non-DEADCOAST worker owns the name, **abort with a rename prompt — never clobber**.
+   list). 404 → fresh create. Exists → require the script's tags to include `worldspring`
+   (we set `tags: ["worldspring", …]` on every upload, research/cf-deploy.md §2.4); if a
+   non-Worldspring worker owns the name, **abort with a rename prompt — never clobber**.
    For `kind: "update"`, also read the current `migration_tag` (response field —
    research/cf-deploy.md §2.4) to drive migration chaining (§7).
    (**UNCONFIRMED**: whether tags round-trip on GET for raw-API uploads — spike item; the
    fallback guard is a marker route probe `GET https://<url>/api/server-info`, valid
    because every artifact the site can deploy serves that route — §3 release gate. A
-   DEADCOAST worker CLI-deployed from a tree predating the route 404s the probe and is
-   treated as non-DEADCOAST: abort-with-rename, which errs in the safe direction.)
+   Worldspring worker CLI-deployed from a tree predating the route 404s the probe and is
+   treated as non-Worldspring: abort-with-rename, which errs in the safe direction.)
 3. **ensure-subdomain** — `GET /accounts/{id}/workers/subdomain`; if the account has none
    (fresh accounts don't — research/cf-deploy.md §2.5), pause the job with
    `needs: "subdomain-name"`; the UI prompts ("this names everything you ever deploy:
@@ -401,8 +401,8 @@ asset upload):
        "config": { "not_found_handling": "single-page-application" }
      },
      "observability": { "enabled": true, "head_sampling_rate": 0.01 },
-     "tags": ["deadcoast", "deadcoast-v0.4.0"],
-     "annotations": { "workers/message": "DEADCOAST v0.4.0 via <site-domain>" }
+     "tags": ["worldspring", "worldspring-v0.4.0"],
+     "annotations": { "workers/message": "Worldspring v0.4.0 via <site-domain>" }
    }
    ```
 
@@ -519,7 +519,7 @@ ever matters, revisit with a separate, explicit "keep me updated" consent that a
   dash.cloudflare.com → profile → Manage OAuth authorizations; account admins can block new
   authorizations entirely — the flow must render that failure politely.
 - *What we can never do*: nothing standing. After a job reaches any terminal state —
-  success, failure, or expired pause — DEADCOAST holds zero capability against the user's
+  success, failure, or expired pause — Worldspring holds zero capability against the user's
   account (§5 failure handling makes that a state-machine invariant, not a happy-path
   property). That sentence belongs verbatim in the UX copy.
 
@@ -568,7 +568,7 @@ ever matters, revisit with a separate, explicit "keep me updated" consent that a
     metadata only and is never re-resolved against the live `PRESETS` registry, so
     preset-definition drift across releases can never silently change a deployed config —
     in particular can never flip the seed and trip the wipe in
-    `src/server/persistence.ts:107-117` on an update the owner was told preserves their
+    `apps/game/src/server/persistence.ts:107-117` on an update the owner was told preserves their
     world.
   - Step 6 must also carry **operator-set bindings** forward: the multipart PUT replaces
     the binding set wholesale (research/cf-deploy.md §8.1), so an update that re-sends
@@ -576,7 +576,7 @@ ever matters, revisit with a separate, explicit "keep me updated" consent that a
     importantly doc 02's `ADMIN_TOKEN` secret (set via `wrangler secret put`), whose loss
     turns the admin surface off (404) and strands stale `admin_overrides`
     (04-gameplay-presets.md §4). Obligation: GET current settings first, re-send every
-    non-DEADCOAST binding, and pass `keep_bindings: ["secret_text"]` so unreadable
+    non-Worldspring binding, and pass `keep_bindings: ["secret_text"]` so unreadable
     operator secrets survive. How `keep_bindings` interacts with an *explicitly re-sent*
     `secret_text` of the same name (our rotated `DIRECTORY_TOKEN`) is **UNCONFIRMED** —
     added to the M1 spike list; if explicit values do not win, rotation switches to
@@ -592,7 +592,7 @@ ever matters, revisit with a separate, explicit "keep me updated" consent that a
   they can immediately reconnect."
 - **World wipes**: if the release's `schemaVersion` (or the server's configured seed)
   differs from what the server persisted, the existing wipe logic clears characters + world
-  and keeps the leaderboard (`src/server/persistence.ts:107-117`). The release artifact's
+  and keeps the leaderboard (`apps/game/src/server/persistence.ts:107-117`). The release artifact's
   `wipesWorld` flag drives a mandatory red confirmation step: "v0.5 resets worlds
   (leaderboards survive). Type the server name to continue."
 - **Determinism corollary** (binding): a server must never move to a version that reorders
@@ -615,7 +615,7 @@ Two separate actions on the "Your servers" page:
   `wrangler delete` does this dance). Mandatory type-the-name confirmation, copy states
   the world is gone and the leaderboard with it. Then delete the directory listing and the
   `created_servers` row. Always also show the manual path: "or delete the
-  `deadcoast-<slug>` worker in your Cloudflare dashboard — same effect."
+  `worldspring-<slug>` worker in your Cloudflare dashboard — same effect."
 
 ### 9. The CLI path (first-class forever)
 
@@ -706,13 +706,13 @@ GitHub App install; research/cf-deploy.md §4).
 ## Migration & compatibility
 
 - **Existing worlds/saves**: unaffected. Created servers start fresh DBs; the
-  `SCHEMA_VERSION`/`world_seed` wipe logic (`src/server/persistence.ts:107-117`) governs
+  `SCHEMA_VERSION`/`world_seed` wipe logic (`apps/game/src/server/persistence.ts:107-117`) governs
   their updates exactly as it does the official instance.
-- **Wire protocol**: no changes here. `PROTOCOL_VERSION` (new, in `src/shared/protocol.ts`)
+- **Wire protocol**: no changes here. `PROTOCOL_VERSION` (new, in `packages/shared/src/protocol.ts`)
   is doc 03's addition; this flow only *reports* it via the release artifact.
 - **Deployed official instance**: keeps deploying via `npm run deploy` from the repo root;
   the new env bindings are optional with constant-backed defaults
-  (`WORLD_SEED = 1337` stays in `src/shared/constants.ts:4` as the default).
+  (`WORLD_SEED = 1337` stays in `packages/shared/src/constants.ts:4` as the default).
 - **Config compatibility across versions**: `GAME_CONFIG` is re-sent verbatim on update
   jobs from `created_servers.server_config_json` — the durable copy written at create
   (§5 step 8). Job rows are swept at terminal + 2 h and hold nothing authoritative;
@@ -758,7 +758,7 @@ is acceptable in the interim). The persistAll one-row-snapshot fix (research/cf-
    resolved or re-flagged.
 2. **M2 — Release pipeline** *(Sonnet 4.8)* — `.github/workflows/release.yml`,
    `scripts/build-artifact.mjs` (including the §3 release gate), the CI overwrite of
-   `src/shared/version.ts` from the tag (the file itself is created by
+   `packages/shared/src/version.ts` from the tag (the file itself is created by
    03-server-info-contract.md M1, hand-maintained default), R2 bucket + CI token setup
    notes. Acceptance: tagging `v0.0.1-rc1` produces a complete artifact in R2 + GitHub
    Release; `meta.json` hashes verify against the files; `metadataTemplate` matches
@@ -777,7 +777,7 @@ is acceptable in the interim). The persistAll one-row-snapshot fix (research/cf-
    `welcome.seed` with zero client changes; seed change triggers the wipe path, leaderboard
    survives. Depends: doc 02 shape (can stub with `{ seed?: number }`).
 4. **M4 — site/ skeleton + OAuth** *(Opus 4.8 — security-sensitive)* — `site/wrangler.jsonc`
-   (name `deadcoast-site`), `site/src/worker.ts` with `/login`, `/oauth/callback`, signed
+   (name `worldspring-web`), `site/src/worker.ts` with `/login`, `/oauth/callback`, signed
    session cookie, accounts discovery + picker, against a **private**-visibility client on
    Adam's account. Root script `"deploy:site": "wrangler deploy -c site/wrangler.jsonc"`.
    Acceptance: full login round-trip on the deployed site; state/PKCE verified; token never
@@ -825,8 +825,8 @@ is acceptable in the interim). The persistAll one-row-snapshot fix (research/cf-
 2. **Ephemeral tokens — confirm the call.** The §6 table is the case; the cost is one OAuth
    bounce per update. *Recommendation: ephemeral. Revisit only if fleet auto-update becomes
    a real ask, and then as a separate opt-in consent.*
-3. **Script naming**: enforce the `deadcoast-` prefix in user accounts? It costs vanity
-   URLs (`deadcoast-bobs-island.foo.workers.dev`) but is the clobber guard and brand
+3. **Script naming**: enforce the `worldspring-` prefix in user accounts? It costs vanity
+   URLs (`worldspring-bobs-island.foo.workers.dev`) but is the clobber guard and brand
    marker. *Recommendation: yes, enforce; vanity can come later via custom domains on their
    side.*
 4. **Gate the whole launch on the persistAll fix?** Free-plan servers break saves ~80 min

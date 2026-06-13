@@ -8,10 +8,10 @@ Research grounding: `docs/plans/research/codebase-sim.md`, `docs/plans/research/
 
 ## Summary
 
-One new shared file, `src/shared/config.ts`, defines `ServerConfig` — a fully-typed,
+One new shared file, `packages/shared/src/config.ts`, defines `ServerConfig` — a fully-typed,
 manually-validated (zero new deps) config object covering world identity, threats, loot
 economy, survival harshness, PvP rules, time, wildlife, building (reserved for doc 06)
-and session rules. Constants in `src/shared/constants.ts` stay exactly as they are and
+and session rules. Constants in `packages/shared/src/constants.ts` stay exactly as they are and
 become the DEFAULTS; config values are multipliers and toggles applied at each system's
 point of use, so the diff in every system is a handful of lines. The config is chosen at
 deploy time via a `GAME_CONFIG` var on the worker (a preset name, or `{preset, overrides}`),
@@ -69,7 +69,7 @@ pooled rigs.
 
 What exists today, verified in this worktree:
 
-- **Every tunable is a compile-time constant** in `src/shared/constants.ts` (1-181),
+- **Every tunable is a compile-time constant** in `packages/shared/src/constants.ts` (1-181),
   imported directly by server systems and, for a subset, by the client. There is no
   config object, no env vars, no secrets — `Env` contains exactly the `GAME` DO binding
   (`worker-configuration.d.ts`, `wrangler.jsonc:10-16`).
@@ -122,10 +122,10 @@ What exists today, verified in this worktree:
 
 ## Design
 
-### 1. The schema — `src/shared/config.ts` (new file)
+### 1. The schema — `packages/shared/src/config.ts` (new file)
 
 ```ts
-// src/shared/config.ts — ServerConfig schema, presets, validation, derivations.
+// packages/shared/src/config.ts — ServerConfig schema, presets, validation, derivations.
 // Shared: the server resolves it from env; the client receives it in `welcome`.
 // House rules: strict TS, named exports, no deps. Constants in constants.ts
 // are the DEFAULTS; config multiplies/overrides at each system's point of use.
@@ -429,7 +429,7 @@ a bare preset name:
 ```
 
 `Env` gains `GAME_CONFIG?: unknown` — declared via **interface merging in a new
-hand-owned `src/server/env.d.ts`** (a global-scope `interface Env { GAME_CONFIG?: unknown }`
+hand-owned `apps/game/src/server/env.d.ts`** (a global-scope `interface Env { GAME_CONFIG?: unknown }`
 merges into the generated declaration), NOT by typegen and NOT by editing
 `worker-configuration.d.ts`. Typegen cannot produce this member: `wrangler types`
 derives `Env` from wrangler.jsonc, which deliberately carries no `GAME_CONFIG` (the
@@ -702,13 +702,13 @@ no new system-local tunables are introduced by this design; everything lands in
 ### 6. `/api/server-info` badge summary (handoff to doc 03)
 
 `config.ts` exports the derivation; doc 03 owns the endpoint and envelope — the type is
-doc 03's `RulesSummary` (`src/shared/serverInfo.ts`), carried as `ServerInfo.rules`;
+doc 03's `RulesSummary` (`packages/shared/src/serverInfo.ts`), carried as `ServerInfo.rules`;
 this doc owns the derivation function and the banding semantics (an earlier
 `ServerInfoSummary`/`serverInfoSummary` naming here is superseded — doc 02 and doc 03
 both reference `RulesSummary`/`summarizeRules`):
 
 ```ts
-// Type lives in src/shared/serverInfo.ts (doc 03); derivation lives here.
+// Type lives in packages/shared/src/serverInfo.ts (doc 03); derivation lives here.
 export interface RulesSummary {
   /** Closed union, never free text — `summarizeRules` membership-checks
    * `cfg.preset` (a free-form string in ServerConfig) against the registry
@@ -777,7 +777,7 @@ fetch/curl targets, per `codebase-server.md` §1):
 
 - Auth runs **in `worker.ts`, before `stub.fetch`**: `ADMIN_TOKEN` secret
   (`wrangler secret put ADMIN_TOKEN`), `Env.ADMIN_TOKEN?: string` (declared in the same
-  hand-owned `src/server/env.d.ts` as `GAME_CONFIG`, §4) — `env` is in scope at
+  hand-owned `apps/game/src/server/env.d.ts` as `GAME_CONFIG`, §4) — `env` is in scope at
   the routing layer, and SHA-256 + `crypto.subtle.timingSafeEqual` (a verified
   non-standard Workers extension, length-safe over the digests) run fine in the Worker.
   No secret set → 404 (admin not enabled); wrong/missing bearer → 401 — both answered
@@ -980,7 +980,7 @@ Anything beyond these four fields (plus the restore action) = redeploy with a ne
 Milestone 0 dependency: none of this blocks on docs 01/03/06/07; reserved fields are
 validated no-ops until their docs land.
 
-1. **M1 — `src/shared/config.ts` + plumbing + test harness, zero behavior change**
+1. **M1 — `packages/shared/src/config.ts` + plumbing + test harness, zero behavior change**
    *(Opus 4.8 — protocol + determinism-sensitive surface)*. Scope: full schema,
    `DEFAULT_CONFIG`, `DeepPartial`/`mergeConfig`, `resolveServerConfig` with
    warnings + `varAbsent`/`worldTainted` flags, `clampConfig` (the shared client-side
@@ -988,13 +988,13 @@ validated no-ops until their docs land.
    `world.seed` coerces to `WORLD_SEED` with a warning until M2 — see §2),
    `effectiveGameHour`, `effectiveZombieMax`, `effectiveDeerMax`, `summarizeRules`,
    `worldFingerprintOf` + `parseWorldFingerprint`, `wipeEpochOf`; `Env.GAME_CONFIG?:
-   unknown` via interface merging in a new hand-owned `src/server/env.d.ts` — NOT via
+   unknown` via interface merging in a new hand-owned `apps/game/src/server/env.d.ts` — NOT via
    typegen, which derives `Env` from the deliberately var-less wrangler.jsonc and would
    emit a literal value type even if a var were present (§4); `keep_vars: true` in
    `wrangler.jsonc` (one line — protects the
    dashboard-edit path §4 recommends); ARCHITECTURE.md amendment (two lines — it is the
    binding contract and this design changes it in two places: the tunables rule becomes
-   "constants.ts holds the defaults; `src/shared/config.ts` holds the deploy-time
+   "constants.ts holds the defaults; `packages/shared/src/config.ts` holds the deploy-time
    `ServerConfig` layered on top at each system's point of use", and the NET on-welcome
    contract gains the optional `config` field; M6 later amends on-welcome again to
    `createWorld(worldParamsOf(config.world))` — cheap now, expensive when a later
@@ -1005,7 +1005,7 @@ validated no-ops until their docs land.
    **Test harness setup is in-scope here**: the repo has no test runner (package.json:
    dev/build/typecheck/deploy/cf-typegen only) — add vitest (plain node environment,
    no workers pool needed for pure shared functions) and an `npm test` script.
-   Files: `src/shared/config.ts` (new), `src/server/env.d.ts` (new), `state.ts`,
+   Files: `packages/shared/src/config.ts` (new), `apps/game/src/server/env.d.ts` (new), `state.ts`,
    `GameRoom.ts`, `protocol.ts`, `runtime.ts`, `connection.ts`, `wrangler.jsonc`,
    `ARCHITECTURE.md`, `package.json` — `worker-configuration.d.ts` stays generated
    output, never hand-edited. Acceptance: both tsc projects clean; unit test asserts
