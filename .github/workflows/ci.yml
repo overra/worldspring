@@ -1,0 +1,57 @@
+name: CI
+
+# Gate every PR (and main) on the checks CodeRabbit can't run: real typecheck,
+# the test suites, a full build, and the worldgen determinism fingerprint.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# One run per ref; a new push cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm BEFORE setup-node so the node cache can key on the pnpm store.
+      # Version comes from the root package.json `packageManager` field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Pinned exact via .nvmrc. The worldgen fingerprint depends on V8's
+          # transcendental (sin/cos/…) results, which drift across Node patches
+          # — this gate caught seed 0 diverging on 22.22.3 vs the reference's
+          # 22.21.1. Bumping Node means regenerating world.fingerprint.txt.
+          # (Also satisfies the game tests' Node >= 22.6 / strip-types need.)
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -w typecheck
+
+      - name: Test
+        run: pnpm -w test
+
+      - name: Build
+        run: pnpm -w build
+
+      # Determinism gate: worldgen must stay byte-identical to the committed
+      # hashes. Any drift near packages/shared/src/world.ts fails here (the rng
+      # stream order is the client/server contract). See docs/plans/README.md.
+      - name: Worldgen determinism fingerprint
+        shell: bash
+        run: |
+          diff \
+            <(pnpm --filter @worldspring/shared fingerprint | grep '^seed') \
+            <(grep '^seed' packages/shared/scripts/world.fingerprint.txt) \
+          && echo "worldgen fingerprint byte-identical ✓"
