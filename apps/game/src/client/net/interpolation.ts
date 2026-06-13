@@ -4,9 +4,9 @@
 // that bracket that moment. Loot/fires snap to the newest state on arrival;
 // time-of-day advances continuously from the latest snapshot's game time.
 
-import { DAY_DURATION_S, INTERP_DELAY_MS, START_HOUR } from "@worldspring/shared/constants";
+import { INTERP_DELAY_MS } from "@worldspring/shared/constants";
 import { angleLerp, clamp, lerp } from "@worldspring/shared/math";
-import { gameHours } from "@worldspring/shared/protocol";
+import { effectiveGameHour } from "@worldspring/shared/config";
 import type { ServerMsg, WireAnimal, WirePlayer, WireZombie } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 import type { AnimalView, RemotePlayerView, ZombieView } from "@/client/runtime";
@@ -35,7 +35,7 @@ let latestGameTimeArrival = 0;
 export function setTimeBase(gameTimeS: number, arrivalMs: number): void {
   latestGameTime = gameTimeS;
   latestGameTimeArrival = arrivalMs;
-  clientWorld.timeOfDay = gameHours(gameTimeS, DAY_DURATION_S, START_HOUR);
+  clientWorld.timeOfDay = effectiveGameHour(clientWorld.config.time, gameTimeS);
 }
 
 /** Buffer a snapshot and apply its instant (non-interpolated) state. */
@@ -80,10 +80,9 @@ export function resetInterpolation(): void {
  */
 export function updateInterpolation(nowMs: number): void {
   if (latestGameTimeArrival > 0) {
-    clientWorld.timeOfDay = gameHours(
+    clientWorld.timeOfDay = effectiveGameHour(
+      clientWorld.config.time,
       latestGameTime + (nowMs - latestGameTimeArrival) / 1000,
-      DAY_DURATION_S,
-      START_HOUR,
     );
   }
   if (buffer.length === 0) return;

@@ -5,6 +5,7 @@
 
 import { Canvas } from "@react-three/fiber";
 import { useSettingsStore, QUALITY_CONFIGS } from "./state/settings";
+import { clientWorld } from "./runtime";
 import { NetSystem } from "./net/NetSystem";
 import { AudioSystem } from "./audio/AudioSystem";
 import { DebugCollector } from "./render/post/DebugCollector";
@@ -31,13 +32,19 @@ import { EffectsLayer } from "./render/entities/EffectsLayer";
 
 export function GameCanvas(): React.ReactElement {
   const quality = useSettingsStore((s) => s.quality);
-  const config = QUALITY_CONFIGS[quality];
+  const qualityCfg = QUALITY_CONFIGS[quality];
+  // clientWorld.config is written by onWelcome before the canvas is ever mounted
+  // (App.tsx only unmounts the menu once phase becomes "playing"), so this read
+  // is always post-welcome. The config never changes while the canvas is mounted
+  // (disconnect returns to menu, no auto-reconnect), so a single capture here is
+  // stable for the lifetime of this mount.
+  const cfg = clientWorld.config;
   return (
     <Canvas
       className="game-canvas"
       gl={{ antialias: true, powerPreference: "high-performance" }}
       camera={{ fov: 75, near: 0.1, far: 600 }}
-      dpr={[1, config.maxDpr]}
+      dpr={[1, qualityCfg.maxDpr]}
       shadows="percentage"
       flat
     >
@@ -56,10 +63,10 @@ export function GameCanvas(): React.ReactElement {
       <Scatter />
       <Grass />
       <RemotePlayers />
-      <Zombies />
+      {cfg.threats.zombies && <Zombies />}
       <LootItems />
       <Corpses />
-      <Animals />
+      {cfg.wildlife.deerDensity > 0 && <Animals />}
       <Airdrops />
       <RainLayer />
       <Campfires />

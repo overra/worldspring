@@ -12,10 +12,8 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import { DEER_COUNT } from "@worldspring/shared/constants";
+import { effectiveDeerMax } from "@worldspring/shared/config";
 import { clientWorld } from "@/client/runtime";
-
-const POOL_SIZE = DEER_COUNT + 4; // margin over the wire max (respawn overlap)
 const MAX_FRAME_DT = 0.1;
 
 const PROPS_MODEL_URL = "/models/props.glb";
@@ -75,6 +73,8 @@ interface DeerPool {
   slots: DeerSlot[];
   byId: Map<number, number>;
   free: number[];
+  /** Source node for lazy rig allocation (null = GLB node missing, use fallback). */
+  deerSource: THREE.Object3D | null;
 }
 
 function createRig(deerSource: THREE.Object3D | null): DeerRig {
@@ -136,6 +136,15 @@ function createRig(deerSource: THREE.Object3D | null): DeerRig {
   return { root, torso, legs };
 }
 
+/** Allocate a single new deer slot into the pool (lazy growth path). */
+function growPool(pool: DeerPool): void {
+  const idx = pool.slots.length;
+  const rig = createRig(pool.deerSource);
+  pool.root.add(rig.root);
+  pool.slots.push({ rig, phase: idx * 1.3, amp: 0, gallop: 0 });
+  pool.free.push(idx);
+}
+
 function createPool(scene: THREE.Group): DeerPool {
   // Flag shadows on the source once; clones inherit (LootItems pattern).
   const deerSource = scene.getObjectByName("deer") ?? null;
@@ -145,14 +154,18 @@ function createPool(scene: THREE.Group): DeerPool {
   const root = new THREE.Group();
   const slots: DeerSlot[] = [];
   const free: number[] = [];
-  for (let i = 0; i < POOL_SIZE; i++) {
+  // +4 respawn margin over the wire max — same as the old DEER_COUNT + 4 constant,
+  // but now scaled to the welcome config. The pool grows lazily on exhaustion so a
+  // live density raise (M5) is always visible without a rejoin.
+  const initialSize = effectiveDeerMax(clientWorld.config) + 4;
+  for (let i = 0; i < initialSize; i++) {
     const rig = createRig(deerSource);
     root.add(rig.root);
     // Stagger phases so a herd never moves in lockstep.
     slots.push({ rig, phase: i * 1.3, amp: 0, gallop: 0 });
-    free.push(POOL_SIZE - 1 - i);
+    free.push(initialSize - 1 - i);
   }
-  return { root, slots, byId: new Map(), free };
+  return { root, slots, byId: new Map(), free, deerSource };
 }
 
 export function Animals(): ReactElement {
@@ -176,8 +189,11 @@ export function Animals(): ReactElement {
     for (const a of animals.values()) {
       let idx = pool.byId.get(a.id);
       if (idx === undefined) {
-        idx = pool.free.pop();
-        if (idx === undefined) continue;
+        // Grow lazily when the free list is exhausted — welcome-time config is
+        // an allocation hint, not a render cap. Growth is bounded by real wire
+        // entities so a hostile config cannot force runaway allocation.
+        if (pool.free.length === 0) growPool(pool);
+        idx = pool.free.pop()!;
         pool.byId.set(a.id, idx);
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;

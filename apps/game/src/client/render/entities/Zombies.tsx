@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { ZOMBIE_MAX } from "@worldspring/shared/constants";
+import { effectiveZombieMax } from "@worldspring/shared/config";
 import type { ZombieState } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 import {
@@ -54,16 +54,31 @@ interface ZombiePool {
   frame: number;
 }
 
+/** Allocate a single new zombie slot into the pool (lazy growth path). */
+function growPool(pool: ZombiePool): number {
+  const idx = pool.slots.length;
+  const rig = createCharacterRig("zombie");
+  rig.root.visible = false;
+  pool.root.add(rig.root);
+  pool.slots.push({ rig, lastState: null, nextSwingIn: 0, accumDt: 0 });
+  pool.free.push(idx);
+  return idx;
+}
+
 function createPool(): ZombiePool {
   const root = new THREE.Group();
   const slots: ZombieSlot[] = [];
   const free: number[] = [];
-  for (let i = 0; i < ZOMBIE_MAX; i++) {
+  // Initial size is an allocation hint from the welcome config — never a render
+  // cap. The pool grows lazily on exhaustion so M5's live density raise (and any
+  // snapshot with more entities than the hint) is always visible.
+  const initialSize = effectiveZombieMax(clientWorld.config);
+  for (let i = 0; i < initialSize; i++) {
     const rig = createCharacterRig("zombie");
     rig.root.visible = false;
     root.add(rig.root);
     slots.push({ rig, lastState: null, nextSwingIn: 0, accumDt: 0 });
-    free.push(ZOMBIE_MAX - 1 - i);
+    free.push(initialSize - 1 - i);
   }
   return { root, slots, byId: new Map(), free, frame: 0 };
 }
@@ -89,8 +104,11 @@ export function Zombies(): ReactElement {
     for (const z of zombies.values()) {
       let idx = pool.byId.get(z.id);
       if (idx === undefined) {
-        idx = pool.free.pop();
-        if (idx === undefined) continue;
+        // Grow lazily when the free list is exhausted — welcome-time config is
+        // an allocation hint, not a render cap. Growth is bounded by real wire
+        // entities so a hostile config cannot force runaway allocation.
+        if (pool.free.length === 0) growPool(pool);
+        idx = pool.free.pop()!;
         pool.byId.set(z.id, idx);
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
