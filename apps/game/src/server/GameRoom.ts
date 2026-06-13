@@ -12,6 +12,10 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  DEFAULT_CONFIG,
+  summarizeRules,
+} from "@worldspring/shared/config";
+import {
   AIRDROP_SMOKE_S,
   CHAT_COOLDOWN_S,
   CHAT_MAX_LENGTH,
@@ -20,13 +24,20 @@ import {
   INTEREST_RADIUS,
   LOGOUT_LINGER_S,
   LOOT_INTEREST_RADIUS,
+  MAX_MOTD_LENGTH,
   MAX_PLAYERS,
+  MAX_SERVER_NAME_LENGTH,
   RESPAWN_DELAY_S,
   TICK_MS,
   WORLD_SAVE_INTERVAL_S,
   WORLD_SEED,
 } from "@worldspring/shared/constants";
 import { distSq2D } from "@worldspring/shared/math";
+import {
+  SERVER_INFO_SCHEMA_VERSION,
+  type ServerInfo,
+} from "@worldspring/shared/serverInfo";
+import { GAME_VERSION } from "@worldspring/shared/version";
 import {
   ANIM_ATTACKING,
   ANIM_MOVING,
@@ -94,6 +105,19 @@ import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
 
+/**
+ * Sanitize an operator-set server name/MOTD for ServerInfo: strip controls/
+ * zero-width/bidi (the shared STRIP_TEXT_RE class) and cap by CODE POINTS (the
+ * spread never splits a surrogate pair), trimming both edges. Unlike
+ * sanitizeName this keeps an empty string empty (no "Survivor" default) and
+ * does NOT dedup against players — a name/MOTD is neither. It deliberately does
+ * NOT touch `<` `>` `&` or quotes: render-as-text is the consumer's job (doc 03
+ * §10 rule 8).
+ */
+function sanitizeServerText(raw: string, maxCodePoints: number): string {
+  return [...raw.replace(STRIP_TEXT_RE, "").trim()].slice(0, maxCodePoints).join("").trim();
+}
+
 /** SHA-256 of the client identity token, as lowercase hex. */
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -142,6 +166,14 @@ export class GameRoom extends DurableObject<Env> {
    * tick once silent past LIVENESS_TIMEOUT_MS, which starts their linger. */
   private lastMsgAt = new Map<WebSocket, number>();
   private tickHandle: ReturnType<typeof setInterval> | null = null;
+  /** Wall-clock ms when the current occupied session began (startTicking);
+   * 0 while idle. Drives ServerInfo.uptimeS (doc 03 §2). */
+  private activeSince = 0;
+  /** Canonical https origin of this server, captured from the first request's
+   * URL and mirrored to/restored from the `meta.origin` row. Feeds
+   * ServerInfo.joinUrl in request-less contexts (heartbeats, M3). null until
+   * the first request is seen on a cold-started object (doc 03 §2). */
+  private publicOrigin: string | null = null;
   /** Game time of the last periodic world+character save. */
   private lastSaveTime = 0;
   // Tick timing stats (read by the /api/health route; see timedTick).
@@ -163,6 +195,24 @@ export class GameRoom extends DurableObject<Env> {
 
   override fetch(request: Request): Response {
     const url = new URL(request.url);
+    // Capture the public origin once per object lifetime — every request the DO
+    // sees (WS upgrades and /api/server-info alike) is a valid source. Mirror it
+    // to meta.origin so a request-less heartbeat (M3) and a cold-started object
+    // can recover it. Restore from meta.origin if a cold start hasn't seen a
+    // request yet (doc 03 §2 joinUrl sourcing).
+    if (this.publicOrigin === null) {
+      this.publicOrigin = url.origin;
+      this.saveOrigin(url.origin);
+    }
+    if (url.pathname === "/api/server-info") {
+      return new Response(JSON.stringify(this.buildServerInfo(request)), {
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+          "cache-control": "public, max-age=15, stale-while-revalidate=30",
+        },
+      });
+    }
     if (url.pathname === "/api/leaderboard") {
       return new Response(JSON.stringify(topLeaderboard(this.ctx.storage.sql, 10)), {
         headers: {
@@ -221,6 +271,111 @@ export class GameRoom extends DurableObject<Env> {
       }
     }, JOIN_TIMEOUT_MS);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * Build the public ServerInfo document (doc 03 §2). IDLE-SAFE by contract:
+   * MUST NOT call ensureGame()/startTicking() — same discipline as /api/health.
+   * Everything is in-memory except worldAgeS, which on the idle path costs at
+   * most ONE synchronous SQLite read (snapshot row). Bills 1:1 on a cold start,
+   * never wakes the sim. `request` is present for the GET route and absent for
+   * the request-less heartbeat sender (M3).
+   */
+  private buildServerInfo(request?: Request): ServerInfo {
+    const game = this.game;
+
+    // Connected players only (excludes offline lingering bodies) — the
+    // handleJoin capacity-count semantics, 0 when game === null.
+    let players = 0;
+    if (game) {
+      for (const p of game.players.values()) {
+        if (!p.offline) players++;
+      }
+    }
+
+    const occupied = this.tickHandle !== null;
+
+    // worldAgeS: live game time if the sim is loaded, else read the persisted
+    // snapshot's `time`. NOTE doc-drift: doc §2/§3 say "meta.game_time", but
+    // that row does NOT exist — after the #9 single-row persist fix game time
+    // lives in the world_state 'snapshot' JSON (persistence.saveWorld), and the
+    // only meta rows are schema_version + world_seed. Degrades to 0 on a fresh
+    // or corrupt DB, never throws.
+    const worldAgeS = game?.time ?? this.loadPersistedGameTime();
+
+    // joinUrl: the live request's origin when we have one, else the captured
+    // field, else the persisted meta.origin (one cheap read on a request-less
+    // cold start), else "" — required field always present (§10 rule 3).
+    const joinUrl = request
+      ? new URL(request.url).origin
+      : (this.publicOrigin ?? this.loadOrigin() ?? "");
+
+    return {
+      schemaVersion: SERVER_INFO_SCHEMA_VERSION,
+      gameVersion: GAME_VERSION,
+      protocolVersion: PROTOCOL_VERSION,
+      worldSeed: game?.world.seed ?? WORLD_SEED,
+      // Untrusted operator-set vars with code defaults. Strip controls/zero-
+      // width/bidi and cap by code points (doc 03 §2). Deliberately NOT
+      // sanitizeName: that forces a non-empty "Survivor" default and dedups
+      // against live players — both wrong for a server name/MOTD. STRIP_TEXT_RE
+      // does NOT escape < > & or quotes; rendering as text is the consumer's
+      // job (§10 rule 8), so no HTML-escaping here.
+      name: sanitizeServerText(this.env.SERVER_NAME ?? "Worldspring", MAX_SERVER_NAME_LENGTH),
+      motd: sanitizeServerText(this.env.SERVER_MOTD ?? "", MAX_MOTD_LENGTH),
+      rules: summarizeRules(DEFAULT_CONFIG),
+      players,
+      maxPlayers: MAX_PLAYERS,
+      status: occupied ? "occupied" : "idle",
+      uptimeS: occupied ? Math.floor((Date.now() - this.activeSince) / 1000) : 0,
+      worldAgeS,
+      // colo is the M4 cdn-cgi/trace spike; directoryChallenge needs
+      // DIRECTORY_TOKEN from M3/doc 01. Both stay present-but-null per the
+      // forward-compat rule 3 (required fields always emitted).
+      colo: null,
+      joinUrl,
+      directoryChallenge: null,
+    };
+  }
+
+  // --- meta.origin + persisted game-time reads (doc 03 §2) ---
+  // Kept as private DO helpers (not in persistence.ts, which is off-limits for
+  // this milestone): each is a single additive row read/write over tables
+  // initSchema/saveWorld already own — no schema change, no SCHEMA_VERSION bump.
+
+  /** Mirror the captured public origin to the `meta.origin` row. */
+  private saveOrigin(origin: string): void {
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO meta (key, value) VALUES ('origin', ?)",
+      origin,
+    );
+  }
+
+  /** The last persisted public origin, or null if none has been written. */
+  private loadOrigin(): string | null {
+    const rows = this.ctx.storage.sql
+      .exec<{ value: string }>("SELECT value FROM meta WHERE key = 'origin'")
+      .toArray();
+    return rows.length > 0 ? rows[0].value : null;
+  }
+
+  /**
+   * Persisted world game-time seconds, read from the single `snapshot` row's
+   * JSON `time` (the #9 single-row layout). 0 when absent or corrupt — the same
+   * corrupt-guard posture as loadWorld; an idle worldAgeS must never throw.
+   */
+  private loadPersistedGameTime(): number {
+    const rows = this.ctx.storage.sql
+      .exec<{ payload: string }>("SELECT payload FROM world_state WHERE kind = 'snapshot'")
+      .toArray();
+    if (rows.length === 0) return 0;
+    try {
+      const snap = JSON.parse(rows[0].payload) as { time?: unknown };
+      return typeof snap.time === "number" && Number.isFinite(snap.time) ? snap.time : 0;
+    } catch {
+      // Corrupt snapshot: degrade to 0 rather than brick the public endpoint.
+      return 0;
+    }
   }
 
   /** True when the socket exceeded its message budget (and was closed). */
@@ -367,6 +522,9 @@ export class GameRoom extends DurableObject<Env> {
 
   private startTicking(): void {
     if (this.tickHandle !== null) return;
+    // Mark the start of an occupied session — ServerInfo.uptimeS measures from
+    // here (doc 03 §2). Set after the guard so a redundant call can't reset it.
+    this.activeSince = Date.now();
     this.tickHandle = setInterval(() => this.timedTick(), TICK_MS);
   }
 
@@ -374,6 +532,8 @@ export class GameRoom extends DurableObject<Env> {
     if (this.tickHandle === null) return;
     clearInterval(this.tickHandle);
     this.tickHandle = null;
+    // Session over: idle uptime is 0 (doc 03 §2).
+    this.activeSince = 0;
   }
 
   /**
