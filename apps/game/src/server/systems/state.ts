@@ -4,6 +4,7 @@
 // per recipient at snapshot time), direct/broadcast messages go into `outbox`
 // (drained by GameRoom after each handled message and each tick).
 
+import type { ServerConfig } from "@worldspring/shared/config";
 import { LAG_COMP_MAX_REWIND_S } from "@worldspring/shared/constants";
 import type { ItemStack, ItemType } from "@worldspring/shared/items";
 import type {
@@ -220,6 +221,9 @@ export interface OutboundMsg {
 
 export interface GameState {
   world: World;
+  /** Resolved server config (deploy-time rules). Read by systems at their point
+   * of use; the WIPE-class world fields here match `world` by construction. */
+  config: ServerConfig;
   /** Game time in seconds since room boot. */
   time: number;
   tick: number;
@@ -253,9 +257,13 @@ export interface GameState {
   posHistory: PosHistoryFrame[];
 }
 
-export function createGameState(world: World): GameState {
+export function createGameState(
+  world: World,
+  config: ServerConfig,
+): GameState {
   return {
     world,
+    config,
     time: 0,
     tick: 0,
     players: new Map(),

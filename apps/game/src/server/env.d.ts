@@ -15,4 +15,10 @@ interface Env {
   SERVER_NAME?: string;
   /** Operator-set message of the day; falls back to "" in code. */
   SERVER_MOTD?: string;
+  /** Deploy-time gameplay config (doc 04). A preset name, a JSON string, or an
+   * object { preset, overrides } — `unknown` because it is untrusted env input;
+   * resolveServerConfig validates it. NOT in wrangler.jsonc (the official deploy
+   * is var-less and resolves to DEFAULT_CONFIG); typegen would emit a literal
+   * type if a value were present, so it is declared here. */
+  GAME_CONFIG?: unknown;
 }

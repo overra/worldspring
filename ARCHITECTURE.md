@@ -24,7 +24,7 @@ server on a Cloudflare Durable Object; React Three Fiber client with prediction.
 - Import alias `@/` = `apps/game/src/` (game-local); the shared sim is the
   workspace package `@worldspring/shared` (e.g.
   `import { WALK_SPEED } from "@worldspring/shared/constants"`).
-- All tunables come from `@worldspring/shared/constants` — never inline magic gameplay numbers.
+- `constants.ts` holds the DEFAULTS; `packages/shared/src/config.ts` holds the deploy-time `ServerConfig` layered on top at each system's point of use — never inline magic gameplay numbers.
 - Yaw convention: yaw 0 faces **-Z**, forward = `(-sin(yaw), -cos(yaw))`
   (three.js Object3D rotation.y convention). Helpers in `@worldspring/shared/math`.
 - High-frequency state lives in `src/client/runtime.ts` mutable objects, NOT
@@ -74,7 +74,10 @@ To be built (one owner each):
     `doUse(slot)`, `doEquip(slot)`, `doPickup(id)`, `doDrop(slot)`,
     `doRespawn()`.
 - On `welcome`: build `createWorld(seed)`, set `clientWorld.world`, `ready`,
-  `myId`, seed `me` from `you`, store inventory, phase `playing`.
+  `myId`, seed `me` from `you`, store inventory, phase `playing`. Also clamp the
+  additive optional `config` field (`clampConfig(msg.config)`, never the raw
+  object) into `clientWorld.config`. (Doc 04 M6 later amends this to
+  `createWorld(worldParamsOf(config.world))` for non-standard world tiers.)
 - On `death`: phase `dead`, `setDeathCause`. On `inv`: update store. On
   `notice`: `pushNotice`. Keep socket open while dead (respawn reuses it).
 

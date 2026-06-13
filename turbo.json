@@ -6,6 +6,7 @@
       "outputs": ["dist/**"]
     },
     "typecheck": {},
+    "test": {},
     "dev": {
       "cache": false,
       "persistent": true

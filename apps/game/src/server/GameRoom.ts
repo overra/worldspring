@@ -12,8 +12,13 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
-  DEFAULT_CONFIG,
+  resolveServerConfig,
   summarizeRules,
+  worldParamsOf,
+} from "@worldspring/shared/config";
+import type {
+  ResolvedConfig,
+  ServerConfig,
 } from "@worldspring/shared/config";
 import {
   AIRDROP_SMOKE_S,
@@ -158,6 +163,12 @@ interface RateWindow {
 
 export class GameRoom extends DurableObject<Env> {
   private game: GameState | null = null;
+  /** The full resolve result (warnings/varAbsent/worldTainted) — M2 feeds the
+   * flags into the fail-closed wipe decision; M1 only logs the warnings. */
+  private resolved: ResolvedConfig;
+  /** Resolved deploy-time config. Seeds worldgen, the welcome message, server-
+   * info badges, and (in M3+) every system's tuning. */
+  private config: ServerConfig;
   /** Connection state lives in memory, keyed by WebSocket (see header note). */
   private playerBySocket = new Map<WebSocket, string>();
   private socketByPlayer = new Map<string, WebSocket>();
@@ -185,6 +196,16 @@ export class GameRoom extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // Resolve deploy-time config BEFORE schema init. resolveServerConfig never
+    // throws (a throwing DO constructor crash-loops the object), so it is safe
+    // here even with hostile env input. M2 will feed resolved.{varAbsent,
+    // worldTainted} + the world fingerprint into initSchema's fail-closed wipe
+    // decision; M1 keeps initSchema unchanged and only logs the warnings.
+    this.resolved = resolveServerConfig(env.GAME_CONFIG);
+    this.config = this.resolved.config;
+    for (const w of this.resolved.warnings) {
+      console.warn(`[config] ${w}`);
+    }
     void ctx.blockConcurrencyWhile(async () => {
       initSchema(ctx.storage.sql);
       pruneStaleCharacters(ctx.storage.sql);
@@ -328,7 +349,7 @@ export class GameRoom extends DurableObject<Env> {
         sanitizeServerText(this.env.SERVER_NAME ?? "Worldspring", MAX_SERVER_NAME_LENGTH) ||
         "Worldspring",
       motd: sanitizeServerText(this.env.SERVER_MOTD ?? "", MAX_MOTD_LENGTH),
-      rules: summarizeRules(DEFAULT_CONFIG),
+      rules: summarizeRules(this.config),
       players,
       maxPlayers: MAX_PLAYERS,
       status: occupied ? "occupied" : "idle",
@@ -512,8 +533,18 @@ export class GameRoom extends DurableObject<Env> {
 
   private ensureGame(): GameState {
     if (this.game) return this.game;
-    const world = createWorld(WORLD_SEED);
-    const game = createGameState(world);
+    // worldParamsOf returns { seed } only in M1 (createWorld unchanged); seed is
+    // coerced to WORLD_SEED by resolveServerConfig until M2's fingerprint gate.
+    const world = createWorld(worldParamsOf(this.config.world).seed);
+    // Boot determinism check: the generated world's seed MUST equal the config's.
+    // Log + coerce, NEVER throw — a throwing constructor/boot crash-loops the DO.
+    if (world.seed !== this.config.world.seed) {
+      console.error(
+        `[config] world seed ${world.seed} != config seed ${this.config.world.seed}; coercing config to match the generated world`,
+      );
+      this.config.world.seed = world.seed;
+    }
+    const game = createGameState(world, this.config);
     // loadWorld hydrates loot/corpses/fires/respawn timers and restores
     // game.time/tick from meta; a fresh database stocks the world instead.
     if (!loadWorld(this.ctx.storage.sql, game)) stockInitialLoot(game);
@@ -706,6 +737,9 @@ export class GameRoom extends DurableObject<Env> {
       selected: player.selectedSlot,
       resumed,
       recap,
+      // Additive optional field (doc 04 §4): the whole resolved config. The
+      // client clamps it (clampConfig) and never stores the raw object.
+      config: this.config,
     });
   }
 

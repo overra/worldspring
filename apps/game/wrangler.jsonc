@@ -3,6 +3,10 @@
   "name": "worldspring",
   "main": "src/server/worker.ts",
   "compatibility_date": "2026-06-01",
+  // Protect operator-set vars (GAME_CONFIG, doc 04 §4) from being silently
+  // deleted on the next `wrangler deploy` — without this a dashboard- or
+  // deploy-API-set GAME_CONFIG is clobbered, because this config carries none.
+  "keep_vars": true,
   "assets": {
     "not_found_handling": "single-page-application"
   },

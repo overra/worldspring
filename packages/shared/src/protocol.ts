@@ -2,6 +2,7 @@
 // JSON for v1 — readable and fast enough at this scale. All messages are
 // discriminated unions on `t`.
 
+import type { ServerConfig } from "./config";
 import type { ItemStack, ItemType } from "./items";
 
 // --- Protocol version: the two-sided join gate ---
@@ -235,6 +236,11 @@ export type ServerMsg =
       resumed: boolean;
       /** Set when the character died while its owner was offline. */
       recap: DeathRecap | null;
+      /** The server's resolved ServerConfig. Additive optional field (doc 04
+       * §4): older clients destructure named fields and ignore it, so adding it
+       * does NOT bump PROTOCOL_VERSION. The client clamps it (clampConfig) and
+       * never stores the raw object; absent → the client's DEFAULT_CONFIG. */
+      config?: ServerConfig;
     }
   | {
       t: "snap";
