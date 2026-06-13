@@ -209,6 +209,7 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.wantsAttackAt = null;
   player.attackCooldown = 0;
   player.attackAnimT = 0;
+  player.fishCooldownT = 0;
   player.sprinting = false;
   sendInventory(state, player);
 }

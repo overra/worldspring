@@ -82,7 +82,9 @@ export interface WearConfig {
   extraSlots?: number;
 }
 
-/** Held-light config (torch, flashlight). Client uses this for the spotlight pool. */
+/** Held-light config. Set on the torch in M1; the flashlight keeps its existing
+ * hardcoded PlayerCamera beam until a later doc-05 milestone unifies both behind
+ * one held-light pool keyed by item type. */
 export interface LightConfig {
   /** Spotlight tint. */
   color: string;
