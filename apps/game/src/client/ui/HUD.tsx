@@ -11,7 +11,7 @@ import {
   MAX_WATER,
   TEMP_SHIVER,
 } from "@worldspring/shared/constants";
-import { ITEM_DEFS } from "@worldspring/shared/items";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import type { ItemKind, ItemStack } from "@worldspring/shared/items";
 import { doDrop, doEquip, doUse } from "@/client/net/connection";
 import { debugStats } from "@/client/runtime";
@@ -25,6 +25,7 @@ const USABLE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
   "drink",
   "heal",
   "placeable",
+  "tool", // added M1: canteen fill/boil/drink, fishing rod, torch-equip parity with F key
 ]);
 
 function formatClock(hours: number): string {
@@ -114,11 +115,11 @@ function Hotbar(): ReactElement {
               <img
                 className="hotbar-swatch hotbar-icon"
                 src={`/icons/${stack.type}.png`}
-                alt={ITEM_DEFS[stack.type].name}
+                alt={(ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).name}
                 draggable={false}
                 onError={(e) => {
                   // Missing icon: fall back to the flat color swatch.
-                  e.currentTarget.style.background = ITEM_DEFS[stack.type].color;
+                  e.currentTarget.style.background = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).color;
                   e.currentTarget.style.visibility = "visible";
                   e.currentTarget.removeAttribute("src");
                 }}
@@ -217,7 +218,7 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
       </div>
     );
   }
-  const def = ITEM_DEFS[stack.type];
+  const def = ITEM_DEFS[stack.type] ?? UNKNOWN_DEF;
   return (
     <div className="inv-row">
       <span className="inv-slot-num">{slot + 1}</span>

@@ -10,7 +10,7 @@ import {
   PICKUP_RANGE,
 } from "@worldspring/shared/constants";
 import { clamp, dist2D } from "@worldspring/shared/math";
-import { ITEM_DEFS } from "@worldspring/shared/items";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import type { InputCmd } from "@worldspring/shared/protocol";
 import { clientWorld, inputState } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
@@ -118,7 +118,7 @@ function updatePrompt(ui: UIState): void {
     if (d <= bestDist) {
       bestDist = d;
       bestId = lootItem.id;
-      bestLabel = ITEM_DEFS[lootItem.type].name;
+      bestLabel = (ITEM_DEFS[lootItem.type] ?? UNKNOWN_DEF).name;
     }
   }
   for (const corpse of clientWorld.corpses) {

@@ -7,7 +7,7 @@ import { useThree } from "@react-three/fiber";
 import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
-import { doAttack, doDrop, doEquip, doPickup } from "@/client/net/connection";
+import { doAttack, doDrop, doEquip, doPickup, doUse } from "@/client/net/connection";
 
 const MOUSE_SENSITIVITY = 0.0024; // rad per px at sensitivity 1
 const PITCH_LIMIT = 1.45; // rad, per contract
@@ -98,6 +98,13 @@ export function InputController(): null {
           if (lootId !== null) doPickup(lootId);
           return;
         }
+        case "KeyF":
+          // Use the selected hotbar slot (canteen fill/boil/drink, fishing rod,
+          // cooking raw food near fire). Same message the Tab panel USE button
+          // sends — zero wire change. Edge-triggered only (e.repeat already
+          // filtered above).
+          doUse(ui.selectedSlot);
+          return;
         case "KeyG":
           doDrop(ui.selectedSlot);
           return;
