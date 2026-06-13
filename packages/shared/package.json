@@ -10,6 +10,7 @@
     "./movement": "./src/movement.ts",
     "./protocol": "./src/protocol.ts",
     "./rng": "./src/rng.ts",
+    "./version": "./src/version.ts",
     "./world": "./src/world.ts"
   },
   "scripts": {

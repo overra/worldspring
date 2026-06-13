@@ -14,6 +14,11 @@
 import { randomBytes } from "node:crypto";
 
 // --- Mirrored constants (src/shared/constants.ts) ---
+// Two-sided join gate (packages/shared/src/protocol.ts, doc 03 §1): bots send
+// this as join.proto. Keep it equal to the server's PROTOCOL_VERSION — once
+// that bumps past 1, an absent or mismatched proto is rejected with
+// "incompatible version" and every bot silently fails to join.
+const PROTOCOL_VERSION = 1;
 const INPUT_SEND_MS = 50; // client batches input cmds at this interval
 const MAX_INPUT_DT = 0.05; // clamp for a single cmd dt (seconds)
 const MAX_CMDS_PER_FRAME = 6; // burst allowance for long frames
@@ -252,7 +257,7 @@ function connectBot(bot) {
   }
   bot.ws = ws;
   ws.addEventListener("open", () => {
-    botSend(bot, { t: "join", name: bot.name, token: bot.token });
+    botSend(bot, { t: "join", name: bot.name, token: bot.token, proto: PROTOCOL_VERSION });
   });
   ws.addEventListener("message", (ev) => onBotMessage(bot, ev.data));
   ws.addEventListener("error", () => {

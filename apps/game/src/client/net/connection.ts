@@ -10,7 +10,7 @@ import {
   START_HOUR,
 } from "@worldspring/shared/constants";
 import { ITEM_DEFS } from "@worldspring/shared/items";
-import { gameHours } from "@worldspring/shared/protocol";
+import { gameHours, PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
 import { createWorld } from "@worldspring/shared/world";
 import { clientWorld, resetClientWorld } from "@/client/runtime";
@@ -76,7 +76,12 @@ export function connect(name: string): void {
 
   ws.onopen = () => {
     if (socket !== ws) return;
-    sendMsg({ t: "join", name: name.slice(0, MAX_NAME_LENGTH), token: getToken() });
+    sendMsg({
+      t: "join",
+      name: name.slice(0, MAX_NAME_LENGTH),
+      token: getToken(),
+      proto: PROTOCOL_VERSION, // two-sided join gate (doc 03 §1)
+    });
     startPing();
   };
   ws.onmessage = (ev: MessageEvent) => {
@@ -260,6 +265,19 @@ function setMeFrom(you: YouState): void {
 }
 
 function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
+  // Client-side half of the two-sided protocol gate (doc 03 §1): refuse a
+  // server whose protocol differs from ours BEFORE building the world, so a
+  // desync never starts. An absent `proto` (an older server that predates the
+  // field) reads as undefined !== PROTOCOL_VERSION, so the same check treats it
+  // as a mismatch. This catches new-client-vs-old-server; the server-side gate
+  // covers the other direction.
+  if (msg.proto !== PROTOCOL_VERSION) {
+    const ui = useUIStore.getState();
+    ui.setError("This server runs an incompatible version. Update your game or pick another server.");
+    disconnect();
+    return;
+  }
+
   resetPrediction();
   resetInterpolation();
 

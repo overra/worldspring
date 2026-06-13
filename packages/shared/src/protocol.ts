@@ -4,6 +4,29 @@
 
 import type { ItemStack, ItemType } from "./items";
 
+// --- Protocol version: the two-sided join gate ---
+
+/**
+ * Wire + sim compatibility version. A client and server with EQUAL values can
+ * play together: messages parse, and the shared deterministic sim
+ * (movement.ts / world.ts) produces identical results on both ends. Carried in
+ * both `join.proto` (client->server) and `welcome.proto` (server->client) as a
+ * TWO-SIDED hard join gate — the server refuses mismatched clients before
+ * touching any character state, the client refuses older servers before
+ * building the world. See docs/plans/03-server-info-contract.md §1.
+ *
+ * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, to
+ * the movement.ts / world.ts behavior the client predicts, or to the ItemType
+ * wire enums. While this is `1` an ABSENT `join.proto` is accepted (pre-gate
+ * clients are sim-compatible with v1 by definition); the moment it bumps to
+ * `2+` the server rejects absent `proto` like any other mismatch.
+ *
+ * Typed `number`, not the literal `1`, deliberately: the gate compares against
+ * it at runtime, so the comparison must keep compiling — and flip its
+ * absent-proto handling — the instant this value bumps.
+ */
+export const PROTOCOL_VERSION: number = 1;
+
 // --- Sim state shared by prediction (client) and authority (server) ---
 
 export interface PlayerCore {
@@ -42,7 +65,10 @@ export const ANIM_ATTACKING = 4;
 // --- Client -> Server ---
 
 export type ClientMsg =
-  | { t: "join"; name: string; token: string }
+  /** `proto` = the client's PROTOCOL_VERSION (two-sided join gate, doc 03 §1).
+   * Optional on the wire: pre-gate clients omit it and are accepted only while
+   * PROTOCOL_VERSION === 1. The server gates on it at the top of handleJoin. */
+  | { t: "join"; name: string; token: string; proto?: number }
   | { t: "input"; cmds: InputCmd[] }
   /** `at` = game-time the shooter's screen was rendering (interpolation runs
    * INTERP_DELAY_MS behind). The server rewinds targets to it, clamped to
@@ -195,6 +221,12 @@ export type ServerMsg =
       t: "welcome";
       id: string;
       seed: number;
+      /** The server's PROTOCOL_VERSION (two-sided join gate, doc 03 §1). The
+       * client refuses a server whose value differs from its own — treating an
+       * absent value (an older server that predates this field) as a mismatch
+       * — before building the world. Additive: older clients destructure named
+       * fields and ignore it, so adding it does not itself bump the version. */
+      proto: number;
       time: number; // server game time in seconds since boot
       you: YouState;
       inv: (ItemStack | null)[];
@@ -253,11 +285,20 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
   if (typeof msg !== "object" || msg === null) return null;
   const m = msg as Record<string, unknown>;
   switch (m.t) {
-    case "join":
+    case "join": {
       if (typeof m.name !== "string") return null;
       // Identity token: 32-64 hex chars, generated and stored client-side.
       if (typeof m.token !== "string" || !/^[0-9a-f]{32,64}$/i.test(m.token)) return null;
-      return { t: "join", name: m.name, token: m.token };
+      // proto (two-sided join gate, doc 03 §1): optional on the wire. When
+      // present it MUST be a finite number; anything else is malformed.
+      // The accept/reject decision against PROTOCOL_VERSION lives in handleJoin.
+      let proto: number | undefined;
+      if (m.proto !== undefined) {
+        if (!isFiniteNum(m.proto)) return null;
+        proto = m.proto;
+      }
+      return { t: "join", name: m.name, token: m.token, proto };
+    }
     case "input": {
       if (!Array.isArray(m.cmds)) return null;
       // Truncate oversized batches instead of rejecting wholesale — a reject
