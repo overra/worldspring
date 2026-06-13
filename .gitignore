@@ -10,6 +10,7 @@ dist/
 # Local secrets & env
 .dev.vars
 .mcp.json
+.spike-state.json
 
 # Logs & OS
 *.log
