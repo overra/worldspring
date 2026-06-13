@@ -2,9 +2,12 @@
 
 > Produced by the `wave0-next-milestones` workflow. This milestone **cannot run autonomously** —
 > it needs a throwaway Cloudflare account + credentials and makes side-effectful API calls (create an
-> OAuth client, upload a Worker, force-delete it). Run the harness at
-> [`scripts/spike-deploy.mjs`](../../../scripts/spike-deploy.mjs) one phase at a time. The milestone's
+> OAuth client, upload a Worker, force-delete it). Run the harness one phase at a time. The milestone's
 > deliverable is the **findings** written back into `docs/plans/research/cf-{oauth,deploy,costs}.md`.
+>
+> **The harness is committed at [`scripts/spike-deploy.mjs`](../../../scripts/spike-deploy.mjs) in this
+> PR — use the tracked file, do not run an untracked local copy.** Any "create it from the skeleton"
+> phrasing in the summary/steps below predates committing it.
 
 ## Summary
 
@@ -16,7 +19,7 @@ KEY PATH MAPPING (docs predate the monorepo; verified against the primary checko
 - Shared package: packages/shared/src/* (NOT src/shared/...). constants.ts:WORLD_SEED, protocol.ts, version.ts.
 - Build output dir is dist/survival_game/ (the @cloudflare/vite-plugin output name "survival_game" was NOT renamed with the brand; the dist/ in the tree is a stale Jun-11 build whose generated wrangler.json still says name "survival-game"). Worker bundle dist/survival_game/index.js = 34 KB gzip; client assets dist/client/** = 60 files / 4.8 MB. Generated deploy config dist/survival_game/wrangler.json is the metadata source-of-truth.
 - Research files live at docs/plans/research/cf-deploy.md, cf-oauth.md, cf-costs.md (NOT research/...). These are where M1 records findings.
-- Spike script per doc: scripts/spike-deploy.mjs at repo root (zero-dep Node ESM, modeled on apps/game/scripts/loadtest.mjs). NOTE the brief says zero repo CHANGES — so for THIS runbook Adam creates scripts/spike-deploy.mjs himself from the skeleton below; it is the milestone's only sanctioned new file.
+- Spike script per doc: scripts/spike-deploy.mjs at repo root (zero-dep Node ESM, modeled on apps/game/scripts/loadtest.mjs). NOTE the brief says zero repo CHANGES — so for THIS runbook the harness is committed at `scripts/spike-deploy.mjs` (this PR) — use the tracked file.
 
 REPO-STATE FACTS that shape the spike:
 - doc 03 M1 ALREADY landed: PROTOCOL_VERSION=1 (packages/shared/src/protocol.ts:28) and GAME_VERSION="0.1.0" (packages/shared/src/version.ts) both exist.
@@ -99,7 +102,7 @@ The spike is read-mostly on OAuth (one client created+deleted) and write-heavy o
 
 ### 0. Enumerate OAuth scopes and pin the Workers write scope ID (resolves U1, the biggest blocker)
 
-```
+```text
 GET https://api.cloudflare.com/client/v4/oauth/scopes  (Authorization: Bearer <scratch-account API token>)
 ```
 
@@ -107,7 +110,7 @@ Confirmed live this session: requires auth, no role requirement, returns paginat
 
 ### 1. Create a PRIVATE confidential OAuth client on the scratch account
 
-```
+```text
 POST https://api.cloudflare.com/client/v4/accounts/{scratch_account_id}/oauth_clients  (Bearer token needs 'OAuth Clients Write' permission)
 ```
 
@@ -115,7 +118,7 @@ Body (shape confirmed live this session): {client_name:'Worldspring M1 Spike', g
 
 ### 2. Authorization request -> consent -> capture code (manual browser step; resolves U3)
 
-```
+```text
 GET https://dash.cloudflare.com/oauth2/auth?response_type=code&client_id=<id>&redirect_uri=http%3A%2F%2Flocalhost%3A8788%2Foauth%2Fcallback&scope=openid%20<account-read>%20<workers-write>&state=<nonce>&code_challenge=<S256>&code_challenge_method=S256
 ```
 
@@ -123,7 +126,7 @@ No documented worked example (re-confirmed absent this session) — params are R
 
 ### 3. Token exchange (resolves U4)
 
-```
+```text
 POST https://dash.cloudflare.com/oauth2/token  (Authorization: Basic base64(client_id:client_secret); body application/x-www-form-urlencoded: grant_type=authorization_code, code=<code>, redirect_uri=<exact-match>, code_verifier=<verifier>)
 ```
 
@@ -131,7 +134,7 @@ Confirmed live: token endpoint accepts client_secret_basic. Record verbatim: acc
 
 ### 4. Account discovery (resolves U2)
 
-```
+```text
 GET https://api.cloudflare.com/client/v4/accounts  (Authorization: Bearer <access_token>)
 ```
 
@@ -139,7 +142,7 @@ Confirm it returns exactly the granted scratch account. Also GET https://dash.cl
 
 ### 5. Pre-check existing script name + read migration_tag (exercises U7 clobber guard)
 
-```
+```text
 GET https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{spike-name}  (Bearer access_token)
 ```
 
@@ -147,7 +150,7 @@ Expect 404 on a fresh name -> fresh create. (After step 8 you re-GET this to che
 
 ### 6. Ensure account workers.dev subdomain (resolves U5)
 
-```
+```text
 GET then PUT https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/subdomain  (Bearer access_token; PUT body {subdomain:'<unique>'})
 ```
 
@@ -155,7 +158,7 @@ FRESH accounts have none. Record the GET-on-empty shape (404? null?). Force a co
 
 ### 7. Asset upload session + bucket upload
 
-```
+```text
 POST .../workers/scripts/{spike-name}/assets-upload-session (Bearer access_token, body {manifest:{'/path':{hash,size},...}})  THEN  POST https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/assets/upload?base64=true (Bearer SESSION-JWT, multipart, part name=file hash, body=base64, per-part Content-Type)
 ```
 
@@ -163,7 +166,7 @@ Hash algorithm (confirmed in cf-deploy.md §2.2): first 32 hex of sha256(base64(
 
 ### 8. Multipart script PUT — the actual deploy (resolves U6 default, exercises U7 tags)
 
-```
+```text
 PUT https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{spike-name}  (Bearer access_token; multipart/form-data: part 'metadata' application/json + part 'index.js' application/javascript+module filename=index.js)
 ```
 
@@ -171,7 +174,7 @@ metadata (fields confirmed live): {main_module:'index.js', compatibility_date:'2
 
 ### 9. Enable the per-script workers.dev route (resolves U6)
 
-```
+```text
 GET (record default enabled) THEN POST https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{spike-name}/subdomain  (Bearer access_token; POST body {enabled:true, previews_enabled:false})
 ```
 
@@ -179,7 +182,7 @@ GET first to record whether enabled defaults true/false for a raw-API script (U6
 
 ### 10. Verify the deploy is live (M1-appropriate target)
 
-```
+```text
 GET https://<spike-name>.<subdomain>.workers.dev/api/health  (no auth — public worker route)
 ```
 
@@ -187,7 +190,7 @@ IMPORTANT: poll /api/health, NOT /api/server-info — the server-info route does
 
 ### 11. WORKERS-LOGS WS MEASUREMENT (resolves U11) — the headline number
 
-```
+```text
 Open wss://<spike-name>.<subdomain>.workers.dev/ws from ONE client (browser tab or one loadtest bot: node apps/game/scripts/loadtest.mjs wss://<spike-name>.<subdomain>.workers.dev/ws 1 600) for ~10 min, then read 'Log Events Written' in the dashboard Observability panel.
 ```
 
@@ -195,7 +198,7 @@ Worker MUST be the observability.enabled:true + NO head_sampling_rate build (ste
 
 ### 12. Update-path tests (resolve U8 + U10) — the migration & keep_bindings burn-down
 
-```
+```text
 Re-PUT the same worker three ways: (a) migrations field OMITTED; (b) migrations re-sent identical {new_tag:'v1'}; (c) re-send only worldspring bindings + keep_bindings:['secret_text'] + explicit DIRECTORY_TOKEN=new, after having set ADMIN_TOKEN out-of-band via the secrets endpoint.
 ```
 
@@ -203,7 +206,7 @@ Re-PUT the same worker three ways: (a) migrations field OMITTED; (b) migrations 
 
 ### 13. Cleanup / force-delete (resolves U9) — ALWAYS run last
 
-```
+```text
 DELETE https://api.cloudflare.com/client/v4/accounts/{account_id}/workers/scripts/{spike-name}?force=true  (Bearer access_token).  THEN DELETE https://api.cloudflare.com/client/v4/accounts/{adam_or_scratch_account_id}/oauth_clients/{client_id} to remove the spike OAuth client.
 ```
 
@@ -226,9 +229,9 @@ First DELETE WITHOUT force to record the refusal-because-of-DO behavior, then wi
 
 2. On the scratch account, create the bootstrap API token (Edit Cloudflare Workers template + OAuth Clients Write). Copy it.
 
-3. Build fresh artifacts from the primary checkout: `cd /Users/asnodgrass/github/survival-game && pnpm --filter @worldspring/game build`. Verify dist/survival_game/index.js exists (~34 KB gzip) and dist/client/** has ~60 files.
+3. Build fresh artifacts from the primary checkout: `cd "$(git rev-parse --show-toplevel)" && pnpm --filter @worldspring/game build`. Verify dist/survival_game/index.js exists (~34 KB gzip) and dist/client/** has ~60 files.
 
-4. Create scripts/spike-deploy.mjs at the repo root from the skeleton below (this is the milestone's ONLY sanctioned new repo file; everything else is research-doc edits). Fill the CONFIG block: BOOTSTRAP_TOKEN, and after step 0 the SCOPE_IDS, and after step 1 the CLIENT_ID/CLIENT_SECRET.
+4. Use the committed `scripts/spike-deploy.mjs` (this PR — do not run an untracked local copy). Fill the CONFIG block: BOOTSTRAP_TOKEN, and after step 0 the SCOPE_IDS, and after step 1 the CLIENT_ID/CLIENT_SECRET.
 
 5. Run phase 0 (`node scripts/spike-deploy.mjs scopes`) to dump the scope list; pick and pin the Workers-write + account-read ids into CONFIG.
 
@@ -267,7 +270,7 @@ First DELETE WITHOUT force to record the refusal-because-of-DO behavior, then wi
 The full zero-dep Node harness is at [`scripts/spike-deploy.mjs`](../../../scripts/spike-deploy.mjs).
 Phases (run one at a time, fill the CONFIG block between them):
 
-```
+```bash
 node scripts/spike-deploy.mjs scopes        # U1  GET /oauth/scopes
 node scripts/spike-deploy.mjs create-client # create the private OAuth client
 node scripts/spike-deploy.mjs login         # U3,U4 auth URL + token exchange

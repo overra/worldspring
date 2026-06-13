@@ -36,8 +36,9 @@ const CONFIG = {
   CLIENT_ID: process.env.CF_CLIENT_ID ?? "TODO",
   CLIENT_SECRET: process.env.CF_CLIENT_SECRET ?? "TODO",
   REDIRECT_URI: "http://localhost:8788/oauth/callback", // localhost-accepted? = U6/cf-oauth §6
-  // Throwaway script name — guard-prefixed, NOT a name a real deploy wants:
-  SCRIPT_NAME: "spike-worldspring-" + randomBytes(3).toString("hex"),
+  // Throwaway script name: generated + persisted by resolveScriptName() in the
+  // `deploy` phase (env override CF_SPIKE_SCRIPT_NAME) so every phase targets the
+  // SAME worker. NOT a static field — a per-`node`-run random broke update/clean.
   WORKER_BUNDLE: "dist/survival_game/index.js", // built by `pnpm --filter @worldspring/game build`
   ASSET_DIR: "dist/client",                      // 60 files / 4.8 MB
   COMPAT_DATE: "2026-06-01",
@@ -45,13 +46,26 @@ const CONFIG = {
 };
 const API = "https://api.cloudflare.com/client/v4";
 const DASH = "https://dash.cloudflare.com";
-const STATE_FILE = ".spike-state.json"; // gitignored scratch: {accountId, accessToken, subdomain}
+const STATE_FILE = ".spike-state.json"; // gitignored: {accountId, accessToken, subdomain, scriptName}
 
 // ─── tiny helpers (style mirrors loadtest.mjs) ───────────────────────────────
 const log = (...a) => console.log(...a);
 const die = (m) => { console.error("spike:", m); process.exit(1); };
 const loadState = async () => { try { return JSON.parse(await readFile(STATE_FILE, "utf8")); } catch { return {}; } };
 const saveState = async (s) => { const { writeFile } = await import("node:fs/promises"); await writeFile(STATE_FILE, JSON.stringify(s, null, 2)); };
+
+// Resolve the throwaway script name, persisting it so every phase (separate
+// `node` runs) targets the SAME worker. `deploy` creates it; later phases die if
+// it is missing rather than inventing a fresh (nonexistent) name.
+async function resolveScriptName(state, { create }) {
+  if (state.scriptName) return state.scriptName;
+  state.scriptName =
+    process.env.CF_SPIKE_SCRIPT_NAME ??
+    (create ? "spike-worldspring-" + randomBytes(3).toString("hex") : null);
+  if (!state.scriptName) die("no script name in state — run `deploy` first (or set CF_SPIKE_SCRIPT_NAME)");
+  await saveState(state);
+  return state.scriptName;
+}
 
 async function cf(path, { method = "GET", token, body, headers = {}, raw = false } = {}) {
   const res = await fetch(path.startsWith("http") ? path : API + path, {
@@ -152,10 +166,15 @@ async function phaseLogin() {
 async function phaseDeploy() {
   const st = await loadState();
   const token = st.accessToken ?? die("no access token — run `login` first");
-  // U2: account discovery
+  const scriptName = await resolveScriptName(st, { create: true });
+  // U2: account discovery — fail closed instead of silently using accounts[0].
   const acc = await cf(`/accounts`, { token });
-  const accountId = acc.json?.result?.[0]?.id ?? die("no account from GET /accounts (U2)");
-  log("  discovered account_id:", accountId, " (U2 — confirm this is the granted scratch acct)");
+  const accounts = acc.json?.result ?? [];
+  if (accounts.length === 0) die("no accounts from GET /accounts (U2)");
+  if (accounts.length > 1 && !process.env.CF_ACCOUNT_ID)
+    die(`multiple accounts granted (${accounts.map((a) => a.id).join(", ")}) — set CF_ACCOUNT_ID to pick the scratch one`);
+  const accountId = process.env.CF_ACCOUNT_ID ?? accounts[0].id;
+  log("  using account_id:", accountId, " (U2 — confirm this is the granted scratch acct)");
   st.accountId = accountId; await saveState(st);
   // U5: subdomain GET-on-empty + PUT (+ optionally force a conflict by hand first)
   const sub = await cf(`/accounts/${accountId}/workers/subdomain`, { token, raw: true });
@@ -173,7 +192,7 @@ async function phaseDeploy() {
   // (optional but recommended) asset round-trip to validate the hash algorithm (U-none, but proves §2.2)
   const manifest = await buildManifest(CONFIG.ASSET_DIR);
   let completionJwt = null;
-  const sess = await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}/assets-upload-session`, {
+  const sess = await cf(`/accounts/${accountId}/workers/scripts/${scriptName}/assets-upload-session`, {
     method: "POST", token, headers: { "content-type": "application/json" }, body: JSON.stringify({ manifest: manifest.map }),
   });
   const buckets = sess.json?.result?.buckets ?? [];
@@ -198,19 +217,19 @@ async function phaseDeploy() {
   fd.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
   const bundle = await readFile(CONFIG.WORKER_BUNDLE);
   fd.append("index.js", new Blob([bundle], { type: "application/javascript+module" }), "index.js");
-  const put = await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}`, { method: "PUT", token, body: fd });
+  const put = await cf(`/accounts/${accountId}/workers/scripts/${scriptName}`, { method: "PUT", token, body: fd });
   log("  PUT assertions: named_handlers=", JSON.stringify(put.json?.result?.named_handlers),
       " migration_tag=", put.json?.result?.migration_tag, " has_assets=", put.json?.result?.has_assets);
   // U6: per-script subdomain default + enable
-  const sd = await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}/subdomain`, { token, raw: true });
+  const sd = await cf(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, { token, raw: true });
   log("  per-script subdomain DEFAULT enabled (U6):", JSON.stringify(sd.json).slice(0, 200));
-  await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}/subdomain`, {
+  await cf(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
     method: "POST", token, headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true, previews_enabled: false }),
   });
   // U7: do tags round-trip?
-  const re = await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}`, { token });
+  const re = await cf(`/accounts/${accountId}/workers/scripts/${scriptName}`, { token });
   log("  tags round-trip (U7)? ", JSON.stringify(re.json?.result?.tags ?? re.json?.result?.default_environment ?? "n/a"));
-  const url = `https://${CONFIG.SCRIPT_NAME}.${subdomain}.workers.dev`;
+  const url = `https://${scriptName}.${subdomain}.workers.dev`;
   log("\n  LIVE URL:", url);
   // M1 verify target is /api/health (server-info route does NOT exist yet):
   const h = await fetch(url + "/api/health").then((r) => r.status).catch((e) => String(e));
@@ -256,12 +275,13 @@ async function uploadBuckets(accountId, buckets, jwt, manifest) {
 async function phaseUpdateTests() {
   const st = await loadState(); const { accountId, accessToken: token } = st;
   if (!accountId || !token) die("run deploy first");
+  const scriptName = await resolveScriptName(st, { create: false });
   const bundle = await readFile(CONFIG.WORKER_BUNDLE);
   const putMeta = async (meta, label) => {
     const fd = new FormData();
     fd.append("metadata", new Blob([JSON.stringify(meta)], { type: "application/json" }));
     fd.append("index.js", new Blob([bundle], { type: "application/javascript+module" }), "index.js");
-    const r = await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}`, { method: "PUT", token, body: fd });
+    const r = await cf(`/accounts/${accountId}/workers/scripts/${scriptName}`, { method: "PUT", token, body: fd });
     log(`  [${label}] status=${r.status} migration_tag=${r.json?.result?.migration_tag} err=${JSON.stringify(r.json?.errors ?? "").slice(0,200)}`);
   };
   const base = { main_module: "index.js", compatibility_date: CONFIG.COMPAT_DATE,
@@ -274,7 +294,7 @@ async function phaseUpdateTests() {
   // U10: keep_bindings test. FIRST set an operator secret out-of-band:
   log("  >> Before the keep_bindings PUT, set ADMIN_TOKEN as an operator would:");
   log("     wrangler secret put ADMIN_TOKEN -c apps/game/wrangler.jsonc   (against the SCRATCH account)");
-  log("     (or POST /accounts/" + accountId + "/workers/scripts/" + CONFIG.SCRIPT_NAME + "/secrets)");
+  log("     (or POST /accounts/" + accountId + "/workers/scripts/" + scriptName + "/secrets)");
   await putMeta({
     ...base,
     bindings: [
@@ -283,7 +303,7 @@ async function phaseUpdateTests() {
     ],
     keep_bindings: ["secret_text"], // <-- UNCONFIRMED this field even exists on the raw PUT (U10)
   }, "U10 keep_bindings+explicit-rotate");
-  const set = await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}/settings`, { token, raw: true });
+  const set = await cf(`/accounts/${accountId}/workers/scripts/${scriptName}/settings`, { token, raw: true });
   log("  final bindings (U10 — did ADMIN_TOKEN survive? did explicit DIRECTORY_TOKEN win?):",
       JSON.stringify(set.json?.result?.bindings ?? set.json).slice(0, 600));
   log(">> If keep_bindings was rejected/ignored: record that, and switch rotation to delete-then-set (doc §7).");
@@ -293,10 +313,11 @@ async function phaseUpdateTests() {
 async function phaseCleanup() {
   const st = await loadState(); const { accountId, accessToken: token } = st;
   if (!accountId || !token) die("nothing to clean");
+  const scriptName = await resolveScriptName(st, { create: false });
   // U9: try WITHOUT force first (record refusal due to DO namespace), then with force
-  await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}`, { method: "DELETE", token, raw: true });
+  await cf(`/accounts/${accountId}/workers/scripts/${scriptName}`, { method: "DELETE", token, raw: true });
   log("  ^ DELETE without force (U9 — expect refusal because of the DO namespace)");
-  await cf(`/accounts/${accountId}/workers/scripts/${CONFIG.SCRIPT_NAME}?force=true`, { method: "DELETE", token });
+  await cf(`/accounts/${accountId}/workers/scripts/${scriptName}?force=true`, { method: "DELETE", token });
   log("  ^ DELETE ?force=true (U9 — destroys the DO world; confirm gone in dashboard)");
   // delete the throwaway OAuth client (bootstrap token, owner account)
   await cf(`/accounts/${CONFIG.CLIENT_OWNER_ACCOUNT_ID}/oauth_clients/${CONFIG.CLIENT_ID}`, { method: "DELETE", token: CONFIG.BOOTSTRAP_TOKEN });
