@@ -23,6 +23,9 @@ const PING_INTERVAL_MS = 2000;
 
 let socket: WebSocket | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
+// Last name used to join — remembered so the preview testbed QA panel (doc 10
+// M4) can re-provision (RESET / set-switch) by rejoining with the same name.
+let lastName = "Survivor";
 
 // --- Identity token: 32 hex chars, persisted so the server can restore the
 // same character across page loads. localStorage can throw (private browsing,
@@ -62,8 +65,9 @@ function getToken(): string {
   }
 }
 
-export function connect(name: string): void {
+export function connect(name: string, scenario?: string): void {
   if (socket !== null) disconnect();
+  lastName = name;
 
   const ui = useUIStore.getState();
   ui.setError(null);
@@ -80,6 +84,9 @@ export function connect(name: string): void {
       name: name.slice(0, MAX_NAME_LENGTH),
       token: getToken(),
       proto: PROTOCOL_VERSION, // two-sided join gate (doc 03 §1)
+      // doc 10 M3/M4: preview-only testbed set selector. The server ignores it
+      // unless env.TESTBED is on, so it is inert in prod.
+      ...(scenario ? { scenario } : {}),
     });
     startPing();
   };
@@ -95,6 +102,27 @@ export function connect(name: string): void {
     if (socket !== ws) return;
     handleClosed();
   };
+}
+
+/** Replace the persisted identity with a brand-new token so the NEXT join is a
+ * fresh life (handleJoin path 3 → provisionTestbed re-seeds), not a resume.
+ * Used only by the preview testbed QA panel. */
+function forceFreshToken(): void {
+  const fresh = generateToken();
+  memoryToken = fresh;
+  try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, fresh);
+  } catch {
+    /* in-memory token only (private browsing / blocked storage) */
+  }
+}
+
+/** Testbed RESET / set-switch (doc 10 M4): rejoin as a fresh life provisioned
+ * with `scenario`. Fresh token → handleJoin path 3 → provisionTestbed. Preview-
+ * only — the server ignores the scenario field unless env.TESTBED is on. */
+export function reprovision(scenario: string): void {
+  forceFreshToken();
+  connect(lastName, scenario);
 }
 
 export function disconnect(): void {
