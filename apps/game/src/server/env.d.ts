@@ -21,4 +21,9 @@ interface Env {
    * is var-less and resolves to DEFAULT_CONFIG); typegen would emit a literal
    * type if a value were present, so it is declared here. */
   GAME_CONFIG?: unknown;
+  /** doc 10: preview-only testbed gate. Set to "1" ONLY by preview.yml's
+   * `--var TESTBED:1` on worldspring-pr-<N> deploys; declared here (NOT in
+   * wrangler.jsonc) so the var-less official deploy leaves it undefined and the
+   * prod join path is byte-identical. isTestbedEnabled() checks it === "1". */
+  TESTBED?: string;
 }

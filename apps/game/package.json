@@ -13,10 +13,11 @@
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "loadtest": "node scripts/loadtest.mjs",
-    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot",
+    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:testbed",
     "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",
     "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs",
-    "test:loot": "node --experimental-strip-types scripts/loot-invariant.mjs"
+    "test:loot": "node --experimental-strip-types scripts/loot-invariant.mjs",
+    "test:testbed": "node --experimental-strip-types scripts/testbed-provision.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

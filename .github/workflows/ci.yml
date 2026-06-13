@@ -63,3 +63,17 @@ jobs:
             <(pnpm --filter @worldspring/shared fingerprint | grep '^seed') \
             <(grep '^seed' packages/shared/scripts/world.fingerprint.txt) \
           && echo "worldgen fingerprint byte-identical ✓"
+
+      # doc 10 prod-safety: TESTBED must reach the worker ONLY via preview.yml's
+      # `--var TESTBED:1` on per-PR deploys — never baked into a committed wrangler
+      # config (a value there would override the code default and leak the testbed
+      # provisioning into prod). dist/worldspring/wrangler.json exists post-build.
+      - name: Assert TESTBED is not baked into any wrangler config
+        shell: bash
+        run: |
+          hits=$(grep -rIl TESTBED apps/game/wrangler.jsonc apps/game/dist/worldspring/wrangler.json 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::TESTBED found in a wrangler config ($hits) — it must arrive only via preview.yml --var, never baked in."
+            exit 1
+          fi
+          echo "no TESTBED in wrangler config ✓"

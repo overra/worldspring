@@ -63,6 +63,8 @@ jobs:
 
       # Deploy the built config under a per-PR name. --name overrides the script
       # name; the v1 migration creates a fresh GameRoom DO namespace under it.
+      # --var TESTBED:1 turns on the doc 10 preview-only testbed provisioning for
+      # THIS deploy only (the official deploy is var-less → prod stays untouched).
       - name: Deploy preview worker
         id: deploy
         if: steps.gate.outputs.ok == 'true'
@@ -75,6 +77,7 @@ jobs:
           command: >-
             deploy -c dist/worldspring/wrangler.json
             --name worldspring-pr-${{ github.event.pull_request.number }}
+            --var TESTBED:1
 
       - name: Comment preview URL
         if: steps.gate.outputs.ok == 'true'
