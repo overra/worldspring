@@ -8,7 +8,7 @@ import {
   MAX_NAME_LENGTH,
 } from "@worldspring/shared/constants";
 import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
-import { ITEM_DEFS } from "@worldspring/shared/items";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
 import { createWorld } from "@worldspring/shared/world";
@@ -167,7 +167,7 @@ export function doUse(slot: number): void {
   // Optimistic local feedback; the server confirms via the next inv message.
   const stack = useUIStore.getState().inventory[slot];
   if (!stack) return;
-  const kind = ITEM_DEFS[stack.type].kind;
+  const kind = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).kind;
   if (kind === "food") cueSound("eat");
   else if (kind === "drink") cueSound("drink");
   else if (kind === "heal") cueSound("bandage");

@@ -41,9 +41,25 @@ export function rollFromTable(table: WeightedTable): ItemStack {
   return { type: last.type, count: last.min };
 }
 
+/** Low weight — the map is a rare find, not a renewable resource. */
+const MAP_LOOT_WEIGHT = 5;
+
+/**
+ * The tier table, plus (doc 12) the map item in coastal/inland ONLY when the
+ * server makes the map findable (map.acquire === "loot"). On "spawn"/"none"
+ * servers the map never enters the loot economy.
+ */
+function effectiveTable(state: GameState, tier: LootTier): WeightedTable {
+  const base = LOOT_TABLES[tier];
+  if (state.config.map.acquire === "loot" && (tier === "coastal" || tier === "inland")) {
+    return [...base, { type: "map", weight: MAP_LOOT_WEIGHT, min: 1, max: 1 }];
+  }
+  return base;
+}
+
 /** Roll one stack from the zone tier's table (coastal/inland/military). */
-export function rollLootStack(tier: LootTier): ItemStack {
-  return rollFromTable(LOOT_TABLES[tier]);
+export function rollLootStack(state: GameState, tier: LootTier): ItemStack {
+  return rollFromTable(effectiveTable(state, tier));
 }
 
 /**
@@ -59,7 +75,7 @@ function lootEffect(state: GameState, spawn: LootSpawn): { tier: LootTier; eff: 
 
 function spawnLootAt(state: GameState, spawn: LootSpawn): void {
   const { tier, eff } = lootEffect(state, spawn);
-  const stack = rollLootStack(tier);
+  const stack = rollLootStack(state, tier);
   // density > 1 fattens stacks. The < 1 case is a per-spawn STOCKING probability
   // owned by the callers — never a silent no-op here, which would orphan the
   // spawn point (neither entity nor timer; see stockInitialLoot's invariant).

@@ -102,11 +102,14 @@ function freshStats(state: GameState): PlayerStats {
   return { bornAt: state.time, kills: 0, zombieKills: 0, distanceM: 0 };
 }
 
-/** Build the inventory a brand-new player spawns with: a flashlight and a bandage. */
-function startingInventory(): (ItemStack | null)[] {
+/** Build the inventory a brand-new player spawns with: a flashlight, a bandage,
+ * and (doc 12) the map item iff the server grants it at spawn (acquire "loot"
+ * makes it a find; "none" disables the full map). */
+function startingInventory(state: GameState): (ItemStack | null)[] {
   const inv = emptyInventory();
   addToInventory(inv, "flashlight", 1);
   addToInventory(inv, "bandage", 1);
+  if (state.config.map.acquire === "spawn") addToInventory(inv, "map", 1);
   return inv;
 }
 
@@ -123,7 +126,7 @@ export function createPlayer(
     name,
     core: freshSpawnCore(state),
     vitals: { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL },
-    inventory: startingInventory(),
+    inventory: startingInventory(state),
     selectedSlot: 0,
     alive: true,
     offline: false,
@@ -203,7 +206,7 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   // spawnPlayerCorpse), so the new life keeps the items held at death rather
   // than starting empty. fullLoot (default) resets to the starting loadout.
   if (state.config.pvp.fullLoot) {
-    player.inventory = startingInventory();
+    player.inventory = startingInventory(state);
     player.selectedSlot = 0;
   }
   player.alive = true;
