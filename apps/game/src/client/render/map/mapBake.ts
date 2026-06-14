@@ -99,7 +99,11 @@ function bakeMap(world: World, size: number): BakedMap {
   const img = ctx.createImageData(px, px);
   img.data.set(pixels);
   ctx.putImageData(img, 0, 0);
-  drawPOIs(ctx, mapPOIs(world), proj, px);
+  // Bake terrain + POI shapes but NOT the labels: the minimap rotates the baked
+  // base (rotate-to-heading), which would turn baked text upside-down. Labels are
+  // drawn upright as an overlay on the full map instead (drawLabels), and the
+  // minimap shows none at its tight zoom.
+  drawPOIs(ctx, mapPOIs(world, { showLabels: false }), proj, px);
   return { size, px, proj, base: canvas };
 }
 
@@ -254,4 +258,24 @@ export function drawDynamicLayer(ctx: Ctx2D, toPx: ToPx, s: number): void {
   ctx.strokeStyle = "rgba(0,0,0,0.85)";
   ctx.stroke();
   ctx.restore();
+}
+
+/**
+ * Draw town name labels UPRIGHT at their projected positions. Kept out of the
+ * baked base (which the minimap rotates) so text never turns upside-down — the
+ * full map calls this after the dynamic layer; the minimap omits it.
+ */
+export function drawLabels(ctx: Ctx2D, world: World, toPx: ToPx, fontPx: number): void {
+  ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineWidth = Math.max(1, fontPx / 6);
+  for (const t of world.towns) {
+    const p = toPx(t.cx, t.cz);
+    const text = t.name.toUpperCase();
+    ctx.strokeStyle = "rgba(0,0,0,0.65)";
+    ctx.strokeText(text, p.x, p.y);
+    ctx.fillStyle = "#f5efe0";
+    ctx.fillText(text, p.x, p.y);
+  }
 }

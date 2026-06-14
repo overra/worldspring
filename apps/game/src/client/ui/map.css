@@ -47,7 +47,16 @@
   height: 188px;
   pointer-events: none;
   border: 1px solid var(--ui-border);
+  border-radius: 50%; /* circular — matches the rotate-to-heading viewport */
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+/* When the minimap is shown, drop the clock/online/ping stack below it so the
+   two stop overlapping in the top-right corner (doc 12 QA). The `has-minimap`
+   class is added by the HUD only when cfg.map.minimap is true — the same gate
+   that mounts the minimap (and loads this stylesheet). */
+.hud-status.has-minimap {
+  top: 210px; /* clears the 188px minimap (top 14 + 188 + ~8 gap) */
 }
 
 @media (max-width: 720px) {
@@ -56,5 +65,9 @@
     height: 132px;
     top: 10px;
     right: 10px;
+  }
+
+  .hud-status.has-minimap {
+    top: 152px; /* clears the 132px mobile minimap (top 10 + 132 + 10) */
   }
 }
