@@ -654,14 +654,7 @@ export function startChannel(
       }
     }
   }
-  player.action = {
-    kind,
-    slot,
-    arg,
-    totalS: durationS,
-    remainingS: durationS,
-    selectedAtStart: player.selectedSlot,
-  };
+  player.action = { kind, slot, arg, totalS: durationS, remainingS: durationS };
 }
 
 /**
@@ -711,17 +704,11 @@ export function tickActiveActions(state: GameState, dt: number): void {
       player.action = null;
       continue;
     }
-    // 4. Swapped the equipped hotbar slot since the cast started. Keyed off the
-    //    selectedAtStart snapshot (NOT action.slot, the completion target) so a
-    //    use issued from the inventory panel on a non-equipped slot still
-    //    completes; only an actual equip change mid-cast cancels. Applies to
-    //    every kind (craft included — not slot-bound, but still cancels on a swap
-    //    per §2).
-    if (player.selectedSlot !== action.selectedAtStart) {
-      player.action = null;
-      continue;
-    }
-    // 5. Cook only: left fire range (the net-new per-tick predicate). Emit the
+    // (Slot-swap interrupt is handled at the equip site — see equipSlot — not
+    //  here, so it fires the instant the equipped slot changes and catches an
+    //  equip-away-and-back within one tick that a point-in-time check here would
+    //  miss. Use from the inventory panel never equips, so it is unaffected.)
+    // 4. Cook only: left fire range (the net-new per-tick predicate). Emit the
     //    one-shot "moved away from the fire" notice — invisible cancellation is
     //    exactly the pain we are fixing.
     if (action.kind === "cook" && !nearFire(state, player.core.x, player.core.z)) {
@@ -770,6 +757,13 @@ function completeChannel(
 export function equipSlot(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
   if (slot < 0 || slot >= INVENTORY_SLOTS) return;
+  // §3 slot-swap interrupt, owned HERE (the mutation point) rather than in
+  // tickActiveActions like the other interrupts: cancelling the instant the
+  // equipped slot actually changes catches an equip-away-and-back within a single
+  // tick that a once-per-tick check would miss. Checked before the assignment so
+  // `selectedSlot` is still the pre-equip value. Inventory-panel use never calls
+  // equipSlot, so a non-equipped-slot use is never cancelled by this.
+  if (player.action !== null && slot !== player.selectedSlot) player.action = null;
   player.selectedSlot = slot;
   sendInventory(state, player);
 }

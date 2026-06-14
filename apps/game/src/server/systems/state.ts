@@ -32,8 +32,9 @@ export interface ActiveAction {
   /**
    * Inventory slot the cast's effect resolves against (which stack to consume on
    * completion). use/cook bind to the consumable slot; craft uses -1 (no source
-   * slot). NOTE: the mid-cast swap-cancel is keyed off `selectedAtStart`, NOT this
-   * field — `slot` is only the completion target.
+   * slot). NOT the slot-swap interrupt key — that cancels at the equip site
+   * (equipSlot), so a use issued from the inventory panel on a non-equipped slot
+   * still completes.
    */
   slot: number;
   /** Opaque per-kind payload resolved at completion (e.g. a recipe index). */
@@ -42,14 +43,6 @@ export interface ActiveAction {
   totalS: number;
   /** Game-seconds left; counted down by tickActiveActions, completes at <= 0. */
   remainingS: number;
-  /**
-   * The player's `selectedSlot` at cast start. The cast cancels when the equipped
-   * hotbar slot CHANGES from this (§3 slot-swap). Snapshotting the equipped slot —
-   * rather than comparing `selectedSlot` to `slot` — lets a use issued from the
-   * inventory panel (an arbitrary `msg.slot` that need not be equipped) complete
-   * instead of self-cancelling on the first tick.
-   */
-  selectedAtStart: number;
 }
 
 /** Per-life stats; reset on (re)spawn, written to the leaderboard on death. */
