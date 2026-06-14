@@ -241,6 +241,10 @@ export function drainAudioEvents(): GameEvent[] {
 
 /** Reset everything on disconnect/death-respawn-menu transitions. */
 export function resetClientWorld(): void {
+  // Free the baked map canvas (doc 12); a re-join rebuilds it from the new world.
+  // Dynamic import avoids a static runtime<->mapBake import cycle (mapBake reads
+  // clientWorld); by reset time the module is already loaded.
+  void import("./render/map/mapBake").then((m) => m.disposeBakedMap());
   clientWorld.ready = false;
   clientWorld.myId = "";
   clientWorld.players.clear();

@@ -7,6 +7,10 @@ import { EscapeMenu } from "./ui/EscapeMenu";
 import { DebugOverlay } from "./ui/DebugOverlay";
 import { QaPanel } from "./ui/QaPanel";
 import { TouchControls } from "./ui/TouchControls";
+// doc 12 — DOM/2D-canvas map overlays (no three.js), so they mount HERE, not in
+// GameCanvas. Each self-gates: Minimap on cfg.map.minimap, MapPanel on mapOpen.
+import { MapPanel } from "./ui/MapPanel";
+import { Minimap } from "./ui/Minimap";
 
 // Lazy boundary: GameCanvas.tsx owns the <Canvas> subtree and every three.js /
 // R3F / postprocessing import, so the menu shell chunk stays tiny. The canvas
@@ -34,6 +38,8 @@ export function App(): React.ReactElement {
         <GameCanvas />
       </Suspense>
       <HUD />
+      <Minimap />
+      <MapPanel />
       <TouchControls />
       <DebugOverlay />
       <QaPanel />

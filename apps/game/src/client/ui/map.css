@@ -1,0 +1,60 @@
+/* doc 12 M4 — full-screen map + corner minimap. 2D-canvas overlays, no three.js.
+   Base tokens (--ui-bg/border/dim) come from styles.css (frozen). */
+
+.map-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 8; /* above HUD (5) + touch (6), below the death screen (10) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 9, 11, 0.66);
+  pointer-events: auto;
+}
+
+.map-panel {
+  position: relative;
+  padding: 10px 10px 6px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.map-canvas {
+  display: block;
+  width: min(80vmin, calc(100vh - 96px));
+  height: auto;
+  aspect-ratio: 1 / 1;
+  image-rendering: auto;
+  border: 1px solid var(--ui-border);
+  background: #1d3a52;
+}
+
+.map-hint {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ui-dim);
+}
+
+.hud-minimap {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 5; /* HUD layer; pointer-events:none so it never blocks input */
+  width: 188px;
+  height: 188px;
+  pointer-events: none;
+  border: 1px solid var(--ui-border);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+@media (max-width: 720px) {
+  .hud-minimap {
+    width: 132px;
+    height: 132px;
+    top: 10px;
+    right: 10px;
+  }
+}
