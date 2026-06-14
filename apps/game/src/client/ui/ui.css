@@ -1035,7 +1035,15 @@
 .hotbar-icon {
   object-fit: contain;
   image-rendering: auto;
-  background: transparent !important;
+  /* No !important: the HUD onError handler sets an inline background color as the
+     missing-icon swatch fallback, and an !important rule here would override it
+     (that left items without a /icons/<type>.png showing a broken image). */
+  background: transparent;
+  /* .hotbar-swatch (also applied) sets `inset: 12px`, which over-constrains the
+     absolutely-positioned img against the 80% size below and pins it top-left.
+     Reset to inset:0 + margin:auto so the 80% box centers in the 48px slot. */
+  inset: 0;
+  margin: auto;
   width: 80%;
   height: 80%;
 }

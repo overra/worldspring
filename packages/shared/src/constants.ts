@@ -158,6 +158,14 @@ export const VENISON_PER_DEER_MIN = 2;
 export const VENISON_PER_DEER_MAX = 3;
 export const DEER_CORPSE_TTL_S = 180;
 
+// --- Fishing (interim mechanic — doc 05 M1; superseded by doc 07 M12) ---
+/** Distance ahead (along player yaw) where water is tested for fishing/filling. */
+export const WATER_SAMPLE_DIST = 2.5;
+/** Chance of catching a fish per cast (0..1). */
+export const FISH_CHANCE = 0.45;
+/** Cooldown between fishing casts (seconds). */
+export const FISHING_COOLDOWN_S = 8;
+
 // --- Lag compensation ---
 /** Max seconds the server will rewind target positions for a hitscan. Covers
  * INTERP_DELAY (120ms) + input batching (50ms) + ~150ms network. */
@@ -178,6 +186,14 @@ export const LOGOUT_LINGER_S = 60;
 export const WORLD_SAVE_INTERVAL_S = 20;
 /** Completed lives kept for the longest-lives leaderboard. */
 export const LEADERBOARD_MAX = 50;
+
+// --- Map & cartography (doc 12) ---
+/** DEFAULT_CONFIG.map.* — the generous, zero-wire baseline: minimap on, the map
+ *  item granted at spawn, the whole island revealed. `as const` narrows them to
+ *  the MapAcquire/MapReveal literals without importing config.ts. */
+export const MAP_MINIMAP_DEFAULT = true;
+export const MAP_ACQUIRE_DEFAULT = "spawn" as const;
+export const MAP_REVEAL_DEFAULT = "full" as const;
 
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */

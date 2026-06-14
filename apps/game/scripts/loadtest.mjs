@@ -41,7 +41,7 @@
 import { randomBytes } from "node:crypto";
 
 // --- Mirrored constants (packages/shared/src/constants.ts) ---
-const PROTOCOL_VERSION = 1; // keep == server PROTOCOL_VERSION or every join is rejected
+const PROTOCOL_VERSION = 2; // keep == server PROTOCOL_VERSION or every join is rejected
 const MAX_INPUT_DT = 0.05; // clamp for a single cmd dt (seconds)
 const MAX_CMDS_PER_FRAME = 6; // burst allowance for long frames
 const RESPAWN_DELAY_S = 4; // server gates respawn requests on this
@@ -716,7 +716,7 @@ function printFinalReport() {
     const tail = healthRows.filter((r) => r.upS <= lastUpS - 6).slice(-8); // ~last 24s minus final 6s
     const peakJoined = healthRows.reduce((m, r) => Math.max(m, r.joined), 0);
     const tailVals = tail.map((r) => r.joined).sort((a, b) => a - b);
-    const tailMedian = tailVals.length ? tailVals[Math.floor(tailVals.length / 2)] : 0;
+    const tailMedian = percentile(tailVals, 50); // reuse the helper for a consistent median
     recovered = peakJoined > 0 && tailMedian >= 0.85 * peakJoined;
     recoveryNote = `tail joined median ${tailMedian} vs peak ${peakJoined} -> ${recovered ? "RECOVERED" : "DID NOT RECOVER (permanent drop)"}`;
   }

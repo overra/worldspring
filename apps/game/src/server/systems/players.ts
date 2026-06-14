@@ -6,6 +6,8 @@ import {
   CAMPFIRE_PLACE_DIST,
   DROPPED_LOOT_TTL_S,
   FIRE_WARMTH_RADIUS,
+  FISH_CHANCE,
+  FISHING_COOLDOWN_S,
   INPUT_BUDGET_CAP_S,
   INVENTORY_SLOTS,
   MAX_CAMPFIRES,
@@ -16,8 +18,18 @@ import {
   MAX_WATER,
   PICKUP_RANGE,
   TEMP_NORMAL,
+  WATER_LEVEL,
+  WATER_SAMPLE_DIST,
+  WORLD_SIZE,
 } from "@worldspring/shared/constants";
-import { ITEM_DEFS, RAW_VENISON_HP_PENALTY, type ItemStack, type ItemType } from "@worldspring/shared/items";
+import {
+  createExploredGrid,
+  decodeExplored,
+  exploredCellAt,
+  FOG_REVEAL_RADIUS_M,
+  markExploredDisk,
+} from "@worldspring/shared/fog";
+import { ITEM_DEFS, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import { clamp, distSq2D, yawToDir } from "@worldspring/shared/math";
 import { stepPlayer } from "@worldspring/shared/movement";
 import type { InputCmd, PlayerCore } from "@worldspring/shared/protocol";
@@ -98,7 +110,20 @@ function freshStats(state: GameState): PlayerStats {
   return { bornAt: state.time, kills: 0, zombieKills: 0, distanceM: 0 };
 }
 
-/** Spawn a brand-new player: random beach spawn, full vitals, empty inventory. */
+/** Build the inventory a brand-new player spawns with: a flashlight, a bandage,
+ * and (doc 12) the map item iff the server grants it at spawn (acquire "loot"
+ * makes it a find; "none" disables the full map). */
+function startingInventory(state: GameState): (ItemStack | null)[] {
+  const inv = emptyInventory();
+  addToInventory(inv, "flashlight", 1);
+  addToInventory(inv, "bandage", 1);
+  // `?.` tolerates the untyped .mjs test fixtures that predate `map` (production
+  // configs always carry it); undefined -> no map granted, the right default.
+  if (state.config.map?.acquire === "spawn") addToInventory(inv, "map", 1);
+  return inv;
+}
+
+/** Spawn a brand-new player: random beach spawn, full vitals, starting loadout. */
 export function createPlayer(
   state: GameState,
   id: string,
@@ -111,7 +136,7 @@ export function createPlayer(
     name,
     core: freshSpawnCore(state),
     vitals: { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL },
-    inventory: emptyInventory(),
+    inventory: startingInventory(state),
     selectedSlot: 0,
     alive: true,
     offline: false,
@@ -129,6 +154,10 @@ export function createPlayer(
     sprinting: false,
     movedThisTick: false,
     sprintedThisTick: false,
+    fishCooldownT: 0,
+    explored: createExploredGrid(WORLD_SIZE),
+    fogDelta: [],
+    lastFogCell: -1,
   };
   state.players.set(id, player);
   return player;
@@ -176,6 +205,11 @@ export function restorePlayer(
     sprinting: false,
     movedThisTick: false,
     sprintedThisTick: false,
+    fishCooldownT: 0,
+    // Per-token fog: explored knowledge accrues across lives (doc 12 Open Q4).
+    explored: decodeExplored(WORLD_SIZE, saved.explored),
+    fogDelta: [],
+    lastFogCell: -1,
   };
   state.players.set(id, player);
   return player;
@@ -187,9 +221,9 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.vitals = { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL };
   // Keep-inventory (pvp.fullLoot=false): the corpse spawned empty (see
   // spawnPlayerCorpse), so the new life keeps the items held at death rather
-  // than starting empty. fullLoot (default) wipes to a fresh inventory.
+  // than starting empty. fullLoot (default) resets to the starting loadout.
   if (state.config.pvp.fullLoot) {
-    player.inventory = emptyInventory();
+    player.inventory = startingInventory(state);
     player.selectedSlot = 0;
   }
   player.alive = true;
@@ -203,8 +237,31 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.wantsAttackAt = null;
   player.attackCooldown = 0;
   player.attackAnimT = 0;
+  player.fishCooldownT = 0;
   player.sprinting = false;
+  // Keep the explored set (per-token), but re-stamp from the new spawn position.
+  player.lastFogCell = -1;
   sendInventory(state, player);
+}
+
+/**
+ * doc 12 — server-authoritative fog-of-war. For each alive, online player on a
+ * fog server, reveal a disk around their authoritative (unrounded) position
+ * whenever they cross into a new cell, accumulating the newly-lit cells in
+ * fogDelta (shipped + cleared by the next snapshot). Pure XZ arithmetic — never
+ * touches heightAt, so it stays off the tick's hot path. No-op on full-reveal
+ * servers (the explored set is unused there).
+ */
+export function markExploration(state: GameState): void {
+  if (state.config.map.reveal !== "explored") return;
+  for (const player of state.players.values()) {
+    if (player.offline || !player.alive) continue;
+    const cell = exploredCellAt(player.explored, player.core.x, player.core.z);
+    if (cell === player.lastFogCell) continue;
+    player.lastFogCell = cell;
+    const revealed = markExploredDisk(player.explored, player.core.x, player.core.z, FOG_REVEAL_RADIUS_M);
+    if (revealed.length > 0) player.fogDelta.push(...revealed);
+  }
 }
 
 /** Enqueue input cmds, dropping the oldest beyond the queue cap. */
@@ -226,6 +283,7 @@ export function applyQueuedInputs(state: GameState, dt: number): void {
   for (const player of state.players.values()) {
     if (player.attackCooldown > 0) player.attackCooldown -= dt;
     if (player.attackAnimT > 0) player.attackAnimT -= dt;
+    if (player.fishCooldownT > 0) player.fishCooldownT -= dt;
     player.movedThisTick = false;
     player.sprintedThisTick = false;
     if (!player.alive) {
@@ -334,7 +392,25 @@ function dropAtFeet(state: GameState, player: ServerPlayer, type: ItemType, coun
   });
 }
 
-/** Use a consumable or place a campfire kit from the given slot. */
+/**
+ * Sample whether there is water ahead of the player (used for fishing +
+ * canteen filling). Checks `heightAt` at WATER_SAMPLE_DIST along the yaw.
+ */
+function waterAhead(state: GameState, player: ServerPlayer): boolean {
+  const [fx, fz] = yawToDir(player.core.yaw);
+  const sx = player.core.x + fx * WATER_SAMPLE_DIST;
+  const sz = player.core.z + fz * WATER_SAMPLE_DIST;
+  return state.world.heightAt(sx, sz) < WATER_LEVEL;
+}
+
+/**
+ * Use the item in `slot`. Handles data-driven cook/boil/drink/fill/fishing
+ * paths, camping placement, and standard consumable/heal items.
+ *
+ * Priority for items with `cooksTo`: near fire → cook; else eat raw (penalty).
+ * Priority for items with `water` config: near fire + boilsTo → boil;
+ *   water ahead + fillsTo → fill; drink.drink → drink.
+ */
 export function useItem(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
   if (slot < 0 || slot >= INVENTORY_SLOTS) return;
@@ -342,26 +418,105 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
   if (!stack) return;
   const def = ITEM_DEFS[stack.type];
   const vitals = player.vitals;
+  const { x, z } = player.core;
 
-  // Raw venison: near a campfire it COOKS (one raw -> one cooked) instead of
-  // being eaten; away from fire it can be eaten desperate — small food gain,
-  // hp penalty (never lethal: eating cannot take you below 1 hp).
-  if (stack.type === "raw_venison") {
-    if (nearFire(state, player.core.x, player.core.z)) {
+  // --- Data-driven cook path (raw_venison, raw_fish, future raw items) ---
+  if (def.cooksTo !== undefined) {
+    if (nearFire(state, x, z)) {
+      // Near campfire: convert raw → cooked.
       consumeFromSlot(player.inventory, slot);
-      const leftover = addToInventory(player.inventory, "cooked_venison", 1);
-      if (leftover > 0) dropAtFeet(state, player, "cooked_venison", leftover);
-      sendTo(state, player.id, { t: "notice", msg: "venison cooked" });
-    } else {
-      vitals.food = clamp(vitals.food + def.power, 0, MAX_FOOD);
-      // Floor at 1 hp, but never raise hp that was already below 1.
-      vitals.hp = Math.max(Math.min(vitals.hp, 1), vitals.hp - RAW_VENISON_HP_PENALTY);
-      consumeFromSlot(player.inventory, slot);
+      const cooked = def.cooksTo;
+      const leftover = addToInventory(player.inventory, cooked, 1);
+      if (leftover > 0) dropAtFeet(state, player, cooked, leftover);
+      sendTo(state, player.id, { t: "notice", msg: `${def.name} cooked` });
+      sendInventory(state, player);
+      return;
     }
+    // Away from fire: eat raw — food benefit with hp penalty.
+    vitals.food = clamp(vitals.food + def.power, 0, MAX_FOOD);
+    if (def.rawPenaltyHp !== undefined && def.rawPenaltyHp > 0) {
+      // Never lethal: floor at 1, but don't raise hp already below 1.
+      vitals.hp = Math.max(Math.min(vitals.hp, 1), vitals.hp - def.rawPenaltyHp);
+    }
+    consumeFromSlot(player.inventory, slot);
+    // The cook-vs-raw split is otherwise an invisible, instant binary (#33): tell
+    // the player WHY they took the hit and the exact range to avoid it next time.
+    sendTo(state, player.id, {
+      t: "notice",
+      msg: `Ate it raw — stand within ${FIRE_WARMTH_RADIUS}m of a fire to cook it`,
+    });
     sendInventory(state, player);
     return;
   }
 
+  // --- Water vessel path (canteens) ---
+  if (def.water !== undefined) {
+    const wc = def.water;
+
+    // 1. Boil (near campfire + boilsTo defined)
+    if (wc.boilsTo !== undefined && nearFire(state, x, z)) {
+      consumeFromSlot(player.inventory, slot);
+      const leftover = addToInventory(player.inventory, wc.boilsTo, 1);
+      if (leftover > 0) dropAtFeet(state, player, wc.boilsTo, leftover);
+      sendTo(state, player.id, { t: "notice", msg: "water boiled clean" });
+      sendInventory(state, player);
+      return;
+    }
+
+    // 2. Fill (water ahead + fillsTo defined)
+    if (wc.fillsTo !== undefined && waterAhead(state, player)) {
+      consumeFromSlot(player.inventory, slot);
+      const leftover = addToInventory(player.inventory, wc.fillsTo, 1);
+      if (leftover > 0) dropAtFeet(state, player, wc.fillsTo, leftover);
+      sendTo(state, player.id, { t: "notice", msg: "canteen filled" });
+      sendInventory(state, player);
+      return;
+    }
+
+    // 3. Drink
+    if (wc.drink !== undefined) {
+      const d = wc.drink;
+      vitals.water = clamp(vitals.water + d.restore, 0, MAX_WATER);
+      if (d.hpPenalty !== undefined && d.hpPenalty > 0) {
+        vitals.hp = Math.max(Math.min(vitals.hp, 1), vitals.hp - d.hpPenalty);
+      }
+      consumeFromSlot(player.inventory, slot);
+      const leftover = addToInventory(player.inventory, d.emptiesTo, 1);
+      if (leftover > 0) dropAtFeet(state, player, d.emptiesTo, leftover);
+      sendInventory(state, player);
+      return;
+    }
+
+    // No applicable water action (e.g. canteen_empty with no water ahead).
+    sendTo(state, player.id, { t: "notice", msg: "nothing to do here" });
+    return;
+  }
+
+  // --- Fishing rod ---
+  if (stack.type === "fishing_rod") {
+    if (player.fishCooldownT > 0) {
+      sendTo(state, player.id, { t: "notice", msg: "rod needs a moment" });
+      return;
+    }
+    if (!waterAhead(state, player)) {
+      sendTo(state, player.id, { t: "notice", msg: "no water ahead" });
+      return;
+    }
+    player.fishCooldownT = FISHING_COOLDOWN_S;
+    // Reuse attackAnimT for the swing feedback (same flag the hotbar reads).
+    player.attackAnimT = 0.3;
+    if (Math.random() < FISH_CHANCE) {
+      const leftover = addToInventory(player.inventory, "raw_fish", 1);
+      if (leftover > 0) dropAtFeet(state, player, "raw_fish", leftover);
+      sendTo(state, player.id, { t: "notice", msg: "you caught a fish" });
+      sendInventory(state, player);
+    } else {
+      sendTo(state, player.id, { t: "notice", msg: "nothing biting" });
+    }
+    return;
+  }
+
+  // --- Standard kind-based dispatch ---
   switch (def.kind) {
     case "food":
       vitals.food = clamp(vitals.food + def.power, 0, MAX_FOOD);
@@ -374,21 +529,24 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
       break;
     case "placeable": {
       const [fx, fz] = yawToDir(player.core.yaw);
-      const x = player.core.x + fx * CAMPFIRE_PLACE_DIST;
-      const z = player.core.z + fz * CAMPFIRE_PLACE_DIST;
+      const px = player.core.x + fx * CAMPFIRE_PLACE_DIST;
+      const pz = player.core.z + fz * CAMPFIRE_PLACE_DIST;
       // World-wide cap: the oldest fire goes out when the cap is hit.
       if (state.fires.length >= MAX_CAMPFIRES) state.fires.shift();
       state.fires.push({
         id: state.nextEntityId++,
-        x,
-        y: state.world.groundHeight(x, z),
-        z,
+        x: px,
+        y: state.world.groundHeight(px, pz),
+        z: pz,
         burnRemaining: CAMPFIRE_BURN_S,
       });
       break;
     }
+    case "tool":
+      // Generic tools (flashlight, torch) have no use action beyond equip.
+      return;
     default:
-      return; // weapons and ammo are not usable
+      return; // weapons, ammo, material, wear are not usable via this path
   }
   consumeFromSlot(player.inventory, slot);
   sendInventory(state, player);

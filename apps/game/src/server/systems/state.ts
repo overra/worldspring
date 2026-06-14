@@ -6,6 +6,7 @@
 
 import type { ServerConfig } from "@worldspring/shared/config";
 import { LAG_COMP_MAX_REWIND_S } from "@worldspring/shared/constants";
+import type { ExploredGrid } from "@worldspring/shared/fog";
 import type { ItemStack, ItemType } from "@worldspring/shared/items";
 import type {
   DeathRecap,
@@ -80,6 +81,17 @@ export interface ServerPlayer {
   movedThisTick: boolean;
   /** Sprint-moved during the current tick (ANIM_SPRINTING). */
   sprintedThisTick: boolean;
+  /**
+   * Fishing cooldown — seconds until the player may cast again.
+   * Transient (never persisted); 0 at spawn / on restore.
+   */
+  fishCooldownT: number;
+  /** doc 12 — persisted fog-of-war: cells this character has explored. */
+  explored: ExploredGrid;
+  /** Transient: indices revealed since the last snapshot (cleared on send). */
+  fogDelta: number[];
+  /** Transient: last center cell marked, so we only re-stamp on a cell cross. */
+  lastFogCell: number;
 }
 
 /** Structurally compatible with ZombieCore so stepZombie applies directly. */

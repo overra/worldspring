@@ -6,9 +6,11 @@
 import {
   CHAT_MAX_LENGTH,
   MAX_NAME_LENGTH,
+  WORLD_SIZE,
 } from "@worldspring/shared/constants";
 import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
-import { ITEM_DEFS } from "@worldspring/shared/items";
+import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
 import { createWorld } from "@worldspring/shared/world";
@@ -23,7 +25,6 @@ const PING_INTERVAL_MS = 2000;
 
 let socket: WebSocket | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
-
 // --- Auto-reconnect. The server's Durable Object instance can be replaced
 // under load (a split-brain recycle severs the live socket and the old instance
 // times it out with code 1001), and deploys / network blips also drop the
@@ -31,7 +32,12 @@ let pingTimer: ReturnType<typeof setInterval> | null = null;
 // token — the server restores the same character on the CURRENT instance
 // (handleJoin restore path). Backoff caps the retry rate; after MAX_ATTEMPTS
 // consecutive failures it's treated as a real disconnect.
+//
+// lastName/lastScenario are the join params, remembered so a reconnect re-sends
+// them (and so the preview testbed QA panel can reprovision, doc 10 M4). A null
+// lastName means no active session — handleClosed won't auto-reconnect.
 let lastName: string | null = null;
+let lastScenario: string | undefined;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const MAX_RECONNECT_ATTEMPTS = 8;
@@ -76,10 +82,11 @@ function getToken(): string {
   }
 }
 
-export function connect(name: string): void {
+export function connect(name: string, scenario?: string): void {
+  cancelReconnect();
   if (socket !== null) disconnect();
-
   lastName = name.slice(0, MAX_NAME_LENGTH);
+  lastScenario = scenario;
   reconnectAttempts = 0;
 
   const ui = useUIStore.getState();
@@ -104,6 +111,10 @@ function openSocket(): void {
       name: (lastName ?? "").slice(0, MAX_NAME_LENGTH),
       token: getToken(),
       proto: PROTOCOL_VERSION, // two-sided join gate (doc 03 §1)
+      // doc 10 M3/M4: preview-only testbed set selector. Remembered (lastScenario)
+      // so a reconnect re-sends it. The server ignores it unless env.TESTBED is
+      // on, so it is inert in prod.
+      ...(lastScenario ? { scenario: lastScenario } : {}),
     });
     startPing();
   };
@@ -121,11 +132,33 @@ function openSocket(): void {
   };
 }
 
+/** Replace the persisted identity with a brand-new token so the NEXT join is a
+ * fresh life (handleJoin path 3 → provisionTestbed re-seeds), not a resume.
+ * Used only by the preview testbed QA panel. */
+function forceFreshToken(): void {
+  const fresh = generateToken();
+  memoryToken = fresh;
+  try {
+    localStorage.setItem(TOKEN_STORAGE_KEY, fresh);
+  } catch {
+    /* in-memory token only (private browsing / blocked storage) */
+  }
+}
+
+/** Testbed RESET / set-switch (doc 10 M4): rejoin as a fresh life provisioned
+ * with `scenario`. Fresh token → handleJoin path 3 → provisionTestbed. Preview-
+ * only — the server ignores the scenario field unless env.TESTBED is on. */
+export function reprovision(scenario: string): void {
+  forceFreshToken();
+  connect(lastName ?? "Survivor", scenario);
+}
+
 export function disconnect(): void {
   // Intentional close: stop any pending reconnect and forget the session, so a
   // stray close event can never trigger an auto-reconnect after a real leave.
   cancelReconnect();
   lastName = null;
+  lastScenario = undefined;
   stopPing();
   const ws = socket;
   socket = null;
@@ -167,7 +200,7 @@ export function doUse(slot: number): void {
   // Optimistic local feedback; the server confirms via the next inv message.
   const stack = useUIStore.getState().inventory[slot];
   if (!stack) return;
-  const kind = ITEM_DEFS[stack.type].kind;
+  const kind = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).kind;
   if (kind === "food") cueSound("eat");
   else if (kind === "drink") cueSound("drink");
   else if (kind === "heal") cueSound("bandage");
@@ -374,6 +407,11 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // it but does not yet drive runtime behavior off it (clock swap deferred to
   // M4 to keep this PR byte-identical).
   clientWorld.config = clampConfig(msg.config);
+  // doc 12 — mirror the server-blessed explored set on fog servers (else null,
+  // and the map renders full). createWorld + the map bake both use WORLD_SIZE,
+  // so the grid's cell indices line up with the snapshot deltas below.
+  clientWorld.explored =
+    clientWorld.config.map.reveal === "explored" ? decodeExplored(WORLD_SIZE, msg.explored) : null;
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;
@@ -417,6 +455,9 @@ function onSnap(msg: SnapMsg): void {
   }
 
   pushSnap(msg, now);
+
+  // doc 12 — fold in any newly-explored cells the server revealed this tick.
+  if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
 
   ui.setVitals(vitalsOf(msg.you));
   ui.setPlayerCount(msg.count);

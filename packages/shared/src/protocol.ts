@@ -16,17 +16,24 @@ import type { ItemStack, ItemType } from "./items";
  * touching any character state, the client refuses older servers before
  * building the world. See docs/plans/03-server-info-contract.md §1.
  *
- * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, to
- * the movement.ts / world.ts behavior the client predicts, or to the ItemType
- * wire enums. While this is `1` an ABSENT `join.proto` is accepted (pre-gate
- * clients are sim-compatible with v1 by definition); the moment it bumps to
- * `2+` the server rejects absent `proto` like any other mismatch.
+ * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, or to
+ * the movement.ts / world.ts behavior the client predicts. While this is `1` an
+ * ABSENT `join.proto` is accepted (pre-gate clients are sim-compatible with v1
+ * by definition); the moment it bumps to `2+` the server rejects absent `proto`
+ * like any other mismatch.
+ *
+ * ItemType wire-enum GROWTH is additive-safe and does NOT force a bump (doc 12
+ * Open Q1): every client `ITEM_DEFS[type]` lookup goes through `?? UNKNOWN_DEF`
+ * (items.ts), so a client that receives an item type it has never heard of
+ * renders it as a generic item rather than crashing. A new ItemType only needs a
+ * bump if it also changes a predicted-sim behavior or a message shape. (Removing
+ * or RETYPING an existing ItemType is still breaking — bump for those.)
  *
  * Typed `number`, not the literal `1`, deliberately: the gate compares against
  * it at runtime, so the comparison must keep compiling — and flip its
  * absent-proto handling — the instant this value bumps.
  */
-export const PROTOCOL_VERSION: number = 1;
+export const PROTOCOL_VERSION: number = 2;
 
 // --- Sim state shared by prediction (client) and authority (server) ---
 
@@ -68,8 +75,11 @@ export const ANIM_ATTACKING = 4;
 export type ClientMsg =
   /** `proto` = the client's PROTOCOL_VERSION (two-sided join gate, doc 03 §1).
    * Optional on the wire: pre-gate clients omit it and are accepted only while
-   * PROTOCOL_VERSION === 1. The server gates on it at the top of handleJoin. */
-  | { t: "join"; name: string; token: string; proto?: number }
+   * PROTOCOL_VERSION === 1. The server gates on it at the top of handleJoin.
+   * `scenario` (doc 10 M3) = a preview-only testbed set name. Additive-optional
+   * (no PROTOCOL_VERSION bump); validated below, and CONSULTED by the server only
+   * when env.TESTBED is on — parsed-and-ignored in prod. */
+  | { t: "join"; name: string; token: string; proto?: number; scenario?: string }
   | { t: "input"; cmds: InputCmd[] }
   /** `at` = game-time the shooter's screen was rendering (interpolation runs
    * INTERP_DELAY_MS behind). The server rewinds targets to it, clamped to
@@ -241,6 +251,10 @@ export type ServerMsg =
        * does NOT bump PROTOCOL_VERSION. The client clamps it (clampConfig) and
        * never stores the raw object; absent → the client's DEFAULT_CONFIG. */
       config?: ServerConfig;
+      /** doc 12 — base64 fog-of-war explored bitset, sent only when the server
+       * runs map.reveal === "explored". Additive optional (older clients ignore
+       * it), so no PROTOCOL_VERSION bump. */
+      explored?: string;
     }
   | {
       t: "snap";
@@ -260,6 +274,9 @@ export type ServerMsg =
       weather: number;
       events: GameEvent[];
       count: number; // players online
+      /** doc 12 — cell indices newly explored this tick (fog servers only).
+       * Omitted when empty. Additive optional → no PROTOCOL_VERSION bump. */
+      fog?: number[];
     }
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
@@ -303,7 +320,15 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
         if (!isFiniteNum(m.proto)) return null;
         proto = m.proto;
       }
-      return { t: "join", name: m.name, token: m.token, proto };
+      // scenario (doc 10 M3): optional preview-only testbed set name. Validate the
+      // SHAPE on the wire (1-100 chars, [a-z0-9_-]) regardless of TESTBED — same
+      // discipline as the token regex; the server only CONSULTS it when testbed.
+      let scenario: string | undefined;
+      if (m.scenario !== undefined) {
+        if (typeof m.scenario !== "string" || !/^[a-z0-9_-]{1,100}$/.test(m.scenario)) return null;
+        scenario = m.scenario;
+      }
+      return { t: "join", name: m.name, token: m.token, proto, scenario };
     }
     case "input": {
       if (!Array.isArray(m.cmds)) return null;

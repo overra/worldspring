@@ -19,6 +19,7 @@ import type {
   WireLoot,
   ZombieState,
 } from "@worldspring/shared/protocol";
+import type { ExploredGrid } from "@worldspring/shared/fog";
 import type { ItemType } from "@worldspring/shared/items";
 import type { World } from "@worldspring/shared/world";
 
@@ -179,6 +180,9 @@ export interface ClientWorldState {
    * so every read path is total against an old/absent-config server. The net
    * layer ALWAYS writes clampConfig(msg.config) — never the raw object. */
   config: ServerConfig;
+  /** doc 12 — fog-of-war explored set, mirrored from welcome/snap. null unless
+   * the server runs map.reveal === "explored". Read-only to the map renderer. */
+  explored: ExploredGrid | null;
 }
 
 export const clientWorld: ClientWorldState = {
@@ -200,6 +204,7 @@ export const clientWorld: ClientWorldState = {
   audioEvents: [],
   world: null,
   config: DEFAULT_CONFIG,
+  explored: null,
 };
 
 // Dev-only debug handle: lets tooling (and curious humans) drive input and
@@ -241,6 +246,10 @@ export function drainAudioEvents(): GameEvent[] {
 
 /** Reset everything on disconnect/death-respawn-menu transitions. */
 export function resetClientWorld(): void {
+  // Free the baked map canvas (doc 12); a re-join rebuilds it from the new world.
+  // Dynamic import avoids a static runtime<->mapBake import cycle (mapBake reads
+  // clientWorld); by reset time the module is already loaded.
+  void import("./render/map/mapBake").then((m) => m.disposeBakedMap());
   clientWorld.ready = false;
   clientWorld.myId = "";
   clientWorld.players.clear();
@@ -255,4 +264,5 @@ export function resetClientWorld(): void {
   clientWorld.promptLootId = null;
   clientWorld.events = [];
   clientWorld.audioEvents = [];
+  clientWorld.explored = null;
 }
