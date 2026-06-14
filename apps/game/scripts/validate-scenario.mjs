@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Validate a testbed scenario JSON (used by the /testbed skill — see
-// .claude/skills/testbed/SKILL.md — to self-check what it generates):
+// skills/testbed/SKILL.md — to self-check what it generates):
 //
 //   node --experimental-strip-types apps/game/scripts/validate-scenario.mjs <scenario.json>
 //
