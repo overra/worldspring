@@ -165,8 +165,11 @@ function StatusCorner(): ReactElement {
   const clockHours = useUIStore((s) => s.clockHours);
   const playerCount = useUIStore((s) => s.playerCount);
   const pingMs = useUIStore((s) => s.pingMs);
+  // doc 12: the corner minimap sits in this same top-right slot, so drop below it
+  // when it's active (config is stable per session; map.css owns the offset).
+  const cls = clientWorld.config.map.minimap ? "hud-status has-minimap" : "hud-status";
   return (
-    <div className="hud-status">
+    <div className={cls}>
       <div className="hud-clock">{formatClock(clockHours)}</div>
       <div>{playerCount} online</div>
       <div>{Math.round(pingMs)}ms</div>

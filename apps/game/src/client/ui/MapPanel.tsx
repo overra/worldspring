@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
-import { drawDynamicLayer, drawFog, getBakedMap } from "@/client/render/map/mapBake";
+import { drawDynamicLayer, drawFog, drawLabels, getBakedMap } from "@/client/render/map/mapBake";
 import "./map.css";
 
 /** Panel drawing-buffer resolution (square); CSS scales it to the viewport. */
@@ -34,6 +34,9 @@ export function MapPanel(): ReactElement | null {
         const c = baked.proj.worldToImage(x, z);
         return { x: c.ix * k, y: c.iy * k };
       };
+      // Labels go BEFORE fog so unexplored town names stay hidden (matching the
+      // old baked layering); the full map is unrotated, so they read upright.
+      if (clientWorld.world) drawLabels(ctx, clientWorld.world, toPx, R / 55);
       const explored = clientWorld.explored;
       if (clientWorld.config.map.reveal === "explored" && explored) drawFog(ctx, explored, toPx);
       drawDynamicLayer(ctx, toPx, 1.4);
