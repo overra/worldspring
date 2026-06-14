@@ -14,6 +14,9 @@ import {
   DAY_DURATION_S,
   DEER_COUNT,
   LOGOUT_LINGER_S,
+  MAP_ACQUIRE_DEFAULT,
+  MAP_MINIMAP_DEFAULT,
+  MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   NIGHT_END_HOUR,
   NIGHT_START_HOUR,
@@ -137,6 +140,25 @@ export interface SessionConfig {
   wipeSchedule: WipeSchedule;
 }
 
+/** How a player obtains the full-screen map item (doc 12). */
+export type MapAcquire = "spawn" | "loot" | "none";
+/** What the map (minimap + full screen) reveals (doc 12). */
+export type MapReveal = "full" | "explored";
+
+/**
+ * Cartography dials (doc 12). All three are LIVE-class — none touch worldgen, so
+ * none enter worldFingerprintOf and none ever wipe. `reveal:"explored"` engages
+ * server-authoritative fog-of-war (doc 12 M5/M6).
+ */
+export interface MapConfig {
+  /** Always-on corner minimap. false = no minimap HUD element. */
+  minimap: boolean;
+  /** Full-screen map item acquisition. "none" = no full map this server. */
+  acquire: MapAcquire;
+  /** Reveal mode for both surfaces. */
+  reveal: MapReveal;
+}
+
 export interface ServerConfig {
   /** Resolved preset id ("custom" when overrides touch any field). */
   preset: string;
@@ -149,6 +171,7 @@ export interface ServerConfig {
   wildlife: WildlifeConfig;
   building: BuildingConfig;
   session: SessionConfig;
+  map: MapConfig;
 }
 
 // =============================================================================
@@ -216,6 +239,11 @@ export const DEFAULT_CONFIG: ServerConfig = {
     logoutLingerS: LOGOUT_LINGER_S,
     wipeSchedule: "never",
   },
+  map: {
+    minimap: MAP_MINIMAP_DEFAULT,
+    acquire: MAP_ACQUIRE_DEFAULT,
+    reveal: MAP_REVEAL_DEFAULT,
+  },
 };
 
 // =============================================================================
@@ -260,6 +288,8 @@ export const PRESETS: Record<string, DeepPartial<ServerConfig>> = {
     time: { dayLengthMin: 24 },
     building: { decayHours: 72, offlineRaidMult: 1 },
     session: { respawnDelayS: 10, logoutLingerS: 180, wipeSchedule: "monthly" },
+    // Earn the map; fog the unknown.
+    map: { acquire: "loot", reveal: "explored" },
   },
 
   // The compound is an objective — PvP war server; gunfire-loot economy up.
@@ -274,6 +304,8 @@ export const PRESETS: Record<string, DeepPartial<ServerConfig>> = {
     survival: { hungerRate: 0.5, thirstRate: 0.5, temperatureSeverity: 0.5 },
     time: { dayLengthMin: 12 },
     session: { respawnDelayS: 2, logoutLingerS: 120, wipeSchedule: "weekly" },
+    // PvP server — deny the radar; spawn-with kept so newspawns aren't blind.
+    map: { reveal: "explored" },
   },
 
   // Build in peace — militaryZone off downgrades compound loot to inland.
@@ -300,6 +332,8 @@ export const PRESETS: Record<string, DeepPartial<ServerConfig>> = {
     survival: { temperatureSeverity: 0.5 },
     time: { fixedHour: 1 },
     session: { respawnDelayS: 5 },
+    // The sun never rises — fog amplifies the dread (minimap stays on).
+    map: { reveal: "explored" },
   },
 };
 
@@ -382,6 +416,8 @@ const WIPE_SCHEDULES: readonly WipeSchedule[] = [
   "monthly",
 ];
 const SIZE_TIERS: readonly WorldSizeTier[] = ["standard", "large", "huge"];
+const MAP_ACQUIRES: readonly MapAcquire[] = ["spawn", "loot", "none"];
+const MAP_REVEALS: readonly MapReveal[] = ["full", "explored"];
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -534,6 +570,7 @@ function clampInto(
   const rww = isObject(r.wildlife) ? r.wildlife : {};
   const rb = isObject(r.building) ? r.building : {};
   const rsess = isObject(r.session) ? r.session : {};
+  const rmap = isObject(r.map) ? r.map : {};
 
   // --- fixedHour: null | number in [0,24] ---
   let fixedHour: number | null = base.time.fixedHour;
@@ -612,6 +649,12 @@ function clampInto(
       logoutLingerS: num(rsess.logoutLingerS, base.session.logoutLingerS, RANGES.session.logoutLingerS[0], RANGES.session.logoutLingerS[1], "session.logoutLingerS", warnings),
       wipeSchedule: wipeSchedule(rsess.wipeSchedule, base.session.wipeSchedule, warnings),
     },
+    // LIVE-class — never sets worldCoerced (must not taint / wipe).
+    map: {
+      minimap: bool(rmap.minimap, base.map.minimap, "map.minimap", warnings),
+      acquire: mapAcquire(rmap.acquire, base.map.acquire, warnings),
+      reveal: mapReveal(rmap.reveal, base.map.reveal, warnings),
+    },
   };
 
   return { config, worldCoerced };
@@ -630,6 +673,26 @@ function wipeSchedule(
   }
   if (raw !== undefined) {
     warnings.push(`session.wipeSchedule: unknown "${String(raw)}", using ${fallback}`);
+  }
+  return fallback;
+}
+
+function mapAcquire(raw: unknown, fallback: MapAcquire, warnings: string[]): MapAcquire {
+  if (typeof raw === "string" && (MAP_ACQUIRES as readonly string[]).includes(raw)) {
+    return raw as MapAcquire;
+  }
+  if (raw !== undefined) {
+    warnings.push(`map.acquire: unknown "${String(raw)}", using ${fallback}`);
+  }
+  return fallback;
+}
+
+function mapReveal(raw: unknown, fallback: MapReveal, warnings: string[]): MapReveal {
+  if (typeof raw === "string" && (MAP_REVEALS as readonly string[]).includes(raw)) {
+    return raw as MapReveal;
+  }
+  if (raw !== undefined) {
+    warnings.push(`map.reveal: unknown "${String(raw)}", using ${fallback}`);
   }
   return fallback;
 }
@@ -951,6 +1014,18 @@ export function summarizeRules(cfg: ServerConfig): RulesSummary {
     night = "never";
   }
 
+  // Map regime badge: fog dominates find dominates full; off only when there is
+  // no surface at all (no minimap AND no obtainable map item).
+  const m = cfg.map;
+  const map: RulesSummary["map"] =
+    !m.minimap && m.acquire === "none"
+      ? "off"
+      : m.reveal === "explored"
+        ? "fog"
+        : m.acquire === "loot"
+          ? "find"
+          : "full";
+
   return {
     preset,
     zombies,
@@ -963,5 +1038,6 @@ export function summarizeRules(cfg: ServerConfig): RulesSummary {
     worldSize: cfg.world.sizeTier,
     maxPlayers: cfg.session.maxPlayers,
     wipe: cfg.session.wipeSchedule,
+    map,
   };
 }
