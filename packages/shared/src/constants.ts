@@ -187,6 +187,14 @@ export const WORLD_SAVE_INTERVAL_S = 20;
 /** Completed lives kept for the longest-lives leaderboard. */
 export const LEADERBOARD_MAX = 50;
 
+// --- Map & cartography (doc 12) ---
+/** DEFAULT_CONFIG.map.* — the generous, zero-wire baseline: minimap on, the map
+ *  item granted at spawn, the whole island revealed. `as const` narrows them to
+ *  the MapAcquire/MapReveal literals without importing config.ts. */
+export const MAP_MINIMAP_DEFAULT = true;
+export const MAP_ACQUIRE_DEFAULT = "spawn" as const;
+export const MAP_REVEAL_DEFAULT = "full" as const;
+
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */
 export const SERVER_INFO_CACHE_TTL_S = 15;
