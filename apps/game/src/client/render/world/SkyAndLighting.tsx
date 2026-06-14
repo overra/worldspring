@@ -13,6 +13,7 @@ import { NIGHT_END_HOUR, NIGHT_START_HOUR } from "@worldspring/shared/constants"
 import { clamp, lerp } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
 import { QUALITY_CONFIGS, useSettingsStore } from "@/client/state/settings";
+import { useUIStore } from "@/client/state/store";
 
 const DAY_LEN = NIGHT_START_HOUR - NIGHT_END_HOUR; // 16h of daylight
 const NIGHT_LEN = 24 - DAY_LEN;
@@ -79,9 +80,63 @@ const MOON_DISC_RADIUS = 13;
 const MOON_DISC_COLOR = "#c9d6ec";
 const MOON_DISC_MAX_OPACITY = 0.75;
 
+// --- Red realm: a wild, timeless sky. These override the day/night palette
+// entirely while the local player is in the red realm (set last in useFrame).
+const RED_HORIZON = new THREE.Color("#d23a18"); // fiery red-orange skirt
+const RED_ZENITH = new THREE.Color("#2a0618"); // deep maroon/purple overhead
+const RED_FOG = new THREE.Color("#7a1408"); // dark red haze
+const RED_FOG_NEAR = 40;
+const RED_FOG_FAR = 380;
+const RED_SUN_COLOR = new THREE.Color("#ff5a2a");
+const RED_SUN_INTENSITY = 0.7;
+const RED_AMBIENT = new THREE.Color("#b04428");
+const RED_AMBIENT_INTENSITY = 0.5;
+const RED_HEMI_SKY = new THREE.Color("#c83a1a");
+const RED_HEMI_GROUND = new THREE.Color("#280608");
+const RED_HEMI_INTENSITY = 0.45;
+
+// Rainbow arc — a translucent half-annulus standing in the sky ahead of the
+// camera, billboarded so it always spans the view. Sized + distanced so the
+// whole arch fits a forward look (well inside the sky dome at 500 / far 600).
+const RAINBOW_INNER = 120;
+const RAINBOW_OUTER = 150;
+const RAINBOW_DIST = 200; // meters ahead of the camera
+const RAINBOW_DROP = 30; // lower the center so the arch springs from the horizon
+
+const RAINBOW_VERTEX = /* glsl */ `
+uniform float uInner;
+uniform float uOuter;
+varying float vT;
+void main() {
+  float r = length(position.xy);
+  vT = clamp((r - uInner) / (uOuter - uInner), 0.0, 1.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+const RAINBOW_FRAGMENT = /* glsl */ `
+varying float vT;
+vec3 hsv2rgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+void main() {
+  // Outer edge red (hue 0), inner edge violet (hue 0.75) — a real rainbow's order.
+  float hue = (1.0 - vT) * 0.75;
+  vec3 col = hsv2rgb(vec3(hue, 0.85, 1.0));
+  // Soft feathered edges across the band.
+  float edge = smoothstep(0.0, 0.16, vT) * smoothstep(1.0, 0.84, vT);
+  gl_FragColor = vec4(col, edge * 0.55);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
+
 const skyTmp = new THREE.Color();
 const sunDirTmp = new THREE.Vector3();
 const moonDirTmp = new THREE.Vector3();
+const rainbowDirTmp = new THREE.Vector3();
 
 const DOME_VERTEX = /* glsl */ `
 varying vec3 vDir;
@@ -112,6 +167,8 @@ interface SkyAssets {
   sunDiscMaterial: THREE.MeshBasicMaterial;
   moonDisc: THREE.Mesh;
   moonDiscMaterial: THREE.MeshBasicMaterial;
+  /** Red-realm rainbow arc; hidden in the overworld. */
+  rainbow: THREE.Mesh;
   dispose(): void;
 }
 
@@ -158,6 +215,28 @@ function createSkyAssets(): SkyAssets {
   moonDisc.frustumCulled = false;
   moonDisc.renderOrder = -998;
 
+  // Rainbow: an upper half-annulus (theta 0..π) whose radial band runs the
+  // spectrum. Additive + depthWrite off so it glows in the sky and the terrain
+  // (drawn after, at renderOrder 0) cleanly occludes it.
+  const rainbowGeometry = new THREE.RingGeometry(RAINBOW_INNER, RAINBOW_OUTER, 96, 1, 0, Math.PI);
+  const rainbowMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uInner: { value: RAINBOW_INNER },
+      uOuter: { value: RAINBOW_OUTER },
+    },
+    vertexShader: RAINBOW_VERTEX,
+    fragmentShader: RAINBOW_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    fog: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+  const rainbow = new THREE.Mesh(rainbowGeometry, rainbowMaterial);
+  rainbow.frustumCulled = false;
+  rainbow.renderOrder = -997;
+  rainbow.visible = false;
+
   return {
     dome,
     horizonColor,
@@ -166,6 +245,7 @@ function createSkyAssets(): SkyAssets {
     sunDiscMaterial,
     moonDisc,
     moonDiscMaterial,
+    rainbow,
     dispose() {
       domeGeometry.dispose();
       domeMaterial.dispose();
@@ -173,6 +253,8 @@ function createSkyAssets(): SkyAssets {
       sunDiscMaterial.dispose();
       moonDiscGeometry.dispose();
       moonDiscMaterial.dispose();
+      rainbowGeometry.dispose();
+      rainbowMaterial.dispose();
     },
   };
 }
@@ -350,6 +432,51 @@ export function SkyAndLighting(): ReactElement | null {
       sky.moonDiscMaterial.opacity *= 1 - weather;
       if (stars) stars.visible = stars.visible && weather < RAIN_STARS_CUTOFF;
     }
+
+    // Red realm override: runs LAST so it fully replaces the day/night/weather
+    // palette with a wild, timeless red sky + a rainbow streaking overhead. The
+    // sun keeps its computed arc direction (for terrain shading) but turns dim
+    // and red; the celestial discs hide and the rainbow takes over.
+    const isRed = useUIStore.getState().realm === "red";
+    sky.rainbow.visible = isRed;
+    if (isRed) {
+      background.copy(RED_HORIZON);
+      fog.color.copy(RED_FOG);
+      fog.near = RED_FOG_NEAR;
+      fog.far = RED_FOG_FAR;
+      sky.horizonColor.copy(RED_HORIZON);
+      sky.zenithColor.copy(RED_ZENITH);
+      if (sun) {
+        sun.intensity = RED_SUN_INTENSITY;
+        sun.color.copy(RED_SUN_COLOR);
+      }
+      if (moon) moon.intensity = 0;
+      if (ambient) {
+        ambient.intensity = RED_AMBIENT_INTENSITY;
+        ambient.color.copy(RED_AMBIENT);
+      }
+      if (hemi) {
+        hemi.intensity = RED_HEMI_INTENSITY;
+        hemi.color.copy(RED_HEMI_SKY);
+        hemi.groundColor.copy(RED_HEMI_GROUND);
+      }
+      sky.sunDiscMaterial.opacity = 0;
+      sky.moonDiscMaterial.opacity = 0;
+      if (stars) stars.visible = true; // a wild starfield, day or night
+      // Stand the arch RAINBOW_DIST ahead of the camera along the horizontal
+      // look direction, dropped so it springs from the horizon, and turn it to
+      // face back at the camera so the whole arch always spans the view.
+      state.camera.getWorldDirection(rainbowDirTmp);
+      rainbowDirTmp.y = 0;
+      if (rainbowDirTmp.lengthSq() < 1e-6) rainbowDirTmp.set(0, 0, -1);
+      rainbowDirTmp.normalize();
+      sky.rainbow.position.set(
+        camPos.x + rainbowDirTmp.x * RAINBOW_DIST,
+        camPos.y - RAINBOW_DROP,
+        camPos.z + rainbowDirTmp.z * RAINBOW_DIST,
+      );
+      sky.rainbow.rotation.set(0, Math.atan2(-rainbowDirTmp.x, -rainbowDirTmp.z), 0);
+    }
   });
 
   return (
@@ -368,6 +495,7 @@ export function SkyAndLighting(): ReactElement | null {
       <primitive object={sky.dome} />
       <primitive object={sky.sunDisc} />
       <primitive object={sky.moonDisc} />
+      <primitive object={sky.rainbow} />
       <group ref={starsRef} visible={false}>
         <Stars radius={280} depth={50} count={2500} factor={5} saturation={0} fade speed={0.5} />
       </group>

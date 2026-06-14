@@ -16,9 +16,12 @@ import {
   MAX_HP,
   MAX_INPUT_DT,
   MAX_NAME_LENGTH,
+  MAX_PORTALS,
   MAX_WATER,
   PICKUP_RANGE,
   PLACEABLE_CHANNEL_S,
+  PORTAL_PLACE_DIST,
+  PORTAL_RADIUS,
   TEMP_NORMAL,
   USE_CHANNEL_S,
   WATER_LEVEL,
@@ -35,10 +38,10 @@ import {
 import { ITEM_DEFS, RECIPES, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import { clamp, distSq2D, yawToDir } from "@worldspring/shared/math";
 import { stepPlayer } from "@worldspring/shared/movement";
-import type { ChannelKind, InputCmd, PlayerCore } from "@worldspring/shared/protocol";
+import type { ChannelKind, InputCmd, PlayerCore, Realm } from "@worldspring/shared/protocol";
 import type { CharacterState } from "../persistence";
 import { startLootRespawn } from "./loot";
-import { sendTo, type GameState, type PlayerStats, type ServerPlayer } from "./state";
+import { sendTo, type GameState, type PlayerStats, type Portal, type ServerPlayer } from "./state";
 
 /** Contract gap: queue cap is specified as "~60 cmds" with no shared constant. */
 const INPUT_QUEUE_CAP = 60;
@@ -126,6 +129,22 @@ function startingInventory(state: GameState): (ItemStack | null)[] {
   return inv;
 }
 
+/**
+ * EXPERIMENT-BRANCH TESTING AID (red portal feature): on a preview/testbed
+ * deploy, make sure every spawn/restore/respawn carries Red Ender Portals so the
+ * feature is reliably testable even on resumed characters (which skip scenario
+ * provisioning). Gated behind state.testbed → a no-op in prod, so it never
+ * pollutes the normal loot/discovery flow. Idempotent (skips when a kit is
+ * already held), and if the inventory is full the kit drops at the player's
+ * feet rather than vanishing. Remove this before a real merge.
+ */
+function grantTestPortals(state: GameState, player: ServerPlayer): void {
+  if (!state.testbed) return;
+  if (player.inventory.some((stack) => stack?.type === "portal_kit")) return;
+  const leftover = addToInventory(player.inventory, "portal_kit", 2);
+  if (leftover > 0) dropAtFeet(state, player, "portal_kit", leftover);
+}
+
 /** Spawn a brand-new player: random beach spawn, full vitals, starting loadout. */
 export function createPlayer(
   state: GameState,
@@ -158,12 +177,15 @@ export function createPlayer(
     movedThisTick: false,
     sprintedThisTick: false,
     fishCooldownT: 0,
+    realm: "overworld",
+    portalArmed: true,
     explored: createExploredGrid(WORLD_SIZE),
     fogDelta: [],
     lastFogCell: -1,
     action: null,
     tookDamageThisTick: false,
   };
+  grantTestPortals(state, player);
   state.players.set(id, player);
   return player;
 }
@@ -211,6 +233,8 @@ export function restorePlayer(
     movedThisTick: false,
     sprintedThisTick: false,
     fishCooldownT: 0,
+    realm: "overworld",
+    portalArmed: true,
     // Per-token fog: explored knowledge accrues across lives (doc 12 Open Q4).
     explored: decodeExplored(WORLD_SIZE, saved.explored),
     fogDelta: [],
@@ -218,6 +242,7 @@ export function restorePlayer(
     action: null,
     tookDamageThisTick: false,
   };
+  grantTestPortals(state, player); // top up if the resumed kit has room
   state.players.set(id, player);
   return player;
 }
@@ -233,6 +258,7 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
     player.inventory = startingInventory(state);
     player.selectedSlot = 0;
   }
+  grantTestPortals(state, player); // keep the feature testable across respawns
   player.alive = true;
   // A new life: stats restart here. The stale pending recap (if any) is
   // storage-side state — GameRoom calls saveCharacter right after respawn,
@@ -246,6 +272,10 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.attackAnimT = 0;
   player.fishCooldownT = 0;
   player.sprinting = false;
+  // A new life always starts back in the overworld (freshSpawnCore put them on
+  // the beach), regardless of which realm the old life died in.
+  player.realm = "overworld";
+  player.portalArmed = true;
   // Keep the explored set (per-token), but re-stamp from the new spawn position.
   player.lastFogCell = -1;
   // Drop any cast belt-and-braces (death already cancels it in tickActiveActions,
@@ -557,6 +587,12 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
       vitals.hp = clamp(vitals.hp + def.power, 0, MAX_HP);
       break;
     case "placeable": {
+      // The placeable kind dispatches on item type: the portal kit tears open a
+      // realm gateway; everything else (campfire_kit) drops a campfire.
+      if (stack.type === "portal_kit") {
+        placeRedPortal(state, player);
+        break; // consumed by the shared tail below
+      }
       const [fx, fz] = yawToDir(player.core.yaw);
       const px = player.core.x + fx * CAMPFIRE_PLACE_DIST;
       const pz = player.core.z + fz * CAMPFIRE_PLACE_DIST;
@@ -579,6 +615,71 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
   }
   consumeFromSlot(player.inventory, slot);
   sendInventory(state, player);
+}
+
+/**
+ * Open a linked portal pair: one in the player's current realm at the spot
+ * ahead of them, and its twin at the SAME (x,z) in the destination realm.
+ * Stepping into either (stepPortals) teleports to the other. The shared world
+ * geometry means the twin sits on identical ground — only the rendering and the
+ * player's realm flag change. Item consumption is handled by useItem's tail.
+ */
+function placeRedPortal(state: GameState, player: ServerPlayer): void {
+  const [fx, fz] = yawToDir(player.core.yaw);
+  const px = player.core.x + fx * PORTAL_PLACE_DIST;
+  const pz = player.core.z + fz * PORTAL_PLACE_DIST;
+  const y = state.world.groundHeight(px, pz);
+  const here: Realm = player.realm;
+  const there: Realm = here === "red" ? "overworld" : "red";
+
+  // Cap world-wide: drop the oldest TWO entries so a full pair is always evicted
+  // together (never a half-broken gateway).
+  while (state.portals.length >= MAX_PORTALS) state.portals.splice(0, 2);
+
+  const near: Portal = { id: state.nextEntityId++, x: px, y, z: pz, realm: here, toRealm: there, toX: px, toZ: pz };
+  const far: Portal = { id: state.nextEntityId++, x: px, y, z: pz, realm: there, toRealm: here, toX: px, toZ: pz };
+  state.portals.push(near, far);
+  sendTo(state, player.id, { t: "notice", msg: "A red portal tears open ahead" });
+}
+
+/**
+ * Per-tick portal crossing. A player standing within PORTAL_RADIUS of a portal
+ * in their own realm is teleported to its destination — but only if armed
+ * (cleared after each crossing, re-armed once they step clear of every portal),
+ * so they never bounce straight back through the twin they land on.
+ */
+export function stepPortals(state: GameState): void {
+  const rSq = PORTAL_RADIUS * PORTAL_RADIUS;
+  for (const player of state.players.values()) {
+    // Skip disconnected linger bodies: a logged-out body resting in a portal's
+    // radius must not auto-cross and resurface its owner in another realm.
+    if (!player.alive || player.offline) continue;
+    let on: Portal | null = null;
+    for (const portal of state.portals) {
+      if (portal.realm !== player.realm) continue;
+      if (distSq2D(player.core.x, player.core.z, portal.x, portal.z) <= rSq) {
+        on = portal;
+        break;
+      }
+    }
+    if (!on) {
+      player.portalArmed = true;
+      continue;
+    }
+    if (!player.portalArmed) continue;
+    // Cross: flip realm, teleport onto the twin, disarm until they step clear.
+    player.portalArmed = false;
+    player.realm = on.toRealm;
+    player.core.x = on.toX;
+    player.core.z = on.toZ;
+    player.core.y = state.world.groundHeight(on.toX, on.toZ);
+    player.core.vy = 0;
+    player.core.grounded = true;
+    sendTo(state, player.id, {
+      t: "notice",
+      msg: on.toRealm === "red" ? "You step into the red realm" : "You return to the overworld",
+    });
+  }
 }
 
 // --- Channeled actions (doc 11) -------------------------------------------

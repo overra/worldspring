@@ -136,6 +136,16 @@ export const CAMPFIRE_BURN_S = 8 * 60;
 export const CAMPFIRE_PLACE_DIST = 1.6; // placed this far in front of player
 export const MAX_CAMPFIRES = 32; // world-wide; placing past this snuffs the oldest
 
+// --- Red portals ---
+/** Placed this far in front of the player — a bit beyond a campfire so you walk
+ * forward INTO the portal you just opened. */
+export const PORTAL_PLACE_DIST = 2.6;
+/** Step within this 2D radius of a portal to cross to its destination realm. */
+export const PORTAL_RADIUS = 1.5;
+/** World-wide cap (counts BOTH ends of each pair); placing past it removes the
+ * oldest portal. Portals do not burn down — the point is to return through them. */
+export const MAX_PORTALS = 16;
+
 // --- Dropped loot ---
 export const DROPPED_LOOT_TTL_S = 600; // player-dropped items despawn after this
 

@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
 import type { ItemStack } from "@worldspring/shared/items";
-import type { DeathRecap, Vitals } from "@worldspring/shared/protocol";
+import type { DeathRecap, Realm, Vitals } from "@worldspring/shared/protocol";
 
 // "reconnecting": the in-game socket dropped (e.g. the server DO instance was
 // replaced under load, or a deploy/network blip) and we're auto-reconnecting
@@ -56,6 +56,10 @@ export interface UIState {
   chatOpen: boolean;
   /** Rolling proximity-chat log, newest last, capped at CHAT_LOG_MAX. */
   chatLog: ChatLine[];
+  /** Which realm the local player is in. Drives terrain/sky/prop theming.
+   * Low-rate (only changes on a portal crossing), so it lives here in the
+   * React-subscribable store rather than the per-frame runtime. */
+  realm: Realm;
 
   setPhase(phase: GamePhase): void;
   setError(error: string | null): void;
@@ -78,6 +82,9 @@ export interface UIState {
   pushChat(name: string, text: string): void;
   /** Wipe the log (disconnect/rejoin — a new identity must not see old lines). */
   clearChatLog(): void;
+  /** Set the current realm (net layer, on welcome/snap). No-ops when unchanged
+   * so it never triggers a needless re-render of the world components. */
+  setRealm(realm: Realm): void;
 }
 
 let noticeId = 0;
@@ -102,6 +109,7 @@ export const useUIStore = create<UIState>((set) => ({
   menuOpen: false,
   chatOpen: false,
   chatLog: [],
+  realm: "overworld",
 
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error }),
@@ -133,4 +141,5 @@ export const useUIStore = create<UIState>((set) => ({
         { id: chatLineId++, name, text, at: performance.now() },
       ],
     })),
+  setRealm: (realm) => set((s) => (s.realm === realm ? s : { realm })),
 }));
