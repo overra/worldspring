@@ -6,7 +6,7 @@
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import { clientWorld } from "@/client/runtime";
-import { blitWindow, drawDynamicLayer, getBakedMap } from "@/client/render/map/mapBake";
+import { blitWindow, drawDynamicLayer, drawFog, getBakedMap } from "@/client/render/map/mapBake";
 import "./map.css";
 
 /** Half-extent of the world window shown, meters (so a 220 m square). */
@@ -35,14 +35,13 @@ export function Minimap(): ReactElement | null {
       const tl = baked.proj.worldToImage(me.x - R, me.z + R);
       const br = baked.proj.worldToImage(me.x + R, me.z - R);
       blitWindow(ctx, baked.base, tl.ix, tl.iy, br.ix - tl.ix, br.iy - tl.iy, MM, baked.px);
-      drawDynamicLayer(
-        ctx,
-        (x, z) => ({
-          x: ((x - (me.x - R)) / (2 * R)) * MM,
-          y: (((me.z + R) - z) / (2 * R)) * MM,
-        }),
-        1,
-      );
+      const toPx = (x: number, z: number): { x: number; y: number } => ({
+        x: ((x - (me.x - R)) / (2 * R)) * MM,
+        y: (((me.z + R) - z) / (2 * R)) * MM,
+      });
+      const explored = clientWorld.explored;
+      if (clientWorld.config.map.reveal === "explored" && explored) drawFog(ctx, explored, toPx);
+      drawDynamicLayer(ctx, toPx, 1);
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgba(0,0,0,0.6)";
       ctx.strokeRect(0, 0, MM, MM);

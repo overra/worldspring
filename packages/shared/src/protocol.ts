@@ -251,6 +251,10 @@ export type ServerMsg =
        * does NOT bump PROTOCOL_VERSION. The client clamps it (clampConfig) and
        * never stores the raw object; absent → the client's DEFAULT_CONFIG. */
       config?: ServerConfig;
+      /** doc 12 — base64 fog-of-war explored bitset, sent only when the server
+       * runs map.reveal === "explored". Additive optional (older clients ignore
+       * it), so no PROTOCOL_VERSION bump. */
+      explored?: string;
     }
   | {
       t: "snap";
@@ -270,6 +274,9 @@ export type ServerMsg =
       weather: number;
       events: GameEvent[];
       count: number; // players online
+      /** doc 12 — cell indices newly explored this tick (fog servers only).
+       * Omitted when empty. Additive optional → no PROTOCOL_VERSION bump. */
+      fog?: number[];
     }
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
