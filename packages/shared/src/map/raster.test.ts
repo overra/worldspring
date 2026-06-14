@@ -1,5 +1,5 @@
 // packages/shared/src/map/raster.test.ts — doc 12 M1. Locks the shared map
-// raster core: the projection orientation (north = -Z is image-up), that the
+// raster core: the projection orientation (north = +Z is image-up), that the
 // biome raster paints ocean blue and land green for the prod seed, and that the
 // POI layer surfaces the town names + a footprint per building. Pure shared
 // code, plain node env — no canvas, no three.js.
