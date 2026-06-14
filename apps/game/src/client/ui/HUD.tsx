@@ -53,7 +53,10 @@ interface BarProps {
 }
 
 function Bar({ label, value, max, fillClass }: BarProps): ReactElement {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  // Guard the denominator: vitals pass positive constant caps, but the cast bar
+  // feeds wire-derived totalS — a zero/negative max would make value/max
+  // NaN/Infinity and break the fill width. Empty bar is the safe fallback.
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
     <div className="bar">
       <span className="bar-label">{label}</span>
