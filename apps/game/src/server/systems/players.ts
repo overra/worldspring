@@ -105,6 +105,18 @@ function freshStats(state: GameState): PlayerStats {
   return { bornAt: state.time, kills: 0, zombieKills: 0, distanceM: 0 };
 }
 
+/**
+ * EXPERIMENT-BRANCH TESTING AID (red portal feature): every fresh spawn carries
+ * a couple of Red Ender Portals so the feature is playable with zero setup —
+ * local `pnpm dev`, any deploy, with or without the preview testbed. Idempotent
+ * (skips if a kit is already present) so it composes with testbed provisioning
+ * and with keep-inventory respawns. Remove this before a real merge.
+ */
+function grantTestPortals(inventory: (ItemStack | null)[]): void {
+  if (inventory.some((stack) => stack?.type === "portal_kit")) return;
+  addToInventory(inventory, "portal_kit", 2);
+}
+
 /** Spawn a brand-new player: random beach spawn, full vitals, empty inventory. */
 export function createPlayer(
   state: GameState,
@@ -140,6 +152,7 @@ export function createPlayer(
     realm: "overworld",
     portalArmed: true,
   };
+  grantTestPortals(player.inventory);
   state.players.set(id, player);
   return player;
 }
@@ -190,6 +203,7 @@ export function restorePlayer(
     realm: "overworld",
     portalArmed: true,
   };
+  grantTestPortals(player.inventory); // top up if the resumed kit has room
   state.players.set(id, player);
   return player;
 }
@@ -205,6 +219,7 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
     player.inventory = emptyInventory();
     player.selectedSlot = 0;
   }
+  grantTestPortals(player.inventory); // keep the feature testable across respawns
   player.alive = true;
   // A new life: stats restart here. The stale pending recap (if any) is
   // storage-side state — GameRoom calls saveCharacter right after respawn,
