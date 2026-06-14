@@ -14,6 +14,24 @@ deployment platform (workerd), so the baseline is the Linux value; regenerate it
 **in CI / on Linux**, and expect `pnpm fingerprint` on a Mac to mismatch seed 0.
 Bumping `.nvmrc` may shift hashes too — regenerate then.
 
+### Production deploy (`deploy-prod` job, push to `main` only)
+
+After `verify` passes on a push to `main` (a merged PR), `deploy-prod` builds and
+ships the **game** Worker to production (`worldspring`) via the same
+`cloudflare/wrangler-action` as the preview — minus the `--name` / `--var TESTBED`
+overrides, so prod stays var-less (the testbed never reaches it) and
+`keep_vars: true` (`apps/game/wrangler.jsonc`) preserves an operator-set
+`GAME_CONFIG` across deploys. It uses the same `CLOUDFLARE_API_TOKEN` /
+`CLOUDFLARE_ACCOUNT_ID` secrets (skips **green** if unset), runs only on `main`
+(never on PRs/forks — secrets stay off untrusted code), and the file-level
+concurrency cancels a superseded run so a burst of merges ships only the latest
+`main`.
+
+**Game only.** `apps/web` (site/directory) and `apps/prober` (cron) have no deploy
+automation yet — ship them manually with `pnpm deploy:web` / `pnpm deploy:prober`.
+There's no manual approval gate; add a GitHub **Environment** with required
+reviewers to the `deploy-prod` job if you want one.
+
 ## `preview.yml` — per-PR game preview
 
 Each PR deploys its own throwaway Worker **`worldspring-pr-<N>`** with its own
