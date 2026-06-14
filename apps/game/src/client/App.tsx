@@ -45,6 +45,34 @@ export function App(): React.ReactElement {
       <QaPanel />
       <EscapeMenu />
       {phase === "dead" && <DeathScreen />}
+      {phase === "reconnecting" && <ReconnectOverlay />}
+    </div>
+  );
+}
+
+/** Shown over the frozen last frame while the client auto-reconnects after an
+ * unexpected socket drop (e.g. the server DO instance was replaced under load).
+ * Distinct from a real disconnect, which returns to the main menu. */
+function ReconnectOverlay(): React.ReactElement {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: "fixed",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.55)",
+        color: "#e8e8e8",
+        font: "600 18px system-ui, sans-serif",
+        letterSpacing: "0.04em",
+        pointerEvents: "none",
+        zIndex: 50,
+      }}
+    >
+      Reconnecting…
     </div>
   );
 }

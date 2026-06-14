@@ -201,6 +201,10 @@ export class GameRoom extends DurableObject<Env> {
   private tickMsWindowMax = 0;
   private tickMsPrevWindowMax = 0;
   private tickMsWindowStart = 0;
+  /** Monotonic count of inbound WS messages received — exposed via /api/health
+   * for external inbound-rate monitoring (Δ inMsgCount / Δ now); used by the
+   * load-test harness to tell server CPU load apart from undelivered load. */
+  private inMsgCount = 0;
 
   /** doc 10 M1: preview-only testbed provisioning gate (env.TESTBED === "1").
    * Set once from the deploy-time var; undefined in prod → false → never seeds. */
@@ -290,6 +294,12 @@ export class GameRoom extends DurableObject<Env> {
           tickMsMax: round2(Math.max(this.tickMsWindowMax, this.tickMsPrevWindowMax)),
           tick: game?.tick ?? 0,
           uptime: round2(game?.time ?? 0),
+          // Observability: an independent wall clock + a monotonic inbound count
+          // let an external monitor derive the TRUE sustained tick rate
+          // (Δtick / Δnow) and inbound load without trusting the in-DO
+          // performance.now() (which under-reports pure-CPU ticks on workerd).
+          now: Date.now(),
+          inMsgCount: this.inMsgCount,
         }),
         {
           headers: {
@@ -462,6 +472,7 @@ export class GameRoom extends DurableObject<Env> {
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string") return;
+    this.inMsgCount++;
     this.lastMsgAt.set(ws, Date.now());
     if (this.rateLimited(ws)) return;
     const msg = parseClientMsg(message);
@@ -474,14 +485,29 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     const game = this.ensureGame();
+    // Re-arm the tick on every non-ping message. After a platform DO recycle the
+    // surviving socket's next message lands HERE, not in fetch() (the only other
+    // startTicking caller), so without this the tick stays stopped and a
+    // rehydrated survivor freezes — it gets the welcome but no snapshots and no
+    // liveness sweep (both live only inside tick()). Idempotent (guarded by
+    // tickHandle), so calling it unconditionally per message is safe & cheap.
+    this.startTicking();
     if (msg.t === "join") {
       await this.handleJoin(ws, game, msg.name, msg.token, msg.proto, msg.scenario);
       this.flushOutbox(game);
       return;
     }
 
-    const playerId = this.playerBySocket.get(ws);
-    if (playerId === undefined) return; // must join first
+    let playerId = this.playerBySocket.get(ws);
+    if (playerId === undefined) {
+      // A socket that survived a DO recycle: the platform evicted + recreated
+      // the object (keeping the hibernatable WebSocket and its attachment, but
+      // wiping the in-memory maps). Re-associate it with its character from the
+      // attachment instead of ignoring it — otherwise it gets no snapshots and
+      // the liveness sweep eventually closes it, dropping the player.
+      playerId = this.rehydrateSocket(ws, game);
+      if (playerId === undefined) return; // not resumable -> client must re-join
+    }
     const player = game.players.get(playerId);
     if (!player) return;
 
@@ -627,7 +653,19 @@ export class GameRoom extends DurableObject<Env> {
    */
   private timedTick(): void {
     const start = performance.now();
-    this.tick();
+    try {
+      this.tick();
+    } catch (err) {
+      // Defense-in-depth: a bug in a single tick must never escape the
+      // setInterval callback uncaught — that crashes the isolate, forcing the
+      // platform to evict + recreate the DO and drop every connected player
+      // (see rehydrateSocket). Log and skip; state holds at the last good tick.
+      console.error(`[tick] error at tick ${this.game?.tick ?? 0}, skipping:`, err);
+      // A throw partway through tick() skips the end-of-tick game.events clear,
+      // so drop the partial batch here — otherwise a deterministic per-tick throw
+      // would accumulate events unbounded (and broadcast stale half-state).
+      if (this.game) this.game.events.length = 0;
+    }
     const ms = performance.now() - start;
     this.tickCount++;
     this.tickMsEma =
@@ -699,9 +737,7 @@ export class GameRoom extends DurableObject<Env> {
       existing.wantsAttackAt = null;
       existing.inputBudget = INPUT_BUDGET_CAP_S;
       existing.lastAck = 0;
-      this.playerBySocket.set(ws, existing.id);
-      this.socketByPlayer.set(existing.id, ws);
-      this.lastMsgAt.set(ws, Date.now());
+      this.bindSocket(ws, existing);
       this.sendWelcome(ws, game, existing, true, null);
       if (!existing.alive) {
         // Taking over a character that is sitting on the death screen: the
@@ -741,9 +777,7 @@ export class GameRoom extends DurableObject<Env> {
     // token already disambiguates identity).
     if (saved && saved.alive) {
       const player = restorePlayer(game, saved.id, saved.name, tokenHash, saved.state);
-      this.playerBySocket.set(ws, player.id);
-      this.socketByPlayer.set(player.id, ws);
-      this.lastMsgAt.set(ws, Date.now());
+      this.bindSocket(ws, player);
       this.sendWelcome(ws, game, player, true, null);
       this.persistAll(game);
       this.broadcastMsg({ t: "notice", msg: `${player.name} joined` });
@@ -773,9 +807,7 @@ export class GameRoom extends DurableObject<Env> {
     if (this.testbed) provisionTestbed(game, player, resolveScenario(scenario ?? this.env.SCENARIO));
     const recap = saved ? saved.pendingRecap : null;
     if (recap) clearPendingRecap(sql, tokenHash);
-    this.playerBySocket.set(ws, id);
-    this.socketByPlayer.set(id, ws);
-    this.lastMsgAt.set(ws, Date.now());
+    this.bindSocket(ws, player);
     this.sendWelcome(ws, game, player, false, recap);
     this.persistAll(game);
     this.broadcastMsg({ t: "notice", msg: `${name} joined` });
@@ -813,6 +845,14 @@ export class GameRoom extends DurableObject<Env> {
     this.playerBySocket.delete(ws);
     this.rateBySocket.delete(ws);
     this.lastMsgAt.delete(ws);
+    // A dropped socket carries no resumable identity — clear its hibernation
+    // attachment so a late buffered message can't re-enter rehydrateSocket and
+    // bounce the live socket via the adopt path. Best-effort (already closing).
+    try {
+      ws.serializeAttachment(null);
+    } catch {
+      // Already closed.
+    }
     if (playerId !== undefined) {
       this.socketByPlayer.delete(playerId);
       const game = this.game;
@@ -858,6 +898,110 @@ export class GameRoom extends DurableObject<Env> {
       }
       if (!hasLingeringPlayers(game)) this.stopAndPersist(game);
     }
+  }
+
+  /**
+   * Bind a socket to a player AND mirror the binding into the socket's
+   * hibernation attachment. A DO recycle (platform eviction + recreate)
+   * preserves the hibernatable WebSocket but wipes the in-memory maps; the
+   * attachment is what lets `rehydrateSocket` re-associate them on wake. Used
+   * by every join path so the binding is durable everywhere.
+   */
+  private bindSocket(ws: WebSocket, player: ServerPlayer): void {
+    this.playerBySocket.set(ws, player.id);
+    this.socketByPlayer.set(player.id, ws);
+    this.lastMsgAt.set(ws, Date.now());
+    try {
+      ws.serializeAttachment({ id: player.id, tokenHash: player.tokenHash });
+    } catch {
+      // Best-effort resilience aid only — never fail a join if it throws.
+    }
+  }
+
+  /**
+   * Re-associate a socket that survived a DO recycle with its character. The
+   * platform can evict and recreate a busy Durable Object: the hibernatable
+   * WebSocket (and its attachment) survive, but the in-memory socket maps and
+   * the live GameState do not. Without this, the restored socket is unmapped —
+   * it gets no snapshots and the liveness sweep eventually closes it, dropping
+   * the player. Rebuild the binding from the attachment + persisted character.
+   * Returns the player id, or undefined if the socket carries no resumable
+   * identity (never joined, or the character died/vanished since the last save)
+   * — those fall back to a clean re-join.
+   *
+   * ACCEPTED LIMITATIONS of a recycle (bounded; platform recycles are infrequent):
+   *  - Offline combat-log lingers are NOT restored: CharacterState has no offline
+   *    field and loadWorld restores no players, so a recycle ends an in-progress
+   *    linger early (a free combat-log escape that round).
+   *  - A player sitting on the death screen at recycle is hard-dropped to the
+   *    menu (closed 1012 below; the client's close handler ignores the code and
+   *    has no auto-reconnect) rather than re-shown the death/recap screen.
+   *
+   * No-await ATOMICITY is load-bearing: there is no await between the game.players
+   * scan and restorePlayer, so under the DO input gate (JS run-to-completion) two
+   * surviving sockets for one character cannot both restore — the second finds the
+   * player already in game.players and adopts. Do NOT insert an await between them.
+   */
+  private rehydrateSocket(ws: WebSocket, game: GameState): string | undefined {
+    let att: unknown;
+    try {
+      att = ws.deserializeAttachment();
+    } catch {
+      return undefined;
+    }
+    const tokenHash =
+      att !== null &&
+      typeof att === "object" &&
+      typeof (att as { tokenHash?: unknown }).tokenHash === "string"
+        ? (att as { tokenHash: string }).tokenHash
+        : undefined;
+    if (tokenHash === undefined) return undefined;
+
+    // Already rebuilt in this isolate (a second socket for the same character,
+    // or an offline-lingering body) — adopt it and take the session over,
+    // mirroring handleJoin's reconnect path. Prevents a duplicate player.
+    for (const existing of game.players.values()) {
+      if (existing.tokenHash !== tokenHash) continue;
+      const oldWs = this.socketByPlayer.get(existing.id);
+      if (oldWs && oldWs !== ws) {
+        this.playerBySocket.delete(oldWs);
+        this.rateBySocket.delete(oldWs);
+        this.lastMsgAt.delete(oldWs);
+        try {
+          oldWs.close(1008, "session taken over");
+        } catch {
+          // Already closed.
+        }
+      }
+      existing.offline = false;
+      existing.offlineSince = 0;
+      existing.cmdQueue.length = 0;
+      existing.wantsAttack = false;
+      existing.wantsAttackAt = null;
+      existing.inputBudget = INPUT_BUDGET_CAP_S;
+      existing.lastAck = 0;
+      this.bindSocket(ws, existing);
+      this.sendWelcome(ws, game, existing, true, null);
+      return existing.id;
+    }
+
+    const saved = loadCharacter(this.ctx.storage.sql, tokenHash);
+    if (!saved || !saved.alive) {
+      // Died or vanished since the last periodic save: cannot resume a living
+      // session. Close so the client re-joins cleanly (death screen / new life).
+      // No persistAll here: 64 survivors rehydrating at once must not each fire
+      // a full world+characters transaction — the periodic save covers them.
+      try {
+        ws.close(1012, "server restarted");
+      } catch {
+        // Already closing.
+      }
+      return undefined;
+    }
+    const player = restorePlayer(game, saved.id, saved.name, tokenHash, saved.state);
+    this.bindSocket(ws, player);
+    this.sendWelcome(ws, game, player, true, null);
+    return player.id;
   }
 
   /** Persist a death: leaderboard row + character row (recap stored for
