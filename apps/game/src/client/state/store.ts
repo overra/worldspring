@@ -6,7 +6,11 @@ import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, Vitals } from "@worldspring/shared/protocol";
 
-export type GamePhase = "menu" | "connecting" | "playing" | "dead";
+// "reconnecting": the in-game socket dropped (e.g. the server DO instance was
+// replaced under load, or a deploy/network blip) and we're auto-reconnecting
+// with the persisted token — the last frame stays frozen under an overlay
+// until the new welcome, distinct from a real disconnect that returns to menu.
+export type GamePhase = "menu" | "connecting" | "playing" | "dead" | "reconnecting";
 
 export interface Notice {
   id: number;
