@@ -96,8 +96,9 @@ import {
   respawnPlayer,
   restorePlayer,
   sanitizeName,
+  startUse,
   STRIP_TEXT_RE,
-  useItem,
+  tickActiveActions,
 } from "./systems/players";
 import {
   capturePosHistory,
@@ -499,7 +500,10 @@ export class GameRoom extends DurableObject<Env> {
         player.wantsAttackAt = msg.at ?? null;
         break;
       case "use":
-        useItem(game, player, msg.slot);
+        // {t:"use"} now STARTS a channeled action (doc 11) instead of resolving
+        // inline: startUse opens a timed cast (or runs the instant path for the
+        // still-instant water/fishing/tool items). Completion lands on the tick.
+        startUse(game, player, msg.slot);
         break;
       case "equip":
         equipSlot(game, player, msg.slot);
@@ -950,6 +954,12 @@ export class GameRoom extends DurableObject<Env> {
     // Fog-of-war: reveal cells around each player's just-updated position
     // (no-op unless map.reveal === "explored").
     markExploration(game);
+    // Channeled actions (doc 11) advance HERE — load-bearing ordering: this MUST
+    // run AFTER applyQueuedInputs (so it reads THIS tick's freshly-computed
+    // movedThisTick for the move-cancel rule, which applyQueuedInputs resets to
+    // false then recomputes) and BEFORE attack resolution. Moving it ahead of
+    // applyQueuedInputs would silently break move-cancel; do not reorder.
+    tickActiveActions(game, dt);
     // Attacks resolve after this tick's movement so aim is current; the
     // client-reported aim time rides along for target rewind (lag comp).
     for (const player of game.players.values()) {
