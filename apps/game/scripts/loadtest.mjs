@@ -1,57 +1,132 @@
 #!/usr/bin/env node
 // Worldspring load-test harness — drives N protocol-faithful bots against the
-// GameRoom WebSocket and reports join success, snapshot bandwidth, RTT
-// percentiles, socket closes and the server's /api/health stats.
+// GameRoom WebSocket and reports the metrics that actually validate the two
+// scaling caveats (see docs/plans — scaling roadmap).
 //
-//   node scripts/loadtest.mjs ws://localhost:4173/ws 20 120
+//   node scripts/loadtest.mjs ws://localhost:5173/ws 20 120
 //                             <url>                  <bots> <seconds>
+//   node scripts/loadtest.mjs <url> --ramp=8,16,24,32,40,48,56,64 --step-seconds=45
+//   node scripts/loadtest.mjs <url> 24 120 --input-ms=25   # caveat-2 msg/s sweep
+//
+// Flags (all optional; positional <bots>/<seconds> still work when --ramp absent):
+//   --ramp=a,b,c        cumulative bot counts per step (overrides positional bots)
+//   --step-seconds=N    hold each ramp step this long (default 45)
+//   --health-interval=N poll /api/health every N ms for the timer-INDEPENDENT
+//                       metric (default 3000; 0 disables)
+//   --input-ms=N        per-bot input cadence (default 50 = 20 msg/s); lower to
+//                       push inbound msg/s WITHOUT adding CPU-heavy players
+//   --ping-ms=N         per-bot ping cadence (default 2000)
+//   --spread            disperse the fleet on fixed radial bearings instead of
+//                       random-walk (varies interest-set geometry / the CPU knee)
+//
+// WHY THESE METRICS (the corrected methodology):
+//  * The tick is a plain setInterval with NO catch-up (GameRoom.ts) — Δtick/Δwall
+//    stays pinned at ~15Hz then COLLAPSES; it is a cliff, not a gradient. The real
+//    gradient/early-warning is tickMsMax climbing toward the 66.7ms budget.
+//  * extHz is computed off the SERVER's own Date.now() (/api/health `now`), so it
+//    is immune to this client's event-loop jitter; the client-clock version is a
+//    non-circular cross-check. (Δuptime/Δwall "drift" is algebraically identical
+//    to Δtick/Δwall, so it is NOT used.)
+//  * RTT is a NETWORK sanity number only — the server answers ping inline off the
+//    tick, so RTT does NOT measure tick health. Never used as pass/fail.
+//  * CLIENT EVENT-LOOP LAG is the false-pass guard: a saturated Node generator
+//    under-feeds the DO, making extHz read a beautiful 15 while the test rig is
+//    the real bottleneck. If client-lag p95 is high, the run is INVALID.
+//  * inbound msg/s is read from the server's own received count (/api/health
+//    `inMsgCount`), so caveat 2 is falsifiable: we know the DO actually received
+//    the load rather than the client failing to deliver it.
 //
 // Plain Node ESM, zero deps; uses the built-in WebSocket global (Node 22+).
-// The message shapes mirror src/shared/protocol.ts and the cadences mirror
-// src/client/net/connection.ts + NetSystem.tsx — the server validates
-// strictly, so any drift here shows up as silently dropped messages.
 
 import { randomBytes } from "node:crypto";
 
-// --- Mirrored constants (src/shared/constants.ts) ---
-// Two-sided join gate (packages/shared/src/protocol.ts, doc 03 §1): bots send
-// this as join.proto. Keep it equal to the server's PROTOCOL_VERSION — once
-// that bumps past 1, an absent or mismatched proto is rejected with
-// "incompatible version" and every bot silently fails to join.
-const PROTOCOL_VERSION = 1;
-const INPUT_SEND_MS = 50; // client batches input cmds at this interval
+// --- Mirrored constants (packages/shared/src/constants.ts) ---
+const PROTOCOL_VERSION = 1; // keep == server PROTOCOL_VERSION or every join is rejected
 const MAX_INPUT_DT = 0.05; // clamp for a single cmd dt (seconds)
 const MAX_CMDS_PER_FRAME = 6; // burst allowance for long frames
 const RESPAWN_DELAY_S = 4; // server gates respawn requests on this
 const INTERP_DELAY_MS = 120; // remote render delay -> attack `at` estimate
-const PING_INTERVAL_MS = 2000;
+const TICK_RATE = 15; // server sim Hz — the extHz target
+const TICK_MS = 1000 / TICK_RATE;
+const TICK_BUDGET_MS = TICK_MS; // 66.67ms — tickMsMax must stay well under this
+// Server per-socket rate limit (GameRoom.ts): exceeding it = 1008 close (harness
+// misconfig, NOT server saturation). 600 msgs / 5s = 120 msg/s.
+const SERVER_RATE_LIMIT_MSG_S = 120;
+// Generator-integrity thresholds: above these the run is suspect/INVALID.
+const CLIENT_LAG_P95_WARN_MS = 10;
+const ACHIEVED_MSG_RATIO_MIN = 0.95;
 
 // --- Bot behavior tunables ---
 const HEADING_MIN_S = 2;
 const HEADING_MAX_S = 5;
-const SPRINT_CHANCE = 0.3; // rolled on every heading change
-const JUMP_CHANCE_PER_LOOP = 0.005; // ~once per 10s at 20Hz
+const SPRINT_CHANCE = 0.3;
+const JUMP_CHANCE_PER_LOOP = 0.005;
 const ATTACK_MIN_S = 3;
 const ATTACK_MAX_S = 8;
 const CHAT_INTERVAL_S = 60;
-const JOIN_STAGGER_MS = 40; // spread connection bursts a little
-const JOIN_TIMEOUT_MS = 10_000; // matches the server's join eviction
-const SUMMARY_INTERVAL_MS = 10_000;
+const JOIN_STAGGER_MS = 40;
+const JOIN_TIMEOUT_MS = 10_000;
+const STEP_TRANSIENT_MS = 5_000; // discard each step's first 5s (join stagger settle)
+const MAX_BOT_RECONNECTS = 8; // consecutive reconnect attempts before giving up (matches client)
 
-// --- Args ---
-const [, , urlArg, botsArg, secondsArg] = process.argv;
+// --- Args: positional <url> [bots] [seconds] + --flags ---
+const argv = process.argv.slice(2);
+const positional = argv.filter((a) => !a.startsWith("--"));
+const flags = new Map(
+  argv
+    .filter((a) => a.startsWith("--"))
+    .map((a) => {
+      const eq = a.indexOf("=");
+      return eq === -1 ? [a.slice(2), true] : [a.slice(2, eq), a.slice(eq + 1)];
+    }),
+);
+
+const [urlArg, botsArg, secondsArg] = positional;
 if (!urlArg || !/^wss?:\/\//.test(urlArg)) {
-  console.error("usage: node scripts/loadtest.mjs <ws-url> [botCount] [seconds]");
-  console.error("  e.g. node scripts/loadtest.mjs ws://localhost:4173/ws 20 120");
+  console.error("usage: node scripts/loadtest.mjs <ws-url> [bots] [seconds] [--flags]");
+  console.error("  e.g. node scripts/loadtest.mjs ws://localhost:5173/ws 20 120");
+  console.error("       node scripts/loadtest.mjs ws://localhost:5173/ws --ramp=8,16,24,32 --step-seconds=45");
   process.exit(2);
 }
-const WS_URL = urlArg;
-const BOT_COUNT = Math.max(1, Number.parseInt(botsArg ?? "20", 10) || 20);
-const DURATION_S = Math.max(5, Number.parseInt(secondsArg ?? "120", 10) || 120);
-
 if (typeof WebSocket === "undefined") {
   console.error("loadtest: global WebSocket missing — Node 22+ required");
   process.exit(2);
+}
+
+const numFlag = (name, dflt) => {
+  const v = flags.get(name);
+  if (v === undefined) return dflt;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) ? n : dflt;
+};
+
+const WS_URL = urlArg;
+const INPUT_SEND_MS = Math.max(5, numFlag("input-ms", 50));
+const PING_INTERVAL_MS = Math.max(250, numFlag("ping-ms", 2000));
+const HEALTH_INTERVAL_MS = numFlag("health-interval", 3000);
+const STEP_SECONDS = Math.max(5, numFlag("step-seconds", 45));
+const SPREAD = flags.has("spread");
+const RAMP = (() => {
+  const v = flags.get("ramp");
+  if (!v || v === true) return null;
+  const steps = String(v)
+    .split(",")
+    .map((s) => Number.parseInt(s, 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return steps.length ? steps : null;
+})();
+const MAX_BOTS = RAMP ? Math.max(...RAMP) : Math.max(1, Number.parseInt(botsArg ?? "20", 10) || 20);
+const DURATION_S = RAMP
+  ? RAMP.length * STEP_SECONDS + 2
+  : Math.max(5, Number.parseInt(secondsArg ?? "120", 10) || 120);
+
+// Per-bot target send rate (input + ping), for achieved-vs-target accounting.
+const PER_BOT_MSG_S = 1000 / INPUT_SEND_MS + 1000 / PING_INTERVAL_MS;
+if (1000 / INPUT_SEND_MS >= SERVER_RATE_LIMIT_MSG_S) {
+  console.warn(
+    `loadtest: WARNING input-ms=${INPUT_SEND_MS} => ${(1000 / INPUT_SEND_MS).toFixed(0)} input/s/bot >= ` +
+      `server per-socket limit ${SERVER_RATE_LIMIT_MSG_S}/s; expect 1008 closes (harness ceiling, not server saturation).`,
+  );
 }
 
 const rand = (min, max) => min + Math.random() * (max - min);
@@ -59,6 +134,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let shuttingDown = false;
 let testStartMs = 0;
+let currentStep = 0; // 0-based index into RAMP (or 0 for fixed-N)
+let currentBotTarget = 0; // bots intended live in the current step
+
+// --- Fleet-wide instrumentation accumulators ---
+const sentByType = { input: 0, ping: 0, attack: 0, chat: 0, respawn: 0, join: 0, other: 0 };
+let sentTotal = 0;
+let lagWindow = []; // client event-loop lag samples (ms) since last health poll
+const healthRows = []; // one row per /api/health poll pair
 
 // --- Bots ---
 
@@ -66,27 +149,27 @@ function createBot(index) {
   return {
     index,
     name: `Bot-${index}`,
-    token: randomBytes(16).toString("hex"), // 32 hex chars, unique identity
+    token: randomBytes(16).toString("hex"),
+    bearing: (index / Math.max(MAX_BOTS, 1)) * Math.PI * 2, // for --spread
     ws: null,
-    // join / liveness
+    step: 0, // ramp step this bot was added in
     joined: false,
+    everJoined: false, // got a welcome at least once (vs a first-connect failure)
     joinFailed: false,
     joinFailReason: null,
     unexpectedClose: false,
-    closeInfo: null, // { code, reason }
-    // sim state
+    closeInfo: null,
     alive: false,
     seq: 0,
     yaw: rand(0, Math.PI * 2),
     pitch: 0,
     sprint: false,
-    nextHeadingAt: 0, // all "...At" fields are wall-clock seconds
+    nextHeadingAt: 0,
     nextAttackAt: 0,
     nextChatAt: 0,
     lastLoopMs: 0,
-    lastSnapTime: 0, // server game-time from the last snap
+    lastSnapTime: 0,
     lastSnapAtMs: 0,
-    // stats
     snapCount: 0,
     snapBytes: 0,
     lastAck: 0,
@@ -94,7 +177,8 @@ function createBot(index) {
     rtts: [],
     deaths: 0,
     respawns: 0,
-    // timers
+    reconnects: 0, // total times this bot re-opened after an unexpected drop
+    reconnectAttempts: 0, // consecutive attempts since the last welcome
     loopTimer: null,
     pingTimer: null,
     joinTimer: null,
@@ -106,6 +190,10 @@ function botSend(bot, msg) {
   const ws = bot.ws;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(msg));
+  const t = msg.t;
+  if (t in sentByType) sentByType[t]++;
+  else sentByType.other++;
+  sentTotal++;
 }
 
 function stopBotTimers(bot) {
@@ -119,25 +207,38 @@ function stopBotTimers(bot) {
   bot.pendingTimeouts.length = 0;
 }
 
-/** Game-time the bot's "screen" would be showing — mirrors doAttack()'s
- * clientWorld.renderGameTime (interpolation runs INTERP_DELAY_MS behind). */
+/** Game-time the bot's "screen" would show — mirrors doAttack()'s renderGameTime. */
 function estimateRenderGameTime(bot) {
   if (bot.lastSnapAtMs === 0) return 0;
   return bot.lastSnapTime + (Date.now() - bot.lastSnapAtMs) / 1000 - INTERP_DELAY_MS / 1000;
 }
 
 function rollHeading(bot, nowS) {
+  if (SPREAD) {
+    // Persistent outward bearing (+small jitter) so the fleet disperses and
+    // interest-set overlap stays low/roughly constant — the geometry contrast
+    // to the default random-walk clustering.
+    bot.yaw = bot.bearing + rand(-0.25, 0.25);
+    bot.sprint = true;
+    bot.nextHeadingAt = nowS + rand(HEADING_MAX_S, HEADING_MAX_S * 2);
+    return;
+  }
   bot.yaw = rand(0, Math.PI * 2);
   bot.pitch = rand(-0.3, 0.3);
   bot.sprint = Math.random() < SPRINT_CHANCE;
   bot.nextHeadingAt = nowS + rand(HEADING_MIN_S, HEADING_MAX_S);
 }
 
-/** 20Hz behavior loop: input batches, attacks, chat. Mirrors NetSystem's
- * frame sampling + INPUT_SEND_MS batching (at 20Hz each batch is ~1 cmd;
- * a late timer fire splits into sub-cmds of MAX_INPUT_DT like a slow frame). */
+/** Per-bot behavior loop driven by setInterval(INPUT_SEND_MS). Also samples
+ * client event-loop lag = how much later than scheduled this fire landed — the
+ * generator-integrity signal. */
 function botLoop(bot) {
   const nowMs = Date.now();
+  // Client-loop lag: gap since last fire minus the scheduled interval. A healthy
+  // generator fires ~on time; a saturated one fires late and under-feeds the DO.
+  if (bot.lastLoopMs > 0) {
+    lagWindow.push(Math.max(0, nowMs - bot.lastLoopMs - INPUT_SEND_MS));
+  }
   const nowS = nowMs / 1000;
   if (nowS >= bot.nextHeadingAt) rollHeading(bot, nowS);
 
@@ -154,7 +255,7 @@ function botLoop(bot) {
         seq: ++bot.seq,
         dt: Math.round(dt * 10000) / 10000,
         mx: 0,
-        mz: -1, // forward (client convention: -1 forward .. 1 back)
+        mz: -1,
         yaw: Math.round(bot.yaw * 1000) / 1000,
         pitch: Math.round(bot.pitch * 1000) / 1000,
         sprint: bot.sprint,
@@ -190,17 +291,27 @@ function onBotMessage(bot, data) {
   switch (msg.t) {
     case "welcome": {
       bot.joined = true;
+      bot.everJoined = true;
+      bot.reconnectAttempts = 0; // connected (initial or a successful reconnect)
+      // A welcome clears any stale failure flag from a slow-but-now-recovered
+      // reconnect attempt, so a real recovery isn't mis-reported as a failure.
+      bot.joinFailed = false;
+      bot.joinFailReason = null;
       bot.alive = msg.you.hp > 0;
       bot.lastSnapTime = msg.time;
       bot.lastSnapAtMs = Date.now();
       if (bot.joinTimer !== null) clearTimeout(bot.joinTimer);
       bot.joinTimer = null;
-      // Start behaving only once the server has accepted us.
       const nowS = Date.now() / 1000;
       bot.lastLoopMs = Date.now();
       rollHeading(bot, nowS);
       bot.nextAttackAt = nowS + rand(ATTACK_MIN_S, ATTACK_MAX_S);
-      bot.nextChatAt = nowS + rand(5, CHAT_INTERVAL_S); // stagger first lines
+      bot.nextChatAt = nowS + rand(5, CHAT_INTERVAL_S);
+      // A welcome can arrive again mid-session (the server rehydrates a socket
+      // that survived a DO recycle) — clear existing timers first so we don't
+      // stack a second input/ping loop and double our send rate.
+      if (bot.loopTimer !== null) clearInterval(bot.loopTimer);
+      if (bot.pingTimer !== null) clearInterval(bot.pingTimer);
       bot.loopTimer = setInterval(() => botLoop(bot), INPUT_SEND_MS);
       bot.pingTimer = setInterval(() => botSend(bot, { t: "ping", ts: Date.now() }), PING_INTERVAL_MS);
       return;
@@ -215,7 +326,6 @@ function onBotMessage(bot, data) {
         bot.ackAdvances++;
       }
       if (!bot.alive && msg.you.hp > 0) {
-        // Server confirmed our respawn (mirrors connection.ts onSnap).
         bot.alive = true;
         bot.respawns++;
       }
@@ -226,7 +336,7 @@ function onBotMessage(bot, data) {
       bot.deaths++;
       const timer = setTimeout(
         () => botSend(bot, { t: "respawn" }),
-        (RESPAWN_DELAY_S + 0.3) * 1000, // +epsilon: server checks game-time elapsed
+        (RESPAWN_DELAY_S + 0.3) * 1000,
       );
       bot.pendingTimeouts.push(timer);
       return;
@@ -242,7 +352,7 @@ function onBotMessage(bot, data) {
       return;
     }
     default:
-      return; // inv / chat / notice — irrelevant to the harness
+      return;
   }
 }
 
@@ -256,30 +366,64 @@ function connectBot(bot) {
     return;
   }
   bot.ws = ws;
+  bot.step = currentStep;
+  // Stale-socket identity guard (mirrors the client): after a reconnect reassigns
+  // bot.ws, a late/buffered event from the OLD socket must not mutate the live one.
+  const self = ws;
   ws.addEventListener("open", () => {
+    if (bot.ws !== self) return;
     botSend(bot, { t: "join", name: bot.name, token: bot.token, proto: PROTOCOL_VERSION });
   });
-  ws.addEventListener("message", (ev) => onBotMessage(bot, ev.data));
-  ws.addEventListener("error", () => {
-    // The paired close event carries the useful info; nothing to do here.
+  ws.addEventListener("message", (ev) => {
+    if (bot.ws !== self) return;
+    onBotMessage(bot, ev.data);
   });
+  ws.addEventListener("error", () => {});
   ws.addEventListener("close", (ev) => {
+    if (bot.ws !== self) return; // a superseded socket closing — ignore
     bot.closeInfo = { code: ev.code, reason: ev.reason || "" };
     stopBotTimers(bot);
     if (shuttingDown) return;
-    if (!bot.joined) {
+    // First-connect failure (never joined, not a reconnect): terminal.
+    if (!bot.joined && bot.reconnectAttempts === 0) {
       bot.joinFailed = true;
       bot.joinFailReason ??= `closed before welcome (code ${ev.code})`;
       return;
     }
-    bot.unexpectedClose = true;
+    // Policy closes are non-recoverable — don't reconnect-loop into them (1008 =
+    // rate limit / incompatible version / session taken over). The client calls
+    // disconnect() on a server error and never reconnects either.
+    if (ev.code === 1008) {
+      bot.unexpectedClose = true;
+      return;
+    }
+    // Was in-game and the socket dropped (e.g. the DO instance was replaced and
+    // the old one timed us out with 1001): auto-reconnect with the same token,
+    // mirroring the client. The server's restore path re-binds the character.
+    bot.reconnects++;
+    bot.reconnectAttempts++;
+    bot.joined = false;
+    bot.alive = false;
+    if (bot.reconnectAttempts > MAX_BOT_RECONNECTS) {
+      bot.unexpectedClose = true; // gave up — counts as a real failure
+      return;
+    }
+    const base = Math.min(3000, 250 * 2 ** (bot.reconnectAttempts - 1));
+    const delay = base * (0.5 + Math.random() * 0.5); // ±50% jitter, anti thundering-herd
+    const t = setTimeout(() => {
+      if (!shuttingDown) connectBot(bot);
+    }, delay);
+    bot.pendingTimeouts.push(t);
   });
-  // Server evicts never-joined sockets after 10s; mirror that locally so a
-  // black-holed welcome doesn't hang the verdict.
   bot.joinTimer = setTimeout(() => {
+    if (bot.ws !== self) return;
     if (bot.joined || bot.joinFailed) return;
-    bot.joinFailed = true;
-    bot.joinFailReason = "join timeout (no welcome in 10s)";
+    // Only a FIRST-connect timeout is a terminal join failure; a reconnect
+    // timeout just closes so the close handler schedules the next attempt.
+    if (bot.reconnectAttempts === 0) {
+      bot.joinFailed = true;
+      bot.joinFailReason = "join timeout (no welcome in 10s)";
+    }
     try {
       bot.ws?.close(1000, "join timeout");
     } catch {
@@ -288,7 +432,7 @@ function connectBot(bot) {
   }, JOIN_TIMEOUT_MS);
 }
 
-// --- Reporting ---
+// --- Reporting helpers ---
 
 function percentile(sortedAsc, p) {
   if (sortedAsc.length === 0) return 0;
@@ -296,38 +440,10 @@ function percentile(sortedAsc, p) {
   return sortedAsc[Math.min(idx, sortedAsc.length - 1)];
 }
 
-function collectRtts() {
-  const all = [];
-  for (const bot of bots) all.push(...bot.rtts);
-  all.sort((a, b) => a - b);
-  return all;
-}
-
-function printFleetSummary() {
-  const upS = Math.round((Date.now() - testStartMs) / 1000);
-  let open = 0;
-  let joined = 0;
-  let snaps = 0;
-  let bytes = 0;
-  let deaths = 0;
-  let respawns = 0;
-  for (const bot of bots) {
-    if (bot.ws && bot.ws.readyState === WebSocket.OPEN) open++;
-    if (bot.joined) joined++;
-    snaps += bot.snapCount;
-    bytes += bot.snapBytes;
-    deaths += bot.deaths;
-    respawns += bot.respawns;
-  }
-  const elapsedS = Math.max((Date.now() - testStartMs) / 1000, 1);
-  const kbps = bytes / 1024 / elapsedS;
-  const rtts = collectRtts();
-  console.log(
-    `[t+${upS}s] up ${open}/${BOT_COUNT} joined ${joined} | ` +
-      `snaps ${snaps} (${kbps.toFixed(1)} KB/s total) | ` +
-      `rtt p50 ${percentile(rtts, 50)}ms p95 ${percentile(rtts, 95)}ms | ` +
-      `deaths ${deaths} respawns ${respawns}`,
-  );
+function countJoined() {
+  let n = 0;
+  for (const bot of bots) if (bot.joined && bot.ws && bot.ws.readyState === WebSocket.OPEN) n++;
+  return n;
 }
 
 async function fetchHealth() {
@@ -344,39 +460,188 @@ async function fetchHealth() {
   }
 }
 
-function printFinalReport(health, elapsedS) {
+// --- /api/health poller: the timer-INDEPENDENT measurement ---
+
+let prevHealth = null; // { wallMs, srvNow, tick, inMsgCount, snapsTotal, sentTotal }
+let pollInFlight = false;
+
+function snapsTotal() {
+  let n = 0;
+  for (const bot of bots) n += bot.snapCount;
+  return n;
+}
+
+async function pollHealth() {
+  if (pollInFlight) return; // never overlap fetches
+  pollInFlight = true;
+  const wallMs = Date.now();
+  const h = await fetchHealth();
+  pollInFlight = false;
+  if (h.error) {
+    console.log(`[poll] /api/health error: ${h.error}`);
+    return;
+  }
+  const snaps = snapsTotal();
+  const cur = {
+    wallMs,
+    srvNow: typeof h.now === "number" ? h.now : wallMs,
+    tick: h.tick ?? 0,
+    inMsgCount: h.inMsgCount ?? 0,
+    snaps,
+    sent: sentTotal,
+  };
+
+  // Drain the client event-loop-lag window for THIS interval.
+  const lag = lagWindow;
+  lagWindow = [];
+  lag.sort((a, b) => a - b);
+  const lagP50 = percentile(lag, 50);
+  const lagP95 = percentile(lag, 95);
+
+  if (prevHealth) {
+    const dSrv = (cur.srvNow - prevHealth.srvNow) / 1000; // server-clock seconds (jitter-free)
+    const dCli = (cur.wallMs - prevHealth.wallMs) / 1000; // client-clock seconds (cross-check)
+    const joined = countJoined();
+    // extHz off the SERVER clock — immune to this process's event-loop jitter.
+    const extHzSrv = dSrv > 0 ? (cur.tick - prevHealth.tick) / dSrv : 0;
+    const extHzCli = dCli > 0 ? (cur.tick - prevHealth.tick) / dCli : 0;
+    const recvMsgS = dSrv > 0 ? (cur.inMsgCount - prevHealth.inMsgCount) / dSrv : 0;
+    const sentMsgS = dCli > 0 ? (cur.sent - prevHealth.sent) / dCli : 0;
+    const snapsPerBot = dCli > 0 && joined > 0 ? (cur.snaps - prevHealth.snaps) / dCli / joined : 0;
+    const targetMsgS = joined * PER_BOT_MSG_S;
+    const achievedRatio = targetMsgS > 0 ? sentMsgS / targetMsgS : 1;
+    const upS = ((wallMs - testStartMs) / 1000).toFixed(0);
+    const transient = wallMs - stepStartMs < STEP_TRANSIENT_MS;
+
+    const row = {
+      upS: Number(upS),
+      step: currentStep,
+      stepLabel: RAMP ? `${currentStep + 1}/${RAMP.length}` : "-",
+      bots: currentBotTarget,
+      joined,
+      extHzSrv,
+      extHzCli,
+      tickMsEma: h.tickMsEma ?? 0,
+      tickMsMax: h.tickMsMax ?? 0,
+      recvMsgS,
+      sentMsgS,
+      targetMsgS,
+      achievedRatio,
+      lagP50,
+      lagP95,
+      snapsPerBot,
+      transient,
+    };
+    healthRows.push(row);
+
+    // Client event-loop lag is the TRUE generator-saturation signal. A low
+    // send/target ratio with healthy lag just means bots are dead/respawning
+    // (sending no input) — gameplay, not strain — so it does NOT flag here.
+    const strain = lagP95 > CLIENT_LAG_P95_WARN_MS;
+    const skew = Math.abs(extHzSrv - extHzCli) > 0.5 ? ` clkSkew(cli=${extHzCli.toFixed(1)})` : "";
+    console.log(
+      `[t+${upS}s ${RAMP ? `step ${row.stepLabel} ` : ""}bots ${currentBotTarget} joined ${joined}]` +
+        ` extHz=${extHzSrv.toFixed(2)}${skew}` +
+        ` | tickMsMax=${row.tickMsMax} ema=${row.tickMsEma} (budget ${TICK_BUDGET_MS.toFixed(1)})` +
+        ` | in recv=${recvMsgS.toFixed(0)}/s sent=${sentMsgS.toFixed(0)}/s (target ${targetMsgS.toFixed(0)})` +
+        ` | clientLag p50/p95=${lagP50}/${lagP95}ms` +
+        ` | snaps/s/bot=${snapsPerBot.toFixed(1)}` +
+        (strain ? "  ⚠ GEN-STRAIN (result suspect)" : "") +
+        (transient ? "  ·transient" : ""),
+    );
+  }
+  prevHealth = cur;
+}
+
+// --- Ramp / step driving ---
+
+let stepStartMs = 0;
+let nextBotToConnect = 0;
+
+async function connectUpTo(target) {
+  while (nextBotToConnect < target && !shuttingDown) {
+    connectBot(bots[nextBotToConnect]);
+    nextBotToConnect++;
+    await sleep(JOIN_STAGGER_MS);
+  }
+}
+
+function stepSummary(stepIdx) {
+  const rows = healthRows.filter((r) => r.step === stepIdx && !r.transient);
+  if (rows.length === 0) return null;
+  const med = (key) => {
+    const v = rows.map((r) => r[key]).sort((a, b) => a - b);
+    return percentile(v, 50);
+  };
+  const max = (key) => rows.reduce((m, r) => Math.max(m, r[key]), 0);
+  return {
+    step: RAMP ? `${stepIdx + 1}/${RAMP.length}` : "-",
+    bots: rows[rows.length - 1].bots,
+    joined: rows[rows.length - 1].joined,
+    extHz: med("extHzSrv"),
+    tickMsMaxPeak: max("tickMsMax"),
+    tickMsEma: med("tickMsEma"),
+    recvMsgS: med("recvMsgS"),
+    sentMsgS: med("sentMsgS"),
+    targetMsgS: med("targetMsgS"),
+    lagP95Peak: max("lagP95"),
+    snapsPerBot: med("snapsPerBot"),
+  };
+}
+
+// --- Final report ---
+
+function printFinalReport() {
   const joined = bots.filter((b) => b.joined).length;
   const joinFailures = bots.filter((b) => b.joinFailed);
   const unexpected = bots.filter((b) => b.unexpectedClose);
   const ackStalled = bots.filter((b) => b.joined && b.ackAdvances === 0);
+  const elapsedS = Math.max((Date.now() - testStartMs) / 1000, 1);
   let totalBytes = 0;
   let totalSnaps = 0;
   let deaths = 0;
   let respawns = 0;
+  const rtts = [];
   for (const bot of bots) {
     totalBytes += bot.snapBytes;
     totalSnaps += bot.snapCount;
     deaths += bot.deaths;
     respawns += bot.respawns;
+    rtts.push(...bot.rtts);
   }
+  rtts.sort((a, b) => a - b);
   const totalKbps = totalBytes / 1024 / elapsedS;
-  const rtts = collectRtts();
 
   console.log("\n=== LOADTEST REPORT ===");
-  console.log(`bots ${BOT_COUNT}, duration ${elapsedS.toFixed(0)}s, url ${WS_URL}`);
   console.log(
-    `join success: ${joined}/${BOT_COUNT} (${((joined / BOT_COUNT) * 100).toFixed(0)}%)`,
+    `mode ${RAMP ? `ramp ${RAMP.join(",")} @ ${STEP_SECONDS}s/step` : `fixed ${MAX_BOTS} bots`}` +
+      ` | input-ms ${INPUT_SEND_MS} (${(1000 / INPUT_SEND_MS).toFixed(0)} input/s/bot)` +
+      ` | spread ${SPREAD} | duration ${elapsedS.toFixed(0)}s | url ${WS_URL}`,
   );
-  for (const bot of joinFailures) {
-    console.log(`  join FAILED ${bot.name}: ${bot.joinFailReason}`);
+  console.log(`join success: ${joined}/${MAX_BOTS} (${((joined / MAX_BOTS) * 100).toFixed(0)}%)`);
+  for (const bot of joinFailures) console.log(`  join FAILED ${bot.name}: ${bot.joinFailReason}`);
+
+  // Per-step steady-state table (the headline result).
+  const stepCount = RAMP ? RAMP.length : 1;
+  console.log("\n  step  bots joined  extHz  tickMsMax(peak) ema  recvMsg/s sentMsg/s(tgt)  lagP95(peak) snaps/s/bot");
+  for (let s = 0; s < stepCount; s++) {
+    const r = stepSummary(s);
+    if (!r) continue;
+    console.log(
+      `  ${String(r.step).padEnd(5)} ${String(r.bots).padStart(4)} ${String(r.joined).padStart(6)}` +
+        `  ${r.extHz.toFixed(2).padStart(5)}  ${String(r.tickMsMaxPeak).padStart(8)}     ${String(r.tickMsEma).padStart(4)}` +
+        `  ${r.recvMsgS.toFixed(0).padStart(8)} ${r.sentMsgS.toFixed(0).padStart(8)}(${r.targetMsgS.toFixed(0)})` +
+        `   ${String(r.lagP95Peak).padStart(6)}ms    ${r.snapsPerBot.toFixed(1).padStart(6)}`,
+    );
   }
+
   console.log(
-    `snapshots: ${totalSnaps} total, ${totalKbps.toFixed(1)} KB/s total, ` +
+    `\nsnapshots: ${totalSnaps} total, ${totalKbps.toFixed(1)} KB/s total, ` +
       `${(totalKbps / Math.max(joined, 1)).toFixed(1)} KB/s mean per bot`,
   );
   console.log(
-    `rtt: p50 ${percentile(rtts, 50)}ms, p95 ${percentile(rtts, 95)}ms, ` +
-      `max ${rtts.length > 0 ? rtts[rtts.length - 1] : 0}ms (${rtts.length} samples)`,
+    `rtt (NETWORK sanity only — NOT tick health): p50 ${percentile(rtts, 50)}ms, p95 ${percentile(rtts, 95)}ms ` +
+      `(${rtts.length} samples)`,
   );
   console.log(`deaths ${deaths}, respawns ${respawns}`);
   if (ackStalled.length > 0) {
@@ -391,35 +656,114 @@ function printFinalReport(health, elapsedS) {
   }
   const closes = [...closeCounts.entries()].map(([key, n]) => `${key} x${n}`).join(", ");
   console.log(`socket closes: ${closes || "(none recorded)"}`);
+  // Reconnect recovery: total reopens after an unexpected drop, and how many
+  // bots are currently joined at the end. A recycle's 1001 closes followed by a
+  // full recovery here is the SUCCESS signal (a brief blip, not a permanent drop).
+  const totalReconnects = bots.reduce((s, b) => s + b.reconnects, 0);
+  const joinedNow = countJoined();
+  console.log(
+    `reconnects: ${totalReconnects} total across ${bots.filter((b) => b.reconnects > 0).length} bots` +
+      ` | currently joined ${joinedNow}/${MAX_BOTS}` +
+      (totalReconnects > 0 ? "  (1001 closes above are recycle drops the bots RECOVERED from)" : ""),
+  );
   for (const bot of unexpected) {
+    console.log(`  GAVE UP (>${MAX_BOT_RECONNECTS} reconnects) ${bot.name}: code ${bot.closeInfo?.code} "${bot.closeInfo?.reason}"`);
+  }
+
+  // Validity verdict: a saturated GENERATOR invalidates the server reading. The
+  // TRUE saturation signal is client event-loop lag. A low send/target ratio with
+  // HEALTHY lag just means bots were dead/respawning (sending no input) — gameplay,
+  // not strain — so only client-lag drives the verdict; low-send is a separate note.
+  const peakLag = healthRows.reduce((m, r) => Math.max(m, r.lagP95), 0);
+  const worstAchieved = healthRows
+    .filter((r) => !r.transient)
+    .reduce((m, r) => Math.min(m, r.achievedRatio), 1);
+  const genStrained = peakLag > CLIENT_LAG_P95_WARN_MS;
+  const lowSend = worstAchieved < ACHIEVED_MSG_RATIO_MIN;
+  const rateLimitClose = [...closeCounts.keys()].some((k) => k.startsWith("1008"));
+  const serverFull = [...closeCounts.keys()].some((k) => k.includes("Server full") || k.startsWith("503"));
+
+  console.log("\n=== VALIDITY ===");
+  console.log(
+    `generator integrity: client-lag p95 peak ${peakLag}ms (warn >${CLIENT_LAG_P95_WARN_MS})` +
+      ` -> ${genStrained ? "STRAINED ⚠  server numbers SUSPECT (shard the generator across processes)" : "OK"}`,
+  );
+  if (lowSend) {
     console.log(
-      `  UNEXPECTED close ${bot.name}: code ${bot.closeInfo?.code} "${bot.closeInfo?.reason}"`,
+      `note: worst send/target msg ratio ${(worstAchieved * 100).toFixed(0)}% (<${ACHIEVED_MSG_RATIO_MIN * 100}%)` +
+        (genStrained
+          ? "."
+          : " WITH healthy client-lag — expected from bot deaths/respawns (dead bots send no input), NOT generator strain."),
     );
   }
-  console.log(`/api/health: ${JSON.stringify(health)}`);
+  if (rateLimitClose) {
+    console.log("NOTE: 1008 closes = per-socket rate limit (input-ms too low); harness ceiling, NOT server saturation.");
+  }
+  if (serverFull) {
+    console.log("NOTE: 'Server full'/503 = MAX_PLAYERS cap hit; raise the cap for the test build, the knee is otherwise a cap artifact.");
+  }
+  // RECOVERY GATE — the whole point of reconnect: after the recycle's 1001 wave,
+  // did the LIVE joined count recover and stay near peak? Read from the health
+  // time series, EXCLUDING the final ~6s (a bot mid-reconnect at the instant of
+  // shutdown is not a permanent drop). The old (broken) behavior left the tail
+  // joined at ~0 and FAILS here; a clean recover-after-blip passes. Only gates
+  // when health polling ran AND some bot ever joined.
+  let recovered = true;
+  let recoveryNote = "(no health polling — recovery not gated)";
+  const everJoinedCount = bots.filter((b) => b.everJoined).length;
+  if (healthRows.length >= 4 && everJoinedCount > 0) {
+    const lastUpS = healthRows[healthRows.length - 1].upS;
+    const tail = healthRows.filter((r) => r.upS <= lastUpS - 6).slice(-8); // ~last 24s minus final 6s
+    const peakJoined = healthRows.reduce((m, r) => Math.max(m, r.joined), 0);
+    const tailVals = tail.map((r) => r.joined).sort((a, b) => a - b);
+    const tailMedian = tailVals.length ? tailVals[Math.floor(tailVals.length / 2)] : 0;
+    recovered = peakJoined > 0 && tailMedian >= 0.85 * peakJoined;
+    recoveryNote = `tail joined median ${tailMedian} vs peak ${peakJoined} -> ${recovered ? "RECOVERED" : "DID NOT RECOVER (permanent drop)"}`;
+  }
+  const totalReconns = bots.reduce((s, b) => s + b.reconnects, 0);
+  console.log(`recovery: ${recoveryNote}${totalReconns > 0 ? ` (${totalReconns} reconnects)` : ""}`);
 
-  const failed = joinFailures.length > 0 || unexpected.length > 0;
-  console.log(failed ? "RESULT: FAIL" : "RESULT: PASS");
+  const failed = joinFailures.length > 0 || unexpected.length > 0 || !recovered;
+  console.log(`RESULT: ${failed ? "FAIL" : "PASS"}${genStrained ? " (but generator strained — re-run sharded)" : ""}`);
   return failed ? 1 : 0;
 }
 
 // --- Main ---
 
-const bots = Array.from({ length: BOT_COUNT }, (_, i) => createBot(i + 1));
+const bots = Array.from({ length: MAX_BOTS }, (_, i) => createBot(i + 1));
 
 async function main() {
-  console.log(`loadtest: ${BOT_COUNT} bots -> ${WS_URL} for ${DURATION_S}s`);
+  console.log(
+    `loadtest: ${RAMP ? `ramp ${RAMP.join(",")} @ ${STEP_SECONDS}s/step` : `${MAX_BOTS} bots`}` +
+      ` -> ${WS_URL} | input-ms ${INPUT_SEND_MS} ping-ms ${PING_INTERVAL_MS}` +
+      ` health-interval ${HEALTH_INTERVAL_MS}ms spread ${SPREAD}`,
+  );
   testStartMs = Date.now();
-  for (const bot of bots) {
-    connectBot(bot);
-    await sleep(JOIN_STAGGER_MS);
+
+  const healthTimer =
+    HEALTH_INTERVAL_MS > 0 ? setInterval(() => void pollHealth(), HEALTH_INTERVAL_MS) : null;
+
+  if (RAMP) {
+    for (let s = 0; s < RAMP.length && !shuttingDown; s++) {
+      currentStep = s;
+      currentBotTarget = RAMP[s];
+      stepStartMs = Date.now();
+      console.log(`\n--- step ${s + 1}/${RAMP.length}: ramp to ${RAMP[s]} bots ---`);
+      await connectUpTo(RAMP[s]);
+      const holdMs = STEP_SECONDS * 1000 - (Date.now() - stepStartMs);
+      if (holdMs > 0) await sleep(holdMs);
+    }
+  } else {
+    currentStep = 0;
+    currentBotTarget = MAX_BOTS;
+    stepStartMs = Date.now();
+    await connectUpTo(MAX_BOTS);
+    const holdMs = DURATION_S * 1000 - (Date.now() - testStartMs);
+    if (holdMs > 0) await sleep(holdMs);
   }
-  const summaryTimer = setInterval(printFleetSummary, SUMMARY_INTERVAL_MS);
-  await sleep(Math.max(0, DURATION_S * 1000 - (Date.now() - testStartMs)));
-  const elapsedS = (Date.now() - testStartMs) / 1000;
 
   shuttingDown = true;
-  clearInterval(summaryTimer);
+  if (healthTimer) clearInterval(healthTimer);
   for (const bot of bots) {
     stopBotTimers(bot);
     try {
@@ -428,9 +772,8 @@ async function main() {
       // Already closed.
     }
   }
-  await sleep(500); // let close frames flush before sampling health
-  const health = await fetchHealth();
-  const code = printFinalReport(health, elapsedS);
+  await sleep(500);
+  const code = printFinalReport();
   process.exit(code);
 }
 
