@@ -796,12 +796,22 @@ export function craftItem(state: GameState, player: ServerPlayer, recipe: number
   const r = RECIPES[recipe];
   const inv = player.inventory;
 
-  // Inputs: every required type must be present in sufficient summed quantity.
+  // Aggregate required inputs by type first. A recipe that lists the same type in
+  // more than one row is summed (per-row checks would each pass on a quantity that
+  // doesn't cover the total), and the tool guarantee below stays exact. No current
+  // recipe repeats a type or names its tool as an input; this keeps it robust if
+  // one ever does.
+  const required = new Map<ItemType, number>();
   for (const input of r.inputs) {
-    if (countOf(inv, input.type) < input.count) return;
+    required.set(input.type, (required.get(input.type) ?? 0) + input.count);
   }
-  // Tool: must be held somewhere; consumed by nothing.
-  if (r.tool !== undefined && countOf(inv, r.tool) <= 0) return;
+  // Inputs: every required type must be present in sufficient summed quantity.
+  for (const [type, need] of required) {
+    if (countOf(inv, type) < need) return;
+  }
+  // Tool: held somewhere AND never consumed. If the tool type is also an input,
+  // require one beyond the consumed count so it survives the removal below.
+  if (r.tool !== undefined && countOf(inv, r.tool) <= (required.get(r.tool) ?? 0)) return;
   // Station: campfire recipes need a nearby fire — notice on failure so the
   // greyed client button has a server-confirmed reason.
   if (r.station === "campfire" && !nearFire(state, player.core.x, player.core.z)) {
@@ -809,7 +819,7 @@ export function craftItem(state: GameState, player: ServerPlayer, recipe: number
     return;
   }
 
-  for (const input of r.inputs) removeFromInventory(inv, input.type, input.count);
+  for (const [type, need] of required) removeFromInventory(inv, type, need);
   const leftover = addToInventory(inv, r.output.type, r.output.count);
   if (leftover > 0) dropAtFeet(state, player, r.output.type, leftover);
   sendInventory(state, player);
