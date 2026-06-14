@@ -46,9 +46,12 @@ export function hasExploredAt(g: ExploredGrid, x: number, z: number): boolean {
   return hasExploredIndex(g, exploredCellAt(g, x, z));
 }
 
-/** Set a cell; returns true iff it was newly set (for delta tracking). */
+/** Set a cell; returns true iff it was newly set (for delta tracking). Rejects
+ * out-of-range indices (a stray high index from a buggy/hostile delta must not
+ * report "newly set" while writing nothing — typed-array OOB writes are
+ * silently dropped). */
 function setIndex(g: ExploredGrid, index: number): boolean {
-  if (index < 0) return false;
+  if (index < 0 || index >= g.dim * g.dim) return false;
   const byte = index >> 3;
   const mask = 1 << (index & 7);
   if (g.bits[byte] & mask) return false;

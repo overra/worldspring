@@ -61,4 +61,10 @@ describe("ExploredGrid", () => {
     setExploredIndices(client, delta);
     expect(Array.from(client.bits)).toEqual(Array.from(server.bits));
   });
+
+  it("ignores out-of-range delta indices (no OOB write, no phantom bits)", () => {
+    const g = createExploredGrid(800);
+    setExploredIndices(g, [g.dim * g.dim, g.dim * g.dim + 9999, -1]);
+    expect(g.bits.every((b) => b === 0)).toBe(true);
+  });
 });
