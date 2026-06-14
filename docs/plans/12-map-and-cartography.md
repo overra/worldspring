@@ -172,7 +172,7 @@ colors and vector POI primitives; the *caller* paints them onto whatever surface
 (`CanvasRenderingContext2D` in the browser, a raw pixel buffer / SVG string in Node). This is the
 single source of truth for the world→image transform, the biome palette, and the POI layer.
 
-**1a. Projection (`map/projection.ts`)** — an origin-centered square, **north = `-Z` is image-up**:
+**1a. Projection (`map/projection.ts`)** — an origin-centered square, **north-up with north = `+Z` (image-up)**:
 
 ```ts
 export interface MapProjection {
@@ -185,9 +185,12 @@ export interface MapProjection {
 export function makeProjection(size: number, px: number): MapProjection;
 ```
 
-`ix = (x + half) / size * px`, `iy = (half - z) / size * px` (the `z` flip puts `-Z` north at the
-top). `size` is **always passed in** (default `WORLD_SIZE` at the call site) — the core never
-imports the constant, so doc 07's tiers and a future `World.size` are a one-line caller change.
+`ix = (x + half) / size * px`, `iy = (half - z) / size * px` — the `z` flip puts `+Z` (north) at
+the top (`iy=0`) and `+X` at the right; a player facing `-Z` (yaw 0) therefore points toward the
+bottom, as on any north-up map. The heading marker uses the same projection, so it stays
+consistent with the terrain (`projection.ts` documents the convention). `size` is **always passed
+in** (default `WORLD_SIZE` at the call site) — the core never imports the constant, so doc 07's
+tiers and a future `World.size` are a one-line caller change.
 
 **1b. Palette (`map/palette.ts`)** — lift the four colors + thresholds out of `Terrain.tsx:16-58`
 into exported constants and pure functions `biomeColorAt(h, slope)` / `waterColorAt(depth)`,
@@ -367,7 +370,7 @@ to `<HUD/>` (DOM, not inside the Canvas). The corner minimap touches no pointer-
 
 Additive, server→client, all optional:
 
-```
+```text
 welcome.explored?: string      // base64 ExploredGrid, full set (all three join paths)
 snap.fog?: number[]            // newly-revealed cell indices this tick; omitted when empty
 RulesSummary.map: "full"|"fog"|"find"|"off"   // additive badge, no SERVER_INFO bump

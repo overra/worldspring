@@ -1,9 +1,11 @@
 // Map projection: world XZ (ground plane, origin-centered, +Y up) -> square
-// top-down image pixels. North is -Z and maps to image-up (iy=0), matching the
-// yaw-0-faces-(-Z) convention in math.ts. The world extent (`size`) is ALWAYS
-// passed in (default WORLD_SIZE at the call site) so this module never imports
-// the constant — doc 07's size tiers and a future World.size are a one-line
-// caller change, not an edit here.
+// top-down image pixels. The map is NORTH-UP with north = +Z: +Z maps to
+// image-up (iy=0, the top edge) and +X to image-right. A heading marker drawn
+// from yawToDir([-sin,-cos]) is therefore consistent with the terrain (same
+// projection); a player facing -Z (yaw 0) points toward the bottom, as on any
+// north-up map. The world extent (`size`) is ALWAYS passed in (default
+// WORLD_SIZE at the call site) so this module never imports the constant —
+// doc 07's size tiers and a future World.size are a one-line caller change.
 
 export interface MapProjection {
   /** world half-extent in meters (size / 2). */
@@ -12,7 +14,7 @@ export interface MapProjection {
   readonly px: number;
   /** meters per pixel = size / px. */
   readonly mpp: number;
-  /** world (x,z) -> image (ix,iy). North (-Z) is image-up (iy=0). */
+  /** world (x,z) -> image (ix,iy). North-up: +Z is image-up (iy=0); +X is right. */
   worldToImage(x: number, z: number): { ix: number; iy: number };
   /** inverse: image (ix,iy) -> world (x,z). */
   imageToWorld(ix: number, iy: number): { x: number; z: number };

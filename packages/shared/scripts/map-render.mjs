@@ -23,8 +23,14 @@ const arg = (name, def) => {
   const i = argv.indexOf(`--${name}`);
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : def;
 };
+const die = (msg) => {
+  process.stderr.write(`map:render: ${msg}\n`);
+  process.exit(1);
+};
 const seed = Number(arg("seed", "1337"));
+if (!Number.isFinite(seed)) die("--seed must be a finite number");
 const px = Number(arg("px", "1024"));
+if (!Number.isInteger(px) || px <= 0) die("--px must be a positive integer");
 const out = arg("out", `island-${seed}.svg`);
 const asPng = out.toLowerCase().endsWith(".png");
 
