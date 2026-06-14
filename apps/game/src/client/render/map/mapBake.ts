@@ -59,7 +59,7 @@ function drawPOIs(ctx: Ctx2D, shapes: MapShape[], proj: MapProjection, px: numbe
         ctx.stroke();
       }
     } else if (s.kind === "rect") {
-      const tl = proj.worldToImage(s.cx - s.halfW, s.cz + s.halfD); // +Z up: top = max z
+      const tl = proj.worldToImage(s.cx + s.halfW, s.cz + s.halfD); // top-left: +Z up = max z, +X left = max x
       const w = (2 * s.halfW) / proj.mpp;
       const h = (2 * s.halfD) / proj.mpp;
       ctx.fillStyle = s.fill;
@@ -194,9 +194,9 @@ export function drawFog(ctx: Ctx2D, g: ExploredGrid, toPx: ToPx): void {
       const dx = wcx - me.x;
       const dz = wcz - me.z;
       if (dx * dx + dz * dz <= r2) continue; // keep the player's surroundings lit
-      // +Z is image-up: the cell's top-left in image space is (minX, maxZ).
-      const tl = toPx(cx * FOG_CELL_M - half, (cz + 1) * FOG_CELL_M - half);
-      const br = toPx((cx + 1) * FOG_CELL_M - half, cz * FOG_CELL_M - half);
+      // +Z is image-up and +X is image-left: the cell's top-left is (maxX, maxZ).
+      const tl = toPx((cx + 1) * FOG_CELL_M - half, (cz + 1) * FOG_CELL_M - half);
+      const br = toPx(cx * FOG_CELL_M - half, cz * FOG_CELL_M - half);
       ctx.fillRect(tl.x, tl.y, br.x - tl.x + 1, br.y - tl.y + 1); // +1 px: no seams
     }
   }
@@ -237,15 +237,20 @@ export function drawDynamicLayer(ctx: Ctx2D, toPx: ToPx, s: number): void {
     ctx.strokeStyle = "rgba(0,0,0,0.8)";
     ctx.stroke();
   }
-  // You — an arrow pointing along the heading. yawToDir = [-sin,-cos] = (fx,fz);
-  // +Z is image-up, so the canvas rotation that aligns the up-triangle is
-  // atan2(fx, fz).
+  // You — an arrow pointing along the heading. Derive the heading in SCREEN space
+  // from toPx itself (project the eye and a point 1 m ahead): this is correct for
+  // both the north-up full map AND the rotate-to-heading minimap, whose extra
+  // canvas rotation toPx doesn't see — no per-surface special-casing, and no
+  // dependence on the projection's axis orientation.
   const me = clientWorld.me;
   const p = toPx(me.x, me.z);
   const [fx, fz] = yawToDir(me.yaw);
+  const ahead = toPx(me.x + fx, me.z + fz);
   ctx.save();
   ctx.translate(p.x, p.y);
-  ctx.rotate(Math.atan2(fx, fz));
+  // Triangle tip is drawn at (0,-6) → points up (−Y) at rotation 0; align it to
+  // the screen-space heading (+π/2 since the baseline tip is already at −π/2).
+  ctx.rotate(Math.atan2(ahead.y - p.y, ahead.x - p.x) + Math.PI / 2);
   ctx.beginPath();
   ctx.moveTo(0, -6 * s);
   ctx.lineTo(4 * s, 5 * s);

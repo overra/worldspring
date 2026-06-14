@@ -94,7 +94,7 @@ function buildSvg(world, proj, px, png) {
           ` />`,
       );
     } else if (s.kind === "rect") {
-      const tl = proj.worldToImage(s.cx - s.halfW, s.cz + s.halfD); // -x,+z = top-left
+      const tl = proj.worldToImage(s.cx + s.halfW, s.cz + s.halfD); // +x,+z = top-left (X maps to image-left)
       const w = (2 * s.halfW) / proj.mpp;
       const h = (2 * s.halfD) / proj.mpp;
       els.push(
