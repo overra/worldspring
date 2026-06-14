@@ -32,7 +32,7 @@ import {
   FOG_REVEAL_RADIUS_M,
   markExploredDisk,
 } from "@worldspring/shared/fog";
-import { ITEM_DEFS, type ItemStack, type ItemType } from "@worldspring/shared/items";
+import { ITEM_DEFS, RECIPES, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import { clamp, distSq2D, yawToDir } from "@worldspring/shared/math";
 import { stepPlayer } from "@worldspring/shared/movement";
 import type { ChannelKind, InputCmd, PlayerCore } from "@worldspring/shared/protocol";
@@ -375,6 +375,33 @@ export function consumeFromSlot(inv: (ItemStack | null)[], slot: number): void {
   if (!stack) return;
   stack.count -= 1;
   if (stack.count <= 0) inv[slot] = null;
+}
+
+/** Total count of `type` across all inventory stacks (sibling of addToInventory). */
+export function countOf(inv: (ItemStack | null)[], type: ItemType): number {
+  let total = 0;
+  for (const stack of inv) {
+    if (stack && stack.type === type) total += stack.count;
+  }
+  return total;
+}
+
+/**
+ * Remove `count` of `type`, draining stacks BACK-TO-FRONT so the hotbar's low
+ * slots keep their tools (a tool stack at slot 0 survives a craft that also
+ * consumes loose materials in a higher slot). Caller must ensure the inventory
+ * holds at least `count` (craftItem validates via countOf first).
+ */
+export function removeFromInventory(inv: (ItemStack | null)[], type: ItemType, count: number): void {
+  let remaining = count;
+  for (let i = inv.length - 1; i >= 0 && remaining > 0; i--) {
+    const stack = inv[i];
+    if (!stack || stack.type !== type) continue;
+    const take = Math.min(stack.count, remaining);
+    stack.count -= take;
+    remaining -= take;
+    if (stack.count <= 0) inv[i] = null;
+  }
 }
 
 /** Within campfire warmth (duplicated from survival.ts's private nearFire to
@@ -751,6 +778,42 @@ function completeChannel(
       // reload / craft / fish: owned by combat / doc 05 / doc 07 (M3+).
       return;
   }
+}
+
+/**
+ * Craft RECIPES[recipe] (doc 05 M2). Strict early-returns: alive; recipe in
+ * range; every input present in the summed inventory; the tool (if any) held
+ * anywhere; the station (if any) satisfied. On success consume the inputs
+ * (back-to-front per stack so low-slot tools survive), grant the output
+ * (overflow → dropAtFeet), and confirm with an inv message + a notice. The
+ * tool is NEVER consumed.
+ */
+export function craftItem(state: GameState, player: ServerPlayer, recipe: number): void {
+  if (!player.alive) return;
+  // Range + integer guard. parseClientMsg already coerces via `| 0`, but craft
+  // is the authority — reject any non-integer or out-of-range index outright.
+  if (!Number.isInteger(recipe) || recipe < 0 || recipe >= RECIPES.length) return;
+  const r = RECIPES[recipe];
+  const inv = player.inventory;
+
+  // Inputs: every required type must be present in sufficient summed quantity.
+  for (const input of r.inputs) {
+    if (countOf(inv, input.type) < input.count) return;
+  }
+  // Tool: must be held somewhere; consumed by nothing.
+  if (r.tool !== undefined && countOf(inv, r.tool) <= 0) return;
+  // Station: campfire recipes need a nearby fire — notice on failure so the
+  // greyed client button has a server-confirmed reason.
+  if (r.station === "campfire" && !nearFire(state, player.core.x, player.core.z)) {
+    sendTo(state, player.id, { t: "notice", msg: "needs a campfire" });
+    return;
+  }
+
+  for (const input of r.inputs) removeFromInventory(inv, input.type, input.count);
+  const leftover = addToInventory(inv, r.output.type, r.output.count);
+  if (leftover > 0) dropAtFeet(state, player, r.output.type, leftover);
+  sendInventory(state, player);
+  sendTo(state, player.id, { t: "notice", msg: `crafted ${r.name}` });
 }
 
 /** Select a hotbar slot. */

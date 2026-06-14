@@ -180,6 +180,11 @@ export function doEquip(slot: number): void {
   sendMsg({ t: "equip", slot });
 }
 
+/** Request crafting RECIPES[recipe]; the server validates and confirms via inv. */
+export function doCraft(recipe: number): void {
+  sendMsg({ t: "craft", recipe });
+}
+
 export function doPickup(id: number): void {
   sendMsg({ t: "pickup", id });
   cueSound("pickup");

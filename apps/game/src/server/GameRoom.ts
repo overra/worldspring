@@ -87,6 +87,7 @@ import {
 } from "./systems/loot";
 import {
   applyQueuedInputs,
+  craftItem,
   createPlayer,
   dropSlot,
   equipSlot,
@@ -504,6 +505,9 @@ export class GameRoom extends DurableObject<Env> {
         // inline: startUse opens a timed cast (or runs the instant path for the
         // still-instant water/fishing/tool items). Completion lands on the tick.
         startUse(game, player, msg.slot);
+        break;
+      case "craft":
+        craftItem(game, player, msg.recipe);
         break;
       case "equip":
         equipSlot(game, player, msg.slot);

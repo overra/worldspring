@@ -5,16 +5,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import {
+  FIRE_WARMTH_RADIUS,
   INVENTORY_SLOTS,
   MAX_FOOD,
   MAX_HP,
   MAX_WATER,
   TEMP_SHIVER,
 } from "@worldspring/shared/constants";
-import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
-import type { ItemKind, ItemStack } from "@worldspring/shared/items";
-import { doDrop, doEquip, doUse } from "@/client/net/connection";
-import { debugStats } from "@/client/runtime";
+import { ITEM_DEFS, RECIPES, UNKNOWN_DEF } from "@worldspring/shared/items";
+import type { CraftRecipe, ItemKind, ItemStack, ItemType } from "@worldspring/shared/items";
+import { distSq2D } from "@worldspring/shared/math";
+import { doCraft, doDrop, doEquip, doUse } from "@/client/net/connection";
+import { clientWorld, debugStats } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { ChatPanel } from "./ChatPanel";
 import { RecapStats } from "./DeathScreen";
@@ -260,6 +262,74 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
   );
 }
 
+// --- crafting (Tab) ---
+
+/** Sum of `type` across the store inventory (client mirror of server countOf). */
+function countOf(inventory: (ItemStack | null)[], type: ItemType): number {
+  let total = 0;
+  for (const stack of inventory) {
+    if (stack && stack.type === type) total += stack.count;
+  }
+  return total;
+}
+
+/** Within FIRE_WARMTH_RADIUS of any rendered fire — cosmetic mirror of the
+ * server's nearFire; the server is the authority on whether a craft succeeds. */
+function nearFireClient(): boolean {
+  const me = clientWorld.me;
+  const rSq = FIRE_WARMTH_RADIUS * FIRE_WARMTH_RADIUS;
+  for (const fire of clientWorld.fires) {
+    if (distSq2D(me.x, me.z, fire.x, fire.z) <= rSq) return true;
+  }
+  return false;
+}
+
+interface CraftRowProps {
+  recipe: CraftRecipe;
+  index: number;
+  inventory: (ItemStack | null)[];
+}
+
+function CraftRow({ recipe, index, inventory }: CraftRowProps): ReactElement {
+  const inputsMet = recipe.inputs.every((i) => countOf(inventory, i.type) >= i.count);
+  const toolMet = recipe.tool === undefined || countOf(inventory, recipe.tool) > 0;
+  const stationMet = recipe.station !== "campfire" || nearFireClient();
+  const enabled = inputsMet && toolMet && stationMet;
+
+  const out = ITEM_DEFS[recipe.output.type] ?? UNKNOWN_DEF;
+  const inputText = recipe.inputs
+    .map((i) => `${i.count}× ${(ITEM_DEFS[i.type] ?? UNKNOWN_DEF).name}`)
+    .join(", ");
+  const hints: string[] = [];
+  if (recipe.tool !== undefined) hints.push(`needs ${(ITEM_DEFS[recipe.tool] ?? UNKNOWN_DEF).name}`);
+  if (recipe.station === "campfire") hints.push("needs campfire");
+
+  return (
+    <div className={enabled ? "craft-row" : "craft-row craft-row--disabled"}>
+      <span className="craft-out">
+        {out.name}
+        {recipe.output.count > 1 ? ` ×${recipe.output.count}` : ""}
+      </span>
+      <span className="craft-inputs">{inputText}</span>
+      {hints.length > 0 && <span className="craft-hint">{hints.join(" · ")}</span>}
+      <button className="inv-btn" disabled={!enabled} onClick={() => doCraft(index)}>
+        CRAFT
+      </button>
+    </div>
+  );
+}
+
+function CraftingSection({ inventory }: { inventory: (ItemStack | null)[] }): ReactElement {
+  return (
+    <>
+      <div className="inv-title inv-subtitle">CRAFTING</div>
+      {RECIPES.map((recipe, i) => (
+        <CraftRow key={i} recipe={recipe} index={i} inventory={inventory} />
+      ))}
+    </>
+  );
+}
+
 function InventoryPanel(): ReactElement | null {
   const invOpen = useUIStore((s) => s.invOpen);
   const inventory = useUIStore((s) => s.inventory);
@@ -277,6 +347,7 @@ function InventoryPanel(): ReactElement | null {
         {Array.from({ length: INVENTORY_SLOTS }, (_, i) => (
           <InventoryRow key={i} slot={i} stack={inventory[i] ?? null} />
         ))}
+        <CraftingSection inventory={inventory} />
         <div className="inv-hint">Tab to close</div>
       </div>
     </div>
