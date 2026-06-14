@@ -16,11 +16,18 @@ import type { ItemStack, ItemType } from "./items";
  * touching any character state, the client refuses older servers before
  * building the world. See docs/plans/03-server-info-contract.md §1.
  *
- * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, to
- * the movement.ts / world.ts behavior the client predicts, or to the ItemType
- * wire enums. While this is `1` an ABSENT `join.proto` is accepted (pre-gate
- * clients are sim-compatible with v1 by definition); the moment it bumps to
- * `2+` the server rejects absent `proto` like any other mismatch.
+ * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, or to
+ * the movement.ts / world.ts behavior the client predicts. While this is `1` an
+ * ABSENT `join.proto` is accepted (pre-gate clients are sim-compatible with v1
+ * by definition); the moment it bumps to `2+` the server rejects absent `proto`
+ * like any other mismatch.
+ *
+ * ItemType wire-enum GROWTH is additive-safe and does NOT force a bump (doc 12
+ * Open Q1): every client `ITEM_DEFS[type]` lookup goes through `?? UNKNOWN_DEF`
+ * (items.ts), so a client that receives an item type it has never heard of
+ * renders it as a generic item rather than crashing. A new ItemType only needs a
+ * bump if it also changes a predicted-sim behavior or a message shape. (Removing
+ * or RETYPING an existing ItemType is still breaking — bump for those.)
  *
  * Typed `number`, not the literal `1`, deliberately: the gate compares against
  * it at runtime, so the comparison must keep compiling — and flip its

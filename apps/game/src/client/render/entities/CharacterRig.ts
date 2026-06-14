@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { useGLTF } from "@react-three/drei";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { PLAYER_HEIGHT } from "@worldspring/shared/constants";
-import { ITEM_DEFS, type ItemType } from "@worldspring/shared/items";
+import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
 
 export type CharacterKind = "survivor" | "zombie";
 export type LocomotionState = "idle" | "walk" | "run" | "shamble";
@@ -104,7 +104,7 @@ const CLIP_TABLE: Record<CharacterKind, ClipTable> = {
 /** Which one-shot overlay a swing should play for a given equipped item. */
 export function overlayForItem(item: ItemType | null): OverlayKind {
   if (item === null) return "attack_punch";
-  const def = ITEM_DEFS[item];
+  const def = ITEM_DEFS[item] ?? UNKNOWN_DEF;
   if (def.kind === "ranged") return item === "pistol" ? "attack_shoot1h" : "attack_shoot2h";
   if (def.kind === "melee") return "attack_melee";
   return "attack_punch";
@@ -194,7 +194,7 @@ function buildHeldItem(type: ItemType): THREE.Object3D {
   // rotation-agnostic so a missing grip entry can't point it backward.
   const template = HELD_TEMPLATES.get(type);
   if (template && GRIP_TRANSFORMS[type]) return template.clone();
-  const m = heldBox(ITEM_DEFS[type].color);
+  const m = heldBox((ITEM_DEFS[type] ?? UNKNOWN_DEF).color);
   m.scale.set(0.16, 0.16, 0.16);
   return m;
 }

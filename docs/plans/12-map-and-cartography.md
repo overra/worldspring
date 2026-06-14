@@ -492,14 +492,13 @@ test via `pnpm dev` and a `loadtest.mjs` tick-EMA check.
 
 ## Open questions
 
-1. **Does the `map` `ItemType` bump `PROTOCOL_VERSION` to 3, or ship additively?** **Recommendation:
-   additive, no bump** — harden the 4 unguarded `ITEM_DEFS[type]` sites (`connection.ts:170`,
-   `CharacterRig.ts:107/197`, `LootItems.tsx:39`) to `?? UNKNOWN_DEF` and amend doc 03's rule to
-   state `UNKNOWN_DEF`-guarded `ItemType` growth is additive-safe. The catalog already paid the
-   `1→2` bump; forcing every connected player to reload for a content/feature add is heavy, and
-   `UNKNOWN_DEF` exists precisely to make this safe. Fall back to **bump-to-3** if doc 03's owner
-   prefers a strict version line over avoiding the reload. (The fog wire fields never bump either
-   way.) This is the one decision that should be settled before M3.
+1. **Does the `map` `ItemType` bump `PROTOCOL_VERSION` to 3, or ship additively?** **RESOLVED (M3):
+   additive, no bump.** The 4 unguarded `ITEM_DEFS[type]` sites (`connection.ts`, `CharacterRig.ts`
+   ×2, `LootItems.tsx`) were hardened to `?? UNKNOWN_DEF`, and the `PROTOCOL_VERSION` doc-comment
+   (`protocol.ts`) now records that `UNKNOWN_DEF`-guarded `ItemType` growth is additive-safe. The
+   catalog already paid the `1→2` bump; forcing every connected player to reload for a content/
+   feature add is heavy, and `UNKNOWN_DEF` exists precisely to make this safe. (The fog wire fields
+   never bump either way.)
 2. **Minimap orientation — north-up or rotate-to-heading?** **Recommendation: north-up**, matching
    the full map and the offline render (a simple axis-aligned blit; no motion-sickness). Make
    rotate-to-heading a deferred per-player setting.

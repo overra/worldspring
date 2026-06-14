@@ -29,7 +29,11 @@ export type ItemType =
   | "torch"
   | "first_aid_kit"
   | "padded_jacket"
-  | "backpack";
+  | "backpack"
+  // doc 12: the in-game map item. Added ADDITIVELY (no PROTOCOL_VERSION bump) —
+  // every client ITEM_DEFS[type] lookup is `?? UNKNOWN_DEF`, so an older client
+  // that receives a map renders it as a generic item instead of crashing.
+  | "map";
 
 export type ItemKind =
   | "food"
@@ -267,6 +271,10 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     power: 0,
     wear: { slot: "back", extraSlots: 4 },
   },
+
+  // doc 12: the full-screen map. kind:"tool" → useItem is a no-op; the client
+  // opens the map UI from possession + a keybind (M4), never a server round-trip.
+  map: { type: "map", name: "Island Map", kind: "tool", stack: 1, color: "#d8c9a0", power: 0 },
 };
 
 /** Airdrop crates roll this many stacks from this table. */
