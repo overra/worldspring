@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
 import type { ItemStack } from "@worldspring/shared/items";
-import type { DeathRecap, Vitals } from "@worldspring/shared/protocol";
+import type { DeathRecap, Vitals, YouState } from "@worldspring/shared/protocol";
 
 // "reconnecting": the in-game socket dropped (e.g. the server DO instance was
 // replaced under load, or a deploy/network blip) and we're auto-reconnecting
@@ -34,6 +34,9 @@ export interface UIState {
   error: string | null;
   playerName: string;
   vitals: Vitals;
+  /** In-progress channeled action for the cast bar (doc 11 M2); null = no cast.
+   * Render-only, set from each snapshot's `you.action` (server-authoritative). */
+  channelAction: YouState["action"] | null;
   inventory: (ItemStack | null)[];
   selectedSlot: number;
   /** Human-readable pickup prompt, e.g. "Canned Beans" — null hides it. */
@@ -61,6 +64,7 @@ export interface UIState {
   setError(error: string | null): void;
   setPlayerName(name: string): void;
   setVitals(vitals: Vitals): void;
+  setAction(action: YouState["action"] | undefined): void;
   setInventory(slots: (ItemStack | null)[], selected: number): void;
   setSelectedSlot(slot: number): void;
   setPrompt(prompt: string | null): void;
@@ -88,6 +92,7 @@ export const useUIStore = create<UIState>((set) => ({
   error: null,
   playerName: "",
   vitals: { hp: 100, food: 100, water: 100, temp: 37 },
+  channelAction: null,
   inventory: Array.from({ length: INVENTORY_SLOTS }, () => null),
   selectedSlot: 0,
   prompt: null,
@@ -107,6 +112,13 @@ export const useUIStore = create<UIState>((set) => ({
   setError: (error) => set({ error }),
   setPlayerName: (playerName) => set({ playerName }),
   setVitals: (vitals) => set({ vitals }),
+  // Normalize the optional wire field to null. Hold the reference steady while
+  // not channeling so the cast-bar subscription doesn't re-render every snap.
+  setAction: (action) =>
+    set((s) => {
+      const next = action ?? null;
+      return next === null && s.channelAction === null ? s : { channelAction: next };
+    }),
   setInventory: (inventory, selectedSlot) => set({ inventory, selectedSlot }),
   setSelectedSlot: (selectedSlot) => set({ selectedSlot }),
   setPrompt: (prompt) =>

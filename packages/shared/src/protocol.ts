@@ -35,7 +35,12 @@ import type { ItemStack, ItemType } from "./items";
  */
 // doc 05 M2: new `craft` ClientMsg shape grows the wire vocabulary (doc 03's
 // bump rule covers any ClientMsg/ServerMsg shape change), so 2 → 3.
-export const PROTOCOL_VERSION: number = 3;
+// doc 11 M2: BOTH of doc 03's bump clauses fire — `you.action` is an additive
+// ServerMsg SHAPE change (YouState gains the cast-progress field), and `{t:"use"}`
+// now STARTS a server-driven cast instead of resolving instantly, a message
+// SEMANTICS change (an old client expecting an instant inventory delta would
+// mis-render a multi-tick channel). So 3 → 4.
+export const PROTOCOL_VERSION: number = 4;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -43,9 +48,8 @@ export const PROTOCOL_VERSION: number = 3;
  * `remainingS` down in game-time, interrupts with no effect on move / damage /
  * slot-swap / death (and, for cook, on leaving fire range), and runs the same
  * completion path on success. Shared so both the server's `ActiveAction`
- * (apps/.../systems/state.ts) and — once M2 lands the `you.action` wire field —
- * `YouState` reference ONE definition. M1 is server-only: this is a type export
- * with NO wire field yet, so it does not change the protocol shape or version.
+ * (apps/.../systems/state.ts) and `YouState`'s `action` cast-progress field (M2)
+ * reference ONE definition.
  */
 export type ChannelKind = "cook" | "use" | "reload" | "craft" | "fish";
 
@@ -224,6 +228,15 @@ export interface YouState extends Vitals {
   z: number;
   vy: number;
   grounded: boolean;
+  /**
+   * In-progress channeled (timed) action, for the HUD cast bar (doc 11 M2).
+   * Render-only — prediction (reconcile) ignores it. Absent ⇒ not channeling
+   * ⇒ the bar hides. `remainingS`/`totalS` are round2'd (like x/y/z) since a
+   * bar needs no more precision and gratuitous raw floats on the snapshot are
+   * a smell on a project that fingerprints determinism. Bar fill =
+   * (totalS - remainingS) / totalS.
+   */
+  action?: { kind: ChannelKind; remainingS: number; totalS: number };
 }
 
 export type GameEvent =

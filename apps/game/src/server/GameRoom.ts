@@ -1305,6 +1305,7 @@ export class GameRoom extends DurableObject<Env> {
   private youState(player: ServerPlayer): YouState {
     const c = player.core;
     const v = player.vitals;
+    const a = player.action;
     return {
       x: round2(c.x),
       y: round2(c.y),
@@ -1315,6 +1316,11 @@ export class GameRoom extends DurableObject<Env> {
       food: v.food,
       water: v.water,
       temp: v.temp,
+      // doc 11 M2: cast-progress for the HUD bar; round2'd like x/y/z. Omitted
+      // (undefined) when not channeling, so the field is absent on the wire.
+      ...(a
+        ? { action: { kind: a.kind, remainingS: round2(a.remainingS), totalS: round2(a.totalS) } }
+        : {}),
     };
   }
 

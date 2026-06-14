@@ -15,6 +15,7 @@ import {
 import { ITEM_DEFS, RECIPES, UNKNOWN_DEF } from "@worldspring/shared/items";
 import type { CraftRecipe, ItemKind, ItemStack, ItemType } from "@worldspring/shared/items";
 import { distSq2D } from "@worldspring/shared/math";
+import type { ChannelKind } from "@worldspring/shared/protocol";
 import { doCraft, doDrop, doEquip, doUse } from "@/client/net/connection";
 import { clientWorld, debugStats } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
@@ -52,7 +53,10 @@ interface BarProps {
 }
 
 function Bar({ label, value, max, fillClass }: BarProps): ReactElement {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  // Guard the denominator: vitals pass positive constant caps, but the cast bar
+  // feeds wire-derived totalS — a zero/negative max would make value/max
+  // NaN/Infinity and break the fill width. Empty bar is the safe fallback.
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
     <div className="bar">
       <span className="bar-label">{label}</span>
@@ -155,6 +159,34 @@ function PickupPrompt(): ReactElement | null {
   return (
     <div className="hud-prompt">
       <span className="hud-prompt-key">[E]</span> {prompt}
+    </div>
+  );
+}
+
+// --- center-low: cast bar for the in-progress channeled action (doc 11 M2) ---
+
+const CHANNEL_LABELS: Record<ChannelKind, string> = {
+  cook: "Cooking…",
+  reload: "Reloading…",
+  use: "Using…",
+  craft: "Crafting…",
+  fish: "Casting…",
+};
+
+// Server-authoritative, render-only: the bar fills toward totalS and vanishes
+// the instant a snapshot arrives with you.action absent (a cook cancel's "you
+// stepped out of range" feedback). Reuses the Bar primitive (value = elapsed).
+function ChannelBar(): ReactElement | null {
+  const action = useUIStore((s) => s.channelAction);
+  if (!action) return null;
+  return (
+    <div className="hud-channel">
+      <Bar
+        label={CHANNEL_LABELS[action.kind]}
+        value={action.totalS - action.remainingS}
+        max={action.totalS}
+        fillClass="bar-fill--channel"
+      />
     </div>
   );
 }
@@ -396,6 +428,7 @@ export function HUD(): ReactElement {
       <LastLifeToast />
       <StatusCorner />
       <div className="hud-crosshair" />
+      <ChannelBar />
       <PickupPrompt />
       <VitalsPanel />
       <ChatPanel />
