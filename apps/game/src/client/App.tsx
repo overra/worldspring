@@ -56,6 +56,8 @@ export function App(): React.ReactElement {
 function ReconnectOverlay(): React.ReactElement {
   return (
     <div
+      role="status"
+      aria-live="polite"
       style={{
         position: "fixed",
         inset: 0,
