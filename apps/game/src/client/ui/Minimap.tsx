@@ -5,7 +5,6 @@
 
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
-import { yawToDir } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
 import { blitWindow, drawDynamicLayer, drawFog, getBakedMap } from "@/client/render/map/mapBake";
 import "./map.css";
@@ -39,22 +38,22 @@ export function Minimap(): ReactElement | null {
       const baked = getBakedMap();
       if (baked) {
         const me = clientWorld.me;
-        // Rotate-to-heading: spin the whole view so the player's facing points
-        // UP. forward maps to the north-up screen dir; rotating the canvas by
-        // -atan2(fx,fz) brings it to up. The you-marker (drawn rotated by
-        // +atan2(fx,fz) inside drawDynamicLayer) then nets to 0 → points straight
-        // up, while terrain + entities orbit the centered player. Everything below
-        // stays plain north-up math; the context rotation does the work.
-        const [fx, fz] = yawToDir(me.yaw);
+        // Rotate-to-heading: spin the whole view so the player's facing points UP.
+        // The baked base is a true overhead projection (projection.ts: +Z up, +X
+        // left), so heading-up is a PLAIN rotation of it — by (yaw − π), which
+        // sends the forward dir (−sin,−cos) to screen-up. Terrain, fog, entities,
+        // and the you-arrow all ride this one rotation (the arrow derives its own
+        // heading from toPx, so it nets to straight up). No mirroring and no
+        // per-marker counter-rotation — that asymmetry was the old left/right flip.
         ctx.translate(MM / 2, MM / 2);
-        ctx.rotate(-Math.atan2(fx, fz));
+        ctx.rotate(me.yaw - Math.PI);
         ctx.translate(-MM / 2, -MM / 2);
-        // +Z up: window top-left = (me.x - R, me.z + R), bottom-right = (me.x + R, me.z - R).
-        const tl = baked.proj.worldToImage(me.x - R, me.z + R);
-        const br = baked.proj.worldToImage(me.x + R, me.z - R);
+        // Window corners in image space: +Z up & +X left ⇒ top-left = (me.x+R, me.z+R).
+        const tl = baked.proj.worldToImage(me.x + R, me.z + R);
+        const br = baked.proj.worldToImage(me.x - R, me.z - R);
         blitWindow(ctx, baked.base, tl.ix, tl.iy, br.ix - tl.ix, br.iy - tl.iy, MM, baked.px);
         const toPx = (x: number, z: number): { x: number; y: number } => ({
-          x: ((x - (me.x - R)) / (2 * R)) * MM,
+          x: (((me.x + R) - x) / (2 * R)) * MM,
           y: (((me.z + R) - z) / (2 * R)) * MM,
         });
         const explored = clientWorld.explored;

@@ -31,10 +31,12 @@ export function rasterizeBase(
   const half = size / 2;
   const mpp = size / px;
   for (let iy = 0; iy < px; iy++) {
-    // pixel center -> world z (north/-Z at the top)
+    // pixel center -> world z (north/+Z at the top)
     const z = half - (iy + 0.5) * mpp;
     for (let ix = 0; ix < px; ix++) {
-      const x = -half + (ix + 0.5) * mpp;
+      // +X is image-LEFT (see projection.ts), so ix=0 is +half — keeps the
+      // raster and the projected POI layer in the same (un-mirrored) frame.
+      const x = half - (ix + 0.5) * mpp;
       const h = heightAt(x, z);
       let r: number;
       let g: number;

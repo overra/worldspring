@@ -1,5 +1,5 @@
 // packages/shared/src/map/raster.test.ts — doc 12 M1. Locks the shared map
-// raster core: the projection orientation (north = -Z is image-up), that the
+// raster core: the projection orientation (north = +Z is image-up), that the
 // biome raster paints ocean blue and land green for the prod seed, and that the
 // POI layer surfaces the town names + a footprint per building. Pure shared
 // code, plain node env — no canvas, no three.js.
@@ -14,11 +14,11 @@ import { mapPOIs, rasterizeBase } from "./raster";
 describe("makeProjection", () => {
   const p = makeProjection(WORLD_SIZE, 64);
 
-  it("puts north (-Z) at the top and centers the origin", () => {
+  it("puts north (+Z) at the top, east (-X) on the right, and centers the origin", () => {
     expect(p.worldToImage(0, WORLD_SIZE / 2).iy).toBeCloseTo(0); // +Z (north) -> top
     expect(p.worldToImage(0, -WORLD_SIZE / 2).iy).toBeCloseTo(64); // -Z (south) -> bottom
-    expect(p.worldToImage(-WORLD_SIZE / 2, 0).ix).toBeCloseTo(0); // -X -> left
-    expect(p.worldToImage(WORLD_SIZE / 2, 0).ix).toBeCloseTo(64); // +X -> right
+    expect(p.worldToImage(WORLD_SIZE / 2, 0).ix).toBeCloseTo(0); // +X (west) -> left
+    expect(p.worldToImage(-WORLD_SIZE / 2, 0).ix).toBeCloseTo(64); // -X (east) -> right
     expect(p.worldToImage(0, 0).ix).toBeCloseTo(32); // origin -> center
   });
 
@@ -45,8 +45,8 @@ describe("rasterizeBase", () => {
   });
 
   it("paints the ocean corner blue and the island center green", () => {
-    const corner = at(0, 0); // far NW corner = open sea on this island
-    expect(world.heightAt(-WORLD_SIZE / 2, WORLD_SIZE / 2)).toBeLessThan(WATER_LEVEL);
+    const corner = at(0, 0); // image origin = world (+half,+half) corner = open sea on this island
+    expect(world.heightAt(WORLD_SIZE / 2, WORLD_SIZE / 2)).toBeLessThan(WATER_LEVEL);
     expect(corner.b).toBeGreaterThan(corner.r); // water reads blue
 
     const center = at(px / 2, px / 2); // origin = inland (the military plateau)

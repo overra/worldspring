@@ -185,12 +185,15 @@ export interface MapProjection {
 export function makeProjection(size: number, px: number): MapProjection;
 ```
 
-`ix = (x + half) / size * px`, `iy = (half - z) / size * px` — the `z` flip puts `+Z` (north) at
-the top (`iy=0`) and `+X` at the right; a player facing `-Z` (yaw 0) therefore points toward the
-bottom, as on any north-up map. The heading marker uses the same projection, so it stays
-consistent with the terrain (`projection.ts` documents the convention). `size` is **always passed
-in** (default `WORLD_SIZE` at the call site) — the core never imports the constant, so doc 07's
-tiers and a future `World.size` are a one-line caller change.
+`ix = (half - x) / size * px`, `iy = (half - z) / size * px` — the `z` flip puts `+Z` (north) at
+the top (`iy=0`), and the `x` flip puts `+X` on the **left** (east = `-X` on the right). The `x`
+flip makes the map a **true overhead view, not a mirror**: this world's yaw is left-handed for a
+`+Z`-up image (at yaw 0 a player faces `-Z` with their right hand toward `+X`), so drawing `+X` on
+the right would mirror east/west and make a rotate-to-heading minimap turn the wrong way (QA bug).
+A player facing `-Z` (yaw 0) points toward the bottom, as on any north-up map. The heading marker
+uses the same projection, so it stays consistent with the terrain (`projection.ts` documents the
+convention). `size` is **always passed in** (default `WORLD_SIZE` at the call site) — the core
+never imports the constant, so doc 07's tiers and a future `World.size` are a one-line caller change.
 
 **1b. Palette (`map/palette.ts`)** — lift the four colors + thresholds out of `Terrain.tsx:16-58`
 into exported constants and pure functions `biomeColorAt(h, slope)` / `waterColorAt(depth)`,
