@@ -81,8 +81,11 @@ async function main() {
   let failed = false;
 
   const a = await testCompletes();
+  // afterS must be ~USE_CHANNEL_S (1.2s). The realistic floor is 1.2s of game-time
+  // PLUS round-trip latency (latency only adds), so a 1.0s lower bound never flakes
+  // yet still fails a premature completion (instant ~0s, or a half-duration bug).
   const aOk =
-    a.outcome === "consumed" && a.srcSlot !== a.selected && a.afterS > 0.8 && a.afterS < 2.0;
+    a.outcome === "consumed" && a.srcSlot !== a.selected && a.afterS > 1.0 && a.afterS < 2.0;
   if (!aOk) failed = true;
   console.log(
     `  ${aOk ? "PASS" : "FAIL"}  use-is-a-cast + non-equipped-slot completes  ->  ` +
