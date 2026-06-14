@@ -35,6 +35,18 @@ import type { ItemStack, ItemType } from "./items";
  */
 export const PROTOCOL_VERSION: number = 2;
 
+/**
+ * The kinds of server-authoritative channeled (timed) action (doc 11). A
+ * channel STARTS instantly on the verb that used to resolve it, ticks its
+ * `remainingS` down in game-time, interrupts with no effect on move / damage /
+ * slot-swap / death (and, for cook, on leaving fire range), and runs the same
+ * completion path on success. Shared so both the server's `ActiveAction`
+ * (apps/.../systems/state.ts) and — once M2 lands the `you.action` wire field —
+ * `YouState` reference ONE definition. M1 is server-only: this is a type export
+ * with NO wire field yet, so it does not change the protocol shape or version.
+ */
+export type ChannelKind = "cook" | "use" | "reload" | "craft" | "fish";
+
 // --- Sim state shared by prediction (client) and authority (server) ---
 
 export interface PlayerCore {
