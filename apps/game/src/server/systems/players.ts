@@ -109,7 +109,9 @@ function startingInventory(state: GameState): (ItemStack | null)[] {
   const inv = emptyInventory();
   addToInventory(inv, "flashlight", 1);
   addToInventory(inv, "bandage", 1);
-  if (state.config.map.acquire === "spawn") addToInventory(inv, "map", 1);
+  // `?.` tolerates the untyped .mjs test fixtures that predate `map` (production
+  // configs always carry it); undefined -> no map granted, the right default.
+  if (state.config.map?.acquire === "spawn") addToInventory(inv, "map", 1);
   return inv;
 }
 

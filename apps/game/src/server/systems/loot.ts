@@ -51,7 +51,10 @@ const MAP_LOOT_WEIGHT = 5;
  */
 function effectiveTable(state: GameState, tier: LootTier): WeightedTable {
   const base = LOOT_TABLES[tier];
-  if (state.config.map.acquire === "loot" && (tier === "coastal" || tier === "inland")) {
+  // `?.` tolerates the hand-rolled GameState fixtures in apps/game/scripts/*.mjs
+  // (untyped, predate `map`); production configs always carry it. undefined ->
+  // the comparison is false -> no map in loot, which is the right "off" default.
+  if (state.config.map?.acquire === "loot" && (tier === "coastal" || tier === "inland")) {
     return [...base, { type: "map", weight: MAP_LOOT_WEIGHT, min: 1, max: 1 }];
   }
   return base;
