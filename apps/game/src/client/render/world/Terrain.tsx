@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { WORLD_SIZE } from "@worldspring/shared/constants";
 import { clamp } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
+import { useUIStore } from "@/client/state/store";
 
 const SEGMENTS = 200;
 
@@ -65,6 +66,11 @@ function buildTerrainGeometry(heightAt: (x: number, z: number) => number): THREE
 
 export function Terrain(): ReactElement | null {
   const world = clientWorld.world;
+  // Red realm: a single multiply tint reddens the whole island while preserving
+  // the baked height/slope shading, plus a faint emissive so the barren ground
+  // glows under the wild sky. Overworld keeps white (vertex colors as-is).
+  const realm = useUIStore((s) => s.realm);
+  const isRed = realm === "red";
   const geometry = useMemo(
     () => (world ? buildTerrainGeometry(world.heightAt) : null),
     [world],
@@ -78,7 +84,12 @@ export function Terrain(): ReactElement | null {
   if (!geometry) return null;
   return (
     <mesh geometry={geometry} frustumCulled={false} receiveShadow>
-      <meshStandardMaterial vertexColors flatShading />
+      <meshStandardMaterial
+        vertexColors
+        flatShading
+        color={isRed ? "#d04a2c" : "#ffffff"}
+        emissive={isRed ? "#3a0c06" : "#000000"}
+      />
     </mesh>
   );
 }

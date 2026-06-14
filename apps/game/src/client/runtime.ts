@@ -17,6 +17,7 @@ import type {
   WireDrop,
   WireFire,
   WireLoot,
+  WirePortal,
   ZombieState,
 } from "@worldspring/shared/protocol";
 import type { ItemType } from "@worldspring/shared/items";
@@ -159,6 +160,8 @@ export interface ClientWorldState {
   loot: WireLoot[];
   corpses: WireCorpse[];
   fires: WireFire[];
+  /** Red portals in the local player's realm, within interest range. */
+  portals: WirePortal[];
   /** Airdrop crates — island-wide, never interest-filtered. */
   drops: WireDrop[];
   /** Interpolated wildlife, keyed by id. */
@@ -191,6 +194,7 @@ export const clientWorld: ClientWorldState = {
   loot: [],
   corpses: [],
   fires: [],
+  portals: [],
   drops: [],
   animals: new Map(),
   weather: 0,
@@ -248,6 +252,7 @@ export function resetClientWorld(): void {
   clientWorld.loot = [];
   clientWorld.corpses = [];
   clientWorld.fires = [];
+  clientWorld.portals = [];
   clientWorld.drops = [];
   clientWorld.animals.clear();
   clientWorld.weather = 0;

@@ -29,7 +29,10 @@ export type ItemType =
   | "torch"
   | "first_aid_kit"
   | "padded_jacket"
-  | "backpack";
+  | "backpack"
+  // Red realm gateway (placeable): opens a linked portal pair you can step
+  // through to reach (and return from) the red realm.
+  | "portal_kit";
 
 export type ItemKind =
   | "food"
@@ -267,6 +270,12 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     power: 0,
     wear: { slot: "back", extraSlots: 4 },
   },
+
+  // Red Ender Portal — a placeable that tears open a linked portal pair: one in
+  // your current realm, one at the same spot in the other realm. Step through to
+  // cross; step back through the twin to return. (kind "placeable" routes through
+  // useItem's placeable branch, which dispatches on type.)
+  portal_kit: { type: "portal_kit", name: "Red Ender Portal", kind: "placeable", stack: 4, color: "#e0245e", power: 0 },
 };
 
 /** Airdrop crates roll this many stacks from this table. */
@@ -325,6 +334,7 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "cloth", weight: 10, min: 1, max: 3 },
     { type: "canteen_empty", weight: 8, min: 1, max: 1 },
     { type: "rope", weight: 4, min: 1, max: 1 },
+    { type: "portal_kit", weight: 5, min: 1, max: 1 },
   ],
   inland: [
     { type: "beans", weight: 16, min: 1, max: 2 },
@@ -339,6 +349,7 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "scrap", weight: 8, min: 1, max: 2 },
     { type: "rope", weight: 5, min: 1, max: 1 },
     { type: "canteen_empty", weight: 6, min: 1, max: 1 },
+    { type: "portal_kit", weight: 6, min: 1, max: 1 },
   ],
   military: [
     { type: "rifle", weight: 9, min: 1, max: 1 },

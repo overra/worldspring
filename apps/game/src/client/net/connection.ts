@@ -142,6 +142,7 @@ export function disconnect(): void {
   const ui = useUIStore.getState();
   ui.setRecap(null);
   ui.setDeathCause(null);
+  ui.setRealm("overworld");
   ui.closeChat();
   ui.clearChatLog(); // stale chatOpen would pop the input open on the next join
   if (ui.phase !== "menu") ui.setPhase("menu");
@@ -225,6 +226,7 @@ function handleClosed(): void {
   resetClientWorld();
   ui.setRecap(null);
   ui.setDeathCause(null);
+  ui.setRealm("overworld");
   ui.closeChat();
   ui.clearChatLog();
   if (phase === "playing" || phase === "dead") {
@@ -330,6 +332,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   ui.setRecap(msg.recap);
   ui.setInventory(msg.inv, msg.selected);
   ui.setVitals(vitalsOf(msg.you));
+  ui.setRealm(msg.you.realm);
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.you.hp > 0) {
     ui.setPhase("playing");
@@ -359,6 +362,11 @@ function onSnap(msg: SnapMsg): void {
   }
 
   pushSnap(msg, now);
+
+  // Realm + portals flow straight in: realm re-themes terrain/sky (store-driven
+  // React re-render of the world components), portals feed the per-frame renderer.
+  ui.setRealm(msg.you.realm);
+  clientWorld.portals = msg.portals;
 
   ui.setVitals(vitalsOf(msg.you));
   ui.setPlayerCount(msg.count);

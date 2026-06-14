@@ -12,6 +12,7 @@ import type {
   GameEvent,
   InputCmd,
   PlayerCore,
+  Realm,
   ServerMsg,
   Vitals,
   ZombieState,
@@ -85,6 +86,14 @@ export interface ServerPlayer {
    * Transient (never persisted); 0 at spawn / on restore.
    */
   fishCooldownT: number;
+  /** Which realm this player is in. Render-only on the client; the sim/world
+   * is identical across realms. Transient — not persisted (restored players
+   * resume in the overworld). */
+  realm: Realm;
+  /** Portal-crossing latch: false right after a teleport so the player must
+   * step OUT of the destination portal's radius before it can fire again
+   * (prevents instant bounce-back). Re-armed once clear of all portals. */
+  portalArmed: boolean;
 }
 
 /** Structurally compatible with ZombieCore so stepZombie applies directly. */
@@ -175,6 +184,24 @@ export interface Campfire {
   burnRemaining: number;
 }
 
+/**
+ * A placed red portal. Portals come in linked pairs (placeRedPortal): one in
+ * the realm the player stood in, one at the same (x,z) in the destination
+ * realm. They persist for the room's lifetime (no burn-down) so the player can
+ * return. `realm` is the realm this portal physically lives in (interest +
+ * realm filtered into snapshots); `to*` is where stepping through lands you.
+ */
+export interface Portal {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  realm: Realm;
+  toRealm: Realm;
+  toX: number;
+  toZ: number;
+}
+
 export interface LootRespawnTimer {
   spawnId: number;
   /** Seconds remaining; held at <= 0 while a player camps the spawn. */
@@ -237,6 +264,8 @@ export interface GameState {
   loot: Map<number, LootEntity>;
   corpses: Map<number, Corpse>;
   fires: Campfire[];
+  /** Placed red portals (linked pairs, persistent for the room's lifetime). */
+  portals: Portal[];
   drops: Map<number, Airdrop>;
   animals: Map<number, Deer>;
   /** Rain intensity 0..1 (ramped by the weather machine). */
@@ -276,6 +305,7 @@ export function createGameState(
     loot: new Map(),
     corpses: new Map(),
     fires: [],
+    portals: [],
     drops: new Map(),
     animals: new Map(),
     weather: 0,
