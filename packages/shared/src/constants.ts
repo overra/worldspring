@@ -118,6 +118,19 @@ export const PLAYER_CORPSE_TTL_S = 300;
 export const ZOMBIE_CORPSE_TTL_S = 120;
 export const ZOMBIE_LOOT_CHANCE = 0.55; // chance a zombie corpse carries anything
 
+// --- Channeled actions (doc 11) ---
+// Durations for the server-authoritative channeled-action primitive. House
+// rule: channel durations live here, not as system-local tunables (the
+// FIRE_WARMTH_RADIUS / ATTACK_COOLDOWN_S precedent above). Placeholders pending
+// the M5 playtest tuning pass; per-action numbers owned by another doc (craft
+// times, reload, fishing window) live in THAT owner's table, not here.
+/** Cook a raw item over a fire (the headline channel — only progresses while nearFire). */
+export const COOK_CHANNEL_S = 3;
+/** Eat / drink / heal a consumable (bandage-style heals may want longer later). */
+export const USE_CHANNEL_S = 1.2;
+/** Place a campfire (and other placeables). */
+export const PLACEABLE_CHANNEL_S = 1.5;
+
 // --- Campfire ---
 export const CAMPFIRE_BURN_S = 8 * 60;
 export const CAMPFIRE_PLACE_DIST = 1.6; // placed this far in front of player
@@ -196,6 +209,14 @@ export const LOGOUT_LINGER_S = 60;
 export const WORLD_SAVE_INTERVAL_S = 20;
 /** Completed lives kept for the longest-lives leaderboard. */
 export const LEADERBOARD_MAX = 50;
+
+// --- Map & cartography (doc 12) ---
+/** DEFAULT_CONFIG.map.* — the generous, zero-wire baseline: minimap on, the map
+ *  item granted at spawn, the whole island revealed. `as const` narrows them to
+ *  the MapAcquire/MapReveal literals without importing config.ts. */
+export const MAP_MINIMAP_DEFAULT = true;
+export const MAP_ACQUIRE_DEFAULT = "spawn" as const;
+export const MAP_REVEAL_DEFAULT = "full" as const;
 
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */

@@ -6,8 +6,10 @@
 
 import type { ServerConfig } from "@worldspring/shared/config";
 import { LAG_COMP_MAX_REWIND_S } from "@worldspring/shared/constants";
+import type { ExploredGrid } from "@worldspring/shared/fog";
 import type { ItemStack, ItemType } from "@worldspring/shared/items";
 import type {
+  ChannelKind,
   DeathRecap,
   GameEvent,
   InputCmd,
@@ -18,6 +20,31 @@ import type {
   ZombieState,
 } from "@worldspring/shared/protocol";
 import type { World } from "@worldspring/shared/world";
+
+/**
+ * A server-authoritative channeled (timed) action in progress (doc 11). The
+ * primitive does not interpret `arg` — the per-kind completion fn does. Lives
+ * on ServerPlayer as a transient field (never persisted); a non-null value
+ * means the player is mid-cast. See startChannel / tickActiveActions in
+ * systems/players.ts.
+ */
+export interface ActiveAction {
+  kind: ChannelKind;
+  /**
+   * Inventory slot the cast's effect resolves against (which stack to consume on
+   * completion). use/cook bind to the consumable slot; craft uses -1 (no source
+   * slot). NOT the slot-swap interrupt key — that cancels at the equip site
+   * (equipSlot), so a use issued from the inventory panel on a non-equipped slot
+   * still completes.
+   */
+  slot: number;
+  /** Opaque per-kind payload resolved at completion (e.g. a recipe index). */
+  arg: number;
+  /** Full cast duration in game-seconds (the bar's denominator). */
+  totalS: number;
+  /** Game-seconds left; counted down by tickActiveActions, completes at <= 0. */
+  remainingS: number;
+}
 
 /** Per-life stats; reset on (re)spawn, written to the leaderboard on death. */
 export interface PlayerStats {
@@ -94,6 +121,29 @@ export interface ServerPlayer {
    * step OUT of the destination portal's radius before it can fire again
    * (prevents instant bounce-back). Re-armed once clear of all portals. */
   portalArmed: boolean;
+  /** doc 12 — persisted fog-of-war: cells this character has explored. */
+  explored: ExploredGrid;
+  /** Transient: indices revealed since the last snapshot (cleared on send). */
+  fogDelta: number[];
+  /** Transient: last center cell marked, so we only re-stamp on a cell cross. */
+  lastFogCell: number;
+  /**
+   * Channeled (timed) action in progress, or null when not casting (doc 11).
+   * Transient like the cooldowns above — never persisted, so a DO restart
+   * mid-cast simply drops the cast. One cast at a time: a second start while
+   * this is non-null is a silent no-op.
+   */
+  action: ActiveAction | null;
+  /**
+   * Set true by any hp-reducing combat hit (the same chokepoint that emits the
+   * victim-only {e:"hurt"} event in damagePlayer — combat + zombie paths;
+   * passive survival drains pass hurt=false and do NOT set it). Read by
+   * tickActiveActions to cancel an in-progress cast, then cleared there
+   * (consume-on-read): combat damage lands LATER in the tick than the channel
+   * sweep, so a hit on tick N is observed on tick N+1. Transient (never
+   * persisted).
+   */
+  tookDamageThisTick: boolean;
 }
 
 /** Structurally compatible with ZombieCore so stepZombie applies directly. */

@@ -60,7 +60,14 @@ export function damagePlayer(
 ): boolean {
   if (!victim.alive) return false;
   victim.vitals.hp -= amount;
-  if (hurt) queueEvent(state, { e: "hurt" }, victim.core.x, victim.core.z, victim.id);
+  if (hurt) {
+    queueEvent(state, { e: "hurt" }, victim.core.x, victim.core.z, victim.id);
+    // Damage-cancel signal for channeled actions (doc 11 §3): gated on `hurt`
+    // like the vignette, so a combat hit (combat/zombie paths) cancels an
+    // in-progress cast but slow survival drains (starve/freeze, hurt=false) do
+    // not. tickActiveActions reads this THIS tick, then it resets next tick.
+    victim.tookDamageThisTick = true;
+  }
   if (victim.vitals.hp > 0) return false;
   killPlayer(state, victim, cause);
   return true;

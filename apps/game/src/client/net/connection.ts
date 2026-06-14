@@ -6,9 +6,11 @@
 import {
   CHAT_MAX_LENGTH,
   MAX_NAME_LENGTH,
+  WORLD_SIZE,
 } from "@worldspring/shared/constants";
 import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
-import { ITEM_DEFS } from "@worldspring/shared/items";
+import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
 import { createWorld } from "@worldspring/shared/world";
@@ -23,9 +25,24 @@ const PING_INTERVAL_MS = 2000;
 
 let socket: WebSocket | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
-// Last name used to join — remembered so the preview testbed QA panel (doc 10
-// M4) can re-provision (RESET / set-switch) by rejoining with the same name.
-let lastName = "Survivor";
+// --- Auto-reconnect. The server's Durable Object instance can be replaced
+// under load (a split-brain recycle severs the live socket and the old instance
+// times it out with code 1001), and deploys / network blips also drop the
+// connection. Rather than bailing to the menu, reopen with the SAME persisted
+// token — the server restores the same character on the CURRENT instance
+// (handleJoin restore path). Backoff caps the retry rate; after MAX_ATTEMPTS
+// consecutive failures it's treated as a real disconnect.
+//
+// lastName/lastScenario are the join params, remembered so a reconnect re-sends
+// them (and so the preview testbed QA panel can reprovision, doc 10 M4). A null
+// lastName means no active session — handleClosed won't auto-reconnect.
+let lastName: string | null = null;
+let lastScenario: string | undefined;
+let reconnectAttempts = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+const MAX_RECONNECT_ATTEMPTS = 8;
+const RECONNECT_BASE_MS = 250;
+const RECONNECT_CAP_MS = 3000;
 
 // --- Identity token: 32 hex chars, persisted so the server can restore the
 // same character across page loads. localStorage can throw (private browsing,
@@ -66,13 +83,23 @@ function getToken(): string {
 }
 
 export function connect(name: string, scenario?: string): void {
+  cancelReconnect();
   if (socket !== null) disconnect();
-  lastName = name;
+  lastName = name.slice(0, MAX_NAME_LENGTH);
+  lastScenario = scenario;
+  reconnectAttempts = 0;
 
   const ui = useUIStore.getState();
   ui.setError(null);
   ui.setPhase("connecting");
 
+  openSocket();
+}
+
+/** Open the WebSocket and wire its handlers. Used for the initial connect AND
+ * every auto-reconnect attempt — the join carries lastName + the persisted
+ * token, so a reconnect restores the same character on the current instance. */
+function openSocket(): void {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   socket = ws;
@@ -81,12 +108,13 @@ export function connect(name: string, scenario?: string): void {
     if (socket !== ws) return;
     sendMsg({
       t: "join",
-      name: name.slice(0, MAX_NAME_LENGTH),
+      name: (lastName ?? "").slice(0, MAX_NAME_LENGTH),
       token: getToken(),
       proto: PROTOCOL_VERSION, // two-sided join gate (doc 03 §1)
-      // doc 10 M3/M4: preview-only testbed set selector. The server ignores it
-      // unless env.TESTBED is on, so it is inert in prod.
-      ...(scenario ? { scenario } : {}),
+      // doc 10 M3/M4: preview-only testbed set selector. Remembered (lastScenario)
+      // so a reconnect re-sends it. The server ignores it unless env.TESTBED is
+      // on, so it is inert in prod.
+      ...(lastScenario ? { scenario: lastScenario } : {}),
     });
     startPing();
   };
@@ -122,10 +150,15 @@ function forceFreshToken(): void {
  * only — the server ignores the scenario field unless env.TESTBED is on. */
 export function reprovision(scenario: string): void {
   forceFreshToken();
-  connect(lastName, scenario);
+  connect(lastName ?? "Survivor", scenario);
 }
 
 export function disconnect(): void {
+  // Intentional close: stop any pending reconnect and forget the session, so a
+  // stray close event can never trigger an auto-reconnect after a real leave.
+  cancelReconnect();
+  lastName = null;
+  lastScenario = undefined;
   stopPing();
   const ws = socket;
   socket = null;
@@ -168,7 +201,7 @@ export function doUse(slot: number): void {
   // Optimistic local feedback; the server confirms via the next inv message.
   const stack = useUIStore.getState().inventory[slot];
   if (!stack) return;
-  const kind = ITEM_DEFS[stack.type].kind;
+  const kind = (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).kind;
   if (kind === "food") cueSound("eat");
   else if (kind === "drink") cueSound("drink");
   else if (kind === "heal") cueSound("bandage");
@@ -177,6 +210,11 @@ export function doUse(slot: number): void {
 
 export function doEquip(slot: number): void {
   sendMsg({ t: "equip", slot });
+}
+
+/** Request crafting RECIPES[recipe]; the server validates and confirms via inv. */
+export function doCraft(recipe: number): void {
+  sendMsg({ t: "craft", recipe });
 }
 
 export function doPickup(id: number): void {
@@ -221,6 +259,17 @@ function handleClosed(): void {
   socket = null;
   const ui = useUIStore.getState();
   const phase = ui.phase;
+
+  // In-game drop → auto-reconnect with the persisted token instead of bailing
+  // to the menu. Keep the last rendered frame frozen under the "Reconnecting…"
+  // overlay (do NOT reset the client world here); onWelcome rebuilds it on a
+  // successful reconnect.
+  if (lastName !== null && (phase === "playing" || phase === "dead" || phase === "reconnecting")) {
+    scheduleReconnect();
+    return;
+  }
+
+  // Initial connect failed, or no resumable session: return to the menu.
   resetPrediction();
   resetInterpolation();
   resetClientWorld();
@@ -229,12 +278,48 @@ function handleClosed(): void {
   ui.setRealm("overworld");
   ui.closeChat();
   ui.clearChatLog();
-  if (phase === "playing" || phase === "dead") {
-    ui.setError("Connection lost");
-  } else if (phase === "connecting") {
-    ui.setError("Could not connect");
-  }
+  if (phase === "connecting") ui.setError("Could not connect");
   ui.setPhase("menu");
+}
+
+/** Cancel any scheduled reconnect and reset the backoff. */
+function cancelReconnect(): void {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
+}
+
+/** Schedule the next reconnect attempt with exponential backoff, or give up
+ * (real disconnect → menu) after MAX_RECONNECT_ATTEMPTS. */
+function scheduleReconnect(): void {
+  const ui = useUIStore.getState();
+  reconnectAttempts += 1;
+  if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+    cancelReconnect();
+    resetPrediction();
+    resetInterpolation();
+    resetClientWorld();
+    ui.setRecap(null);
+    ui.setDeathCause(null);
+    ui.closeChat();
+    ui.clearChatLog();
+    ui.setError("Connection lost");
+    ui.setPhase("menu");
+    return;
+  }
+  ui.setPhase("reconnecting");
+  // Exponential backoff (250ms, 500, 1000, 2000, capped 3s) with ±50% jitter, so
+  // a MASS drop — a recycle 1001-closing every connected player at once — doesn't
+  // reconnect as a synchronized thundering herd against the new instance.
+  const base = Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * 2 ** (reconnectAttempts - 1));
+  const delay = base * (0.5 + Math.random() * 0.5);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (lastName === null) return; // disconnected while the timer was pending
+    openSocket();
+  }, delay);
 }
 
 function handleMessage(data: unknown): void {
@@ -307,8 +392,19 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
     return;
   }
 
+  // A welcome means we're connected (initial join or a successful reconnect) —
+  // clear the reconnect backoff so the next drop starts a fresh attempt budget.
+  reconnectAttempts = 0;
+
   resetPrediction();
   resetInterpolation();
+  // Drop stale remote views from before a reconnect drop (resetInterpolation
+  // only clears the snapshot buffer) so they don't render for a frame at old
+  // positions before the first post-welcome snapshot prunes them. No-op on an
+  // initial connect (the maps are already empty).
+  clientWorld.players.clear();
+  clientWorld.zombies.clear();
+  clientWorld.animals.clear();
 
   clientWorld.world = createWorld(msg.seed);
   // Clamp the server's config before storing — NEVER store the raw object. A
@@ -318,6 +414,11 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // it but does not yet drive runtime behavior off it (clock swap deferred to
   // M4 to keep this PR byte-identical).
   clientWorld.config = clampConfig(msg.config);
+  // doc 12 — mirror the server-blessed explored set on fog servers (else null,
+  // and the map renders full). createWorld + the map bake both use WORLD_SIZE,
+  // so the grid's cell indices line up with the snapshot deltas below.
+  clientWorld.explored =
+    clientWorld.config.map.reveal === "explored" ? decodeExplored(WORLD_SIZE, msg.explored) : null;
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;
@@ -367,6 +468,8 @@ function onSnap(msg: SnapMsg): void {
   // React re-render of the world components), portals feed the per-frame renderer.
   ui.setRealm(msg.you.realm);
   clientWorld.portals = msg.portals;
+  // doc 12 — fold in any newly-explored cells the server revealed this tick.
+  if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
 
   ui.setVitals(vitalsOf(msg.you));
   ui.setPlayerCount(msg.count);

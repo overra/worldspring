@@ -10,7 +10,7 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import { ITEM_DEFS, type ItemType } from "@worldspring/shared/items";
+import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
 import { clientWorld } from "@/client/runtime";
 
 const POOL_SIZE = 64;
@@ -36,7 +36,7 @@ const materialCache = new Map<ItemType, THREE.MeshLambertMaterial>();
 function lootMaterial(type: ItemType): THREE.MeshLambertMaterial {
   const cached = materialCache.get(type);
   if (cached) return cached;
-  const mat = new THREE.MeshLambertMaterial({ color: ITEM_DEFS[type].color });
+  const mat = new THREE.MeshLambertMaterial({ color: (ITEM_DEFS[type] ?? UNKNOWN_DEF).color });
   materialCache.set(type, mat);
   return mat;
 }

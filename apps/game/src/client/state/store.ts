@@ -6,7 +6,11 @@ import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, Realm, Vitals } from "@worldspring/shared/protocol";
 
-export type GamePhase = "menu" | "connecting" | "playing" | "dead";
+// "reconnecting": the in-game socket dropped (e.g. the server DO instance was
+// replaced under load, or a deploy/network blip) and we're auto-reconnecting
+// with the persisted token — the last frame stays frozen under an overlay
+// until the new welcome, distinct from a real disconnect that returns to menu.
+export type GamePhase = "menu" | "connecting" | "playing" | "dead" | "reconnecting";
 
 export interface Notice {
   id: number;
@@ -44,6 +48,8 @@ export interface UIState {
   clockHours: number;
   pingMs: number;
   invOpen: boolean;
+  /** Full-screen map (doc 12). Gates gameplay input like invOpen. */
+  mapOpen: boolean;
   /** Escape menu (resume/settings/leave). Gates gameplay input like invOpen. */
   menuOpen: boolean;
   /** Proximity-chat input row open. Gates gameplay input like invOpen. */
@@ -69,6 +75,7 @@ export interface UIState {
   setClockHours(hours: number): void;
   setPingMs(ms: number): void;
   setInvOpen(open: boolean): void;
+  setMapOpen(open: boolean): void;
   setMenuOpen(open: boolean): void;
   openChat(): void;
   closeChat(): void;
@@ -98,6 +105,7 @@ export const useUIStore = create<UIState>((set) => ({
   clockHours: 9,
   pingMs: 0,
   invOpen: false,
+  mapOpen: false,
   menuOpen: false,
   chatOpen: false,
   chatLog: [],
@@ -121,6 +129,7 @@ export const useUIStore = create<UIState>((set) => ({
   setClockHours: (clockHours) => set({ clockHours }),
   setPingMs: (pingMs) => set({ pingMs }),
   setInvOpen: (invOpen) => set({ invOpen }),
+  setMapOpen: (mapOpen) => set({ mapOpen }),
   setMenuOpen: (menuOpen) => set({ menuOpen }),
   openChat: () => set((s) => (s.chatOpen ? s : { chatOpen: true })),
   clearChatLog: () => set((s) => (s.chatLog.length === 0 ? s : { chatLog: [] })),

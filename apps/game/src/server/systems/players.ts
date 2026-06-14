@@ -4,6 +4,7 @@
 import {
   CAMPFIRE_BURN_S,
   CAMPFIRE_PLACE_DIST,
+  COOK_CHANNEL_S,
   DROPPED_LOOT_TTL_S,
   FIRE_WARMTH_RADIUS,
   FISH_CHANCE,
@@ -18,16 +19,26 @@ import {
   MAX_PORTALS,
   MAX_WATER,
   PICKUP_RANGE,
+  PLACEABLE_CHANNEL_S,
   PORTAL_PLACE_DIST,
   PORTAL_RADIUS,
   TEMP_NORMAL,
+  USE_CHANNEL_S,
   WATER_LEVEL,
   WATER_SAMPLE_DIST,
+  WORLD_SIZE,
 } from "@worldspring/shared/constants";
-import { ITEM_DEFS, type ItemStack, type ItemType } from "@worldspring/shared/items";
+import {
+  createExploredGrid,
+  decodeExplored,
+  exploredCellAt,
+  FOG_REVEAL_RADIUS_M,
+  markExploredDisk,
+} from "@worldspring/shared/fog";
+import { ITEM_DEFS, RECIPES, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import { clamp, distSq2D, yawToDir } from "@worldspring/shared/math";
 import { stepPlayer } from "@worldspring/shared/movement";
-import type { InputCmd, PlayerCore, Realm } from "@worldspring/shared/protocol";
+import type { ChannelKind, InputCmd, PlayerCore, Realm } from "@worldspring/shared/protocol";
 import type { CharacterState } from "../persistence";
 import { startLootRespawn } from "./loot";
 import { sendTo, type GameState, type PlayerStats, type Portal, type ServerPlayer } from "./state";
@@ -105,11 +116,16 @@ function freshStats(state: GameState): PlayerStats {
   return { bornAt: state.time, kills: 0, zombieKills: 0, distanceM: 0 };
 }
 
-/** Build the inventory a brand-new player spawns with: a flashlight and a bandage. */
-function startingInventory(): (ItemStack | null)[] {
+/** Build the inventory a brand-new player spawns with: a flashlight, a bandage,
+ * and (doc 12) the map item iff the server grants it at spawn (acquire "loot"
+ * makes it a find; "none" disables the full map). */
+function startingInventory(state: GameState): (ItemStack | null)[] {
   const inv = emptyInventory();
   addToInventory(inv, "flashlight", 1);
   addToInventory(inv, "bandage", 1);
+  // `?.` tolerates the untyped .mjs test fixtures that predate `map` (production
+  // configs always carry it); undefined -> no map granted, the right default.
+  if (state.config.map?.acquire === "spawn") addToInventory(inv, "map", 1);
   return inv;
 }
 
@@ -142,7 +158,7 @@ export function createPlayer(
     name,
     core: freshSpawnCore(state),
     vitals: { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL },
-    inventory: startingInventory(),
+    inventory: startingInventory(state),
     selectedSlot: 0,
     alive: true,
     offline: false,
@@ -163,6 +179,11 @@ export function createPlayer(
     fishCooldownT: 0,
     realm: "overworld",
     portalArmed: true,
+    explored: createExploredGrid(WORLD_SIZE),
+    fogDelta: [],
+    lastFogCell: -1,
+    action: null,
+    tookDamageThisTick: false,
   };
   grantTestPortals(state, player);
   state.players.set(id, player);
@@ -214,6 +235,12 @@ export function restorePlayer(
     fishCooldownT: 0,
     realm: "overworld",
     portalArmed: true,
+    // Per-token fog: explored knowledge accrues across lives (doc 12 Open Q4).
+    explored: decodeExplored(WORLD_SIZE, saved.explored),
+    fogDelta: [],
+    lastFogCell: -1,
+    action: null,
+    tookDamageThisTick: false,
   };
   grantTestPortals(state, player); // top up if the resumed kit has room
   state.players.set(id, player);
@@ -228,7 +255,7 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   // spawnPlayerCorpse), so the new life keeps the items held at death rather
   // than starting empty. fullLoot (default) resets to the starting loadout.
   if (state.config.pvp.fullLoot) {
-    player.inventory = startingInventory();
+    player.inventory = startingInventory(state);
     player.selectedSlot = 0;
   }
   grantTestPortals(state, player); // keep the feature testable across respawns
@@ -249,7 +276,33 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   // the beach), regardless of which realm the old life died in.
   player.realm = "overworld";
   player.portalArmed = true;
+  // Keep the explored set (per-token), but re-stamp from the new spawn position.
+  player.lastFogCell = -1;
+  // Drop any cast belt-and-braces (death already cancels it in tickActiveActions,
+  // but a respawn must never inherit a stale channel from the previous life).
+  player.action = null;
+  player.tookDamageThisTick = false;
   sendInventory(state, player);
+}
+
+/**
+ * doc 12 — server-authoritative fog-of-war. For each alive, online player on a
+ * fog server, reveal a disk around their authoritative (unrounded) position
+ * whenever they cross into a new cell, accumulating the newly-lit cells in
+ * fogDelta (shipped + cleared by the next snapshot). Pure XZ arithmetic — never
+ * touches heightAt, so it stays off the tick's hot path. No-op on full-reveal
+ * servers (the explored set is unused there).
+ */
+export function markExploration(state: GameState): void {
+  if (state.config.map.reveal !== "explored") return;
+  for (const player of state.players.values()) {
+    if (player.offline || !player.alive) continue;
+    const cell = exploredCellAt(player.explored, player.core.x, player.core.z);
+    if (cell === player.lastFogCell) continue;
+    player.lastFogCell = cell;
+    const revealed = markExploredDisk(player.explored, player.core.x, player.core.z, FOG_REVEAL_RADIUS_M);
+    if (revealed.length > 0) player.fogDelta.push(...revealed);
+  }
 }
 
 /** Enqueue input cmds, dropping the oldest beyond the queue cap. */
@@ -354,6 +407,33 @@ export function consumeFromSlot(inv: (ItemStack | null)[], slot: number): void {
   if (stack.count <= 0) inv[slot] = null;
 }
 
+/** Total count of `type` across all inventory stacks (sibling of addToInventory). */
+export function countOf(inv: (ItemStack | null)[], type: ItemType): number {
+  let total = 0;
+  for (const stack of inv) {
+    if (stack && stack.type === type) total += stack.count;
+  }
+  return total;
+}
+
+/**
+ * Remove `count` of `type`, draining stacks BACK-TO-FRONT so the hotbar's low
+ * slots keep their tools (a tool stack at slot 0 survives a craft that also
+ * consumes loose materials in a higher slot). Caller must ensure the inventory
+ * holds at least `count` (craftItem validates via countOf first).
+ */
+export function removeFromInventory(inv: (ItemStack | null)[], type: ItemType, count: number): void {
+  let remaining = count;
+  for (let i = inv.length - 1; i >= 0 && remaining > 0; i--) {
+    const stack = inv[i];
+    if (!stack || stack.type !== type) continue;
+    const take = Math.min(stack.count, remaining);
+    stack.count -= take;
+    remaining -= take;
+    if (stack.count <= 0) inv[i] = null;
+  }
+}
+
 /** Within campfire warmth (duplicated from survival.ts's private nearFire to
  * avoid a players <-> survival import cycle — survival already imports us). */
 function nearFire(state: GameState, x: number, z: number): boolean {
@@ -409,30 +489,21 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
   const { x, z } = player.core;
 
   // --- Data-driven cook path (raw_venison, raw_fish, future raw items) ---
+  // Cook is a channeled action (doc 11): startChannel only opens this cast when
+  // nearFire, and tickActiveActions re-checks nearFire every tick — so by the
+  // time we COMPLETE here we are (re-validated) in range. The old instant
+  // out-of-range "eat it raw" path is gone: pressing use on a raw item away
+  // from a fire is rejected at START with the "stand within Nm of a fire"
+  // notice (see startUse), never silently eaten raw. Defensive early-return if
+  // somehow out of range at completion (the channel should already have
+  // cancelled with the "moved away from the fire" notice).
   if (def.cooksTo !== undefined) {
-    if (nearFire(state, x, z)) {
-      // Near campfire: convert raw → cooked.
-      consumeFromSlot(player.inventory, slot);
-      const cooked = def.cooksTo;
-      const leftover = addToInventory(player.inventory, cooked, 1);
-      if (leftover > 0) dropAtFeet(state, player, cooked, leftover);
-      sendTo(state, player.id, { t: "notice", msg: `${def.name} cooked` });
-      sendInventory(state, player);
-      return;
-    }
-    // Away from fire: eat raw — food benefit with hp penalty.
-    vitals.food = clamp(vitals.food + def.power, 0, MAX_FOOD);
-    if (def.rawPenaltyHp !== undefined && def.rawPenaltyHp > 0) {
-      // Never lethal: floor at 1, but don't raise hp already below 1.
-      vitals.hp = Math.max(Math.min(vitals.hp, 1), vitals.hp - def.rawPenaltyHp);
-    }
+    if (!nearFire(state, x, z)) return;
     consumeFromSlot(player.inventory, slot);
-    // The cook-vs-raw split is otherwise an invisible, instant binary (#33): tell
-    // the player WHY they took the hit and the exact range to avoid it next time.
-    sendTo(state, player.id, {
-      t: "notice",
-      msg: `Ate it raw — stand within ${FIRE_WARMTH_RADIUS}m of a fire to cook it`,
-    });
+    const cooked = def.cooksTo;
+    const leftover = addToInventory(player.inventory, cooked, 1);
+    if (leftover > 0) dropAtFeet(state, player, cooked, leftover);
+    sendTo(state, player.id, { t: "notice", msg: `${def.name} cooked` });
     sendInventory(state, player);
     return;
   }
@@ -611,10 +682,262 @@ export function stepPortals(state: GameState): void {
   }
 }
 
+// --- Channeled actions (doc 11) -------------------------------------------
+//
+// `useItem` above is the INSTANT completion body. The verbs that used to call
+// it inline now call startUse, which opens a timed cast; tickActiveActions
+// ticks it down in game-time and, on success, re-enters useItem (the SAME body)
+// to apply + consume. Nothing is applied or consumed at start. See
+// docs/plans/11-channeled-timed-actions.md §1–§3.
+
+/**
+ * Map a {t:"use"} on `slot` to its channeled kind + duration, or to the instant
+ * path. M1 channels exactly the doc-11 §2 rows it owns — cook, and the
+ * food/drink/heal/placeable consumables — and leaves the doc-05 interim water
+ * vessel + fishing-rod paths resolving instantly through useItem (their
+ * channels are their owners' to add). Returns null to mean "not a channeled
+ * use — run the instant useItem path".
+ */
+function channelForUse(
+  stack: ItemStack,
+): { kind: ChannelKind; durationS: number } | null {
+  const def = ITEM_DEFS[stack.type];
+  // Cook takes priority exactly as in useItem (cooksTo is checked first there).
+  if (def.cooksTo !== undefined) return { kind: "cook", durationS: COOK_CHANNEL_S };
+  // Water vessels (boil/fill/drink) + the fishing rod stay instant for M1.
+  if (def.water !== undefined) return null;
+  if (stack.type === "fishing_rod") return null;
+  switch (def.kind) {
+    case "food":
+    case "drink":
+    case "heal":
+      return { kind: "use", durationS: USE_CHANNEL_S };
+    case "placeable":
+      return { kind: "use", durationS: PLACEABLE_CHANNEL_S };
+    default:
+      return null; // tools / weapons / ammo: instant (no-op) path
+  }
+}
+
+/**
+ * Entry point for a {t:"use"} message (replaces the inline useItem call). Decides
+ * whether the item channels: if so it validates the START precondition and opens
+ * a cast via startChannel; otherwise it falls back to the instant useItem path
+ * (water vessels, fishing rod, tools). A second use mid-cast is a silent no-op
+ * inside startChannel.
+ */
+export function startUse(state: GameState, player: ServerPlayer, slot: number): void {
+  if (!player.alive) return;
+  // One action at a time: ignore ANY use mid-cast (a channeled use OR the instant
+  // water/fishing fallback) so nothing mutates the inventory during a cast (§1/§3).
+  if (player.action !== null) return;
+  if (slot < 0 || slot >= INVENTORY_SLOTS) return;
+  const stack = player.inventory[slot];
+  if (!stack) return;
+  const channel = channelForUse(stack);
+  if (channel === null) {
+    // Not a channeled use — resolve instantly exactly as before.
+    useItem(state, player, slot);
+    return;
+  }
+  startChannel(state, player, channel.kind, slot, 0, channel.durationS);
+}
+
+/**
+ * Open a channeled action on `player` (doc 11 §1). No-op (silently) if the
+ * player is already casting (one cast at a time), is dead, or the per-kind START
+ * precondition fails. NOTHING is applied or consumed here — start only opens the
+ * cast; effects run in the completion fn from tickActiveActions.
+ *
+ * Cook's start precondition is the headline fix (#33): a cook only STARTS when
+ * nearFire, so pressing use on a raw item out of range is rejected up front with
+ * the exact range — never silently eaten raw. The per-tick re-check in
+ * tickActiveActions then cancels if you walk out mid-cook.
+ */
+export function startChannel(
+  state: GameState,
+  player: ServerPlayer,
+  kind: ChannelKind,
+  slot: number,
+  arg: number,
+  durationS: number,
+): void {
+  if (!player.alive) return;
+  if (player.action !== null) return; // already casting — second use ignored
+  if (slot >= 0) {
+    const stack = player.inventory[slot];
+    if (!stack) return;
+    // Cook precondition: raw item AND in fire range. Out of range never starts;
+    // tell the player the exact range (the old instant eat-raw notice, moved to
+    // start — eating raw is no longer an action, it was the out-of-range path).
+    if (kind === "cook") {
+      const def = ITEM_DEFS[stack.type];
+      if (def.cooksTo === undefined) return;
+      if (!nearFire(state, player.core.x, player.core.z)) {
+        sendTo(state, player.id, {
+          t: "notice",
+          msg: `Stand within ${FIRE_WARMTH_RADIUS}m of a fire to cook it`,
+        });
+        return;
+      }
+    }
+  }
+  player.action = { kind, slot, arg, totalS: durationS, remainingS: durationS };
+}
+
+/**
+ * Advance every player's in-progress channel one tick in game-time (doc 11 §2).
+ *
+ * Ordering is load-bearing: this MUST run after applyQueuedInputs (so movedThisTick
+ * is this tick's value) and before attack resolution — GameRoom.tick enforces it.
+ *
+ * The §3 interrupt checks run FIRST, with strict early-return discipline: the
+ * first matching trigger cancels (action = null, no effect, nothing consumed)
+ * and moves to the next player. Only if none fire does remainingS count down;
+ * at <= 0 the kind's completion fn runs (the EXISTING instant body) and the
+ * cast clears.
+ */
+export function tickActiveActions(state: GameState, dt: number): void {
+  for (const player of state.players.values()) {
+    // Consume-on-read the damage flag for EVERY player (casting or not): combat,
+    // zombie and survival damage all land LATER in the tick pipeline than this
+    // sweep (attack resolution / tickZombies / tickSurvival run after us), so a
+    // hit set on tick N is read here on tick N+1 — a one-tick (~67ms) latency.
+    // Clearing it here (not in applyQueuedInputs) is what keeps the signal alive
+    // long enough to be seen. Consuming it one tick late means a hit on tick N
+    // also cancels a cast opened in the gap before tick N+1's sweep (started just
+    // AFTER the hit) — fail-safe (over-cancels by at most one tick, never misses a
+    // cancel) and imperceptible.
+    const tookDamage = player.tookDamageThisTick;
+    player.tookDamageThisTick = false;
+
+    const action = player.action;
+    if (action === null) continue;
+
+    // §3 interrupts (first match cancels, no effect):
+    // 1. Death.
+    if (!player.alive) {
+      player.action = null;
+      continue;
+    }
+    // 2. Movement (default for cook/use). movedThisTick is this tick's value
+    //    because we run right after applyQueuedInputs.
+    if (player.movedThisTick) {
+      player.action = null;
+      continue;
+    }
+    // 3. Took combat damage since the last sweep (set alongside the {e:"hurt"}
+    //    emit in damagePlayer). Consumed above.
+    if (tookDamage) {
+      player.action = null;
+      continue;
+    }
+    // (Slot-swap interrupt is handled at the equip site — see equipSlot — not
+    //  here, so it fires the instant the equipped slot changes and catches an
+    //  equip-away-and-back within one tick that a point-in-time check here would
+    //  miss. Use from the inventory panel never equips, so it is unaffected.)
+    // 4. Cook only: left fire range (the net-new per-tick predicate). Emit the
+    //    one-shot "moved away from the fire" notice — invisible cancellation is
+    //    exactly the pain we are fixing.
+    if (action.kind === "cook" && !nearFire(state, player.core.x, player.core.z)) {
+      player.action = null;
+      sendTo(state, player.id, { t: "notice", msg: "Moved away from the fire" });
+      continue;
+    }
+
+    // No interrupt — advance the cast.
+    action.remainingS -= dt;
+    if (action.remainingS > 0) continue;
+
+    // Complete: run the kind's completion fn (the EXISTING instant body), which
+    // re-validates its own precondition and applies + consumes. Clear FIRST so a
+    // completion that itself opens nothing leaves a clean slate.
+    player.action = null;
+    completeChannel(state, player, action.kind, action.slot);
+  }
+}
+
+/**
+ * Run the completion (the existing instant body) for a finished channel. M1
+ * owns cook + use; reload/craft/fish are wired by their owning docs as they
+ * adopt the primitive (they early-return here until then).
+ */
+function completeChannel(
+  state: GameState,
+  player: ServerPlayer,
+  kind: ChannelKind,
+  slot: number,
+): void {
+  switch (kind) {
+    case "cook":
+    case "use":
+      // useItem re-validates (the slot may have changed contents during a long
+      // cast even without an interrupt) and applies + consumes.
+      useItem(state, player, slot);
+      return;
+    default:
+      // reload / craft / fish: owned by combat / doc 05 / doc 07 (M3+).
+      return;
+  }
+}
+
+/**
+ * Craft RECIPES[recipe] (doc 05 M2). Strict early-returns: alive; recipe in
+ * range; every input present in the summed inventory; the tool (if any) held
+ * anywhere; the station (if any) satisfied. On success consume the inputs
+ * (back-to-front per stack so low-slot tools survive), grant the output
+ * (overflow → dropAtFeet), and confirm with an inv message + a notice. The
+ * tool is NEVER consumed.
+ */
+export function craftItem(state: GameState, player: ServerPlayer, recipe: number): void {
+  if (!player.alive) return;
+  // Range + integer guard. parseClientMsg already coerces via `| 0`, but craft
+  // is the authority — reject any non-integer or out-of-range index outright.
+  if (!Number.isInteger(recipe) || recipe < 0 || recipe >= RECIPES.length) return;
+  const r = RECIPES[recipe];
+  const inv = player.inventory;
+
+  // Aggregate required inputs by type first. A recipe that lists the same type in
+  // more than one row is summed (per-row checks would each pass on a quantity that
+  // doesn't cover the total), and the tool guarantee below stays exact. No current
+  // recipe repeats a type or names its tool as an input; this keeps it robust if
+  // one ever does.
+  const required = new Map<ItemType, number>();
+  for (const input of r.inputs) {
+    required.set(input.type, (required.get(input.type) ?? 0) + input.count);
+  }
+  // Inputs: every required type must be present in sufficient summed quantity.
+  for (const [type, need] of required) {
+    if (countOf(inv, type) < need) return;
+  }
+  // Tool: held somewhere AND never consumed. If the tool type is also an input,
+  // require one beyond the consumed count so it survives the removal below.
+  if (r.tool !== undefined && countOf(inv, r.tool) <= (required.get(r.tool) ?? 0)) return;
+  // Station: campfire recipes need a nearby fire — notice on failure so the
+  // greyed client button has a server-confirmed reason.
+  if (r.station === "campfire" && !nearFire(state, player.core.x, player.core.z)) {
+    sendTo(state, player.id, { t: "notice", msg: "needs a campfire" });
+    return;
+  }
+
+  for (const [type, need] of required) removeFromInventory(inv, type, need);
+  const leftover = addToInventory(inv, r.output.type, r.output.count);
+  if (leftover > 0) dropAtFeet(state, player, r.output.type, leftover);
+  sendInventory(state, player);
+  sendTo(state, player.id, { t: "notice", msg: `crafted ${r.name}` });
+}
+
 /** Select a hotbar slot. */
 export function equipSlot(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
   if (slot < 0 || slot >= INVENTORY_SLOTS) return;
+  // §3 slot-swap interrupt, owned HERE (the mutation point) rather than in
+  // tickActiveActions like the other interrupts: cancelling the instant the
+  // equipped slot actually changes catches an equip-away-and-back within a single
+  // tick that a once-per-tick check would miss. Checked before the assignment so
+  // `selectedSlot` is still the pre-equip value. Inventory-panel use never calls
+  // equipSlot, so a non-equipped-slot use is never cancelled by this.
+  if (player.action !== null && slot !== player.selectedSlot) player.action = null;
   player.selectedSlot = slot;
   sendInventory(state, player);
 }

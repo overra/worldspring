@@ -37,6 +37,8 @@ export interface RulesSummary {
   worldSize: WorldSizeTier; // type-only import from packages/shared/src/config.ts
   maxPlayers: number;
   wipe: WipeSchedule; // type-only import from packages/shared/src/config.ts
+  /** Map regime (doc 12): full island / fog-of-war / find-the-map / off. */
+  map: "full" | "fog" | "find" | "off";
 }
 
 export type ServerStatus = "occupied" | "idle";

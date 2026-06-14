@@ -16,17 +16,29 @@ import type { ItemStack, ItemType } from "./items";
  * touching any character state, the client refuses older servers before
  * building the world. See docs/plans/03-server-info-contract.md §1.
  *
- * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, to
- * the movement.ts / world.ts behavior the client predicts, or to the ItemType
- * wire enums. While this is `1` an ABSENT `join.proto` is accepted (pre-gate
- * clients are sim-compatible with v1 by definition); the moment it bumps to
- * `2+` the server rejects absent `proto` like any other mismatch.
+ * Bump on ANY breaking change to ClientMsg/ServerMsg shapes or semantics, or to
+ * the movement.ts / world.ts behavior the client predicts. While this is `1` an
+ * ABSENT `join.proto` is accepted (pre-gate clients are sim-compatible with v1
+ * by definition); the moment it bumps to `2+` the server rejects absent `proto`
+ * like any other mismatch.
+ *
+ * ItemType wire-enum GROWTH is additive-safe and does NOT force a bump (doc 12
+ * Open Q1): every client `ITEM_DEFS[type]` lookup goes through `?? UNKNOWN_DEF`
+ * (items.ts), so a client that receives an item type it has never heard of
+ * renders it as a generic item rather than crashing. A new ItemType only needs a
+ * bump if it also changes a predicted-sim behavior or a message shape. (Removing
+ * or RETYPING an existing ItemType is still breaking — bump for those.)
  *
  * Typed `number`, not the literal `1`, deliberately: the gate compares against
  * it at runtime, so the comparison must keep compiling — and flip its
  * absent-proto handling — the instant this value bumps.
  */
-export const PROTOCOL_VERSION: number = 3;
+// Version sequencing: doc 05 M2 took 2→3 (the `craft` ClientMsg). doc 11 M2
+// (PR #50) takes 3→4 (`you.action` + `{t:"use"}` becomes a cast). This PR (red
+// realm: new ItemType, `realm`/`portals` on the wire) takes the next slot, 5.
+// MERGE #50 FIRST — if merge order differs, this line conflicts and must be
+// re-resolved to (main's current value) + 1.
+export const PROTOCOL_VERSION: number = 5;
 
 /**
  * Which realm a player is standing in. "overworld" is the normal island;
@@ -36,6 +48,18 @@ export const PROTOCOL_VERSION: number = 3;
  * WirePortal (the realm a portal leads to).
  */
 export type Realm = "overworld" | "red";
+
+/**
+ * The kinds of server-authoritative channeled (timed) action (doc 11). A
+ * channel STARTS instantly on the verb that used to resolve it, ticks its
+ * `remainingS` down in game-time, interrupts with no effect on move / damage /
+ * slot-swap / death (and, for cook, on leaving fire range), and runs the same
+ * completion path on success. Shared so both the server's `ActiveAction`
+ * (apps/.../systems/state.ts) and — once M2 lands the `you.action` wire field —
+ * `YouState` reference ONE definition. M1 is server-only: this is a type export
+ * with NO wire field yet, so it does not change the protocol shape or version.
+ */
+export type ChannelKind = "cook" | "use" | "reload" | "craft" | "fish";
 
 // --- Sim state shared by prediction (client) and authority (server) ---
 
@@ -88,6 +112,8 @@ export type ClientMsg =
    * LAG_COMP_MAX_REWIND_S — omitted/invalid means "no rewind". */
   | { t: "attack"; at?: number } // server resolves melee vs ranged
   | { t: "use"; slot: number }
+  /** Craft RECIPES[recipe] — server validates inputs/tool/station (doc 05 M2). */
+  | { t: "craft"; recipe: number }
   | { t: "equip"; slot: number }
   | { t: "pickup"; id: number }
   | { t: "drop"; slot: number }
@@ -267,6 +293,10 @@ export type ServerMsg =
        * does NOT bump PROTOCOL_VERSION. The client clamps it (clampConfig) and
        * never stores the raw object; absent → the client's DEFAULT_CONFIG. */
       config?: ServerConfig;
+      /** doc 12 — base64 fog-of-war explored bitset, sent only when the server
+       * runs map.reveal === "explored". Additive optional (older clients ignore
+       * it), so no PROTOCOL_VERSION bump. */
+      explored?: string;
     }
   | {
       t: "snap";
@@ -288,6 +318,9 @@ export type ServerMsg =
       weather: number;
       events: GameEvent[];
       count: number; // players online
+      /** doc 12 — cell indices newly explored this tick (fog servers only).
+       * Omitted when empty. Additive optional → no PROTOCOL_VERSION bump. */
+      fog?: number[];
     }
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
@@ -377,6 +410,9 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       return { t: "attack", at: isFiniteNum(m.at) ? m.at : undefined };
     case "use":
       return isFiniteNum(m.slot) ? { t: "use", slot: m.slot | 0 } : null;
+    case "craft":
+      // recipe is a RECIPES index; range/identity checked in craftItem.
+      return isFiniteNum(m.recipe) ? { t: "craft", recipe: m.recipe | 0 } : null;
     case "equip":
       return isFiniteNum(m.slot) ? { t: "equip", slot: m.slot | 0 } : null;
     case "pickup":

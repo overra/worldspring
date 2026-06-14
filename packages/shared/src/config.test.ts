@@ -28,6 +28,9 @@ import {
   DAY_DURATION_S,
   DEER_COUNT,
   LOGOUT_LINGER_S,
+  MAP_ACQUIRE_DEFAULT,
+  MAP_MINIMAP_DEFAULT,
+  MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   RESPAWN_DELAY_S,
   START_HOUR,
@@ -93,6 +96,12 @@ describe("DEFAULT_CONFIG equals the shipped constants field-by-field", () => {
     expect(DEFAULT_CONFIG.building.pieceCapPerPlayer).toBe(120);
     expect(DEFAULT_CONFIG.building.decayHours).toBe(168);
     expect(DEFAULT_CONFIG.building.offlineRaidMult).toBe(0.25);
+  });
+
+  it("map defaults match the constants (minimap on, spawn-with, full reveal)", () => {
+    expect(DEFAULT_CONFIG.map.minimap).toBe(MAP_MINIMAP_DEFAULT);
+    expect(DEFAULT_CONFIG.map.acquire).toBe(MAP_ACQUIRE_DEFAULT);
+    expect(DEFAULT_CONFIG.map.reveal).toBe(MAP_REVEAL_DEFAULT);
   });
 
   it("preset id is deadcoast", () => {
@@ -296,6 +305,21 @@ describe("PRESETS", () => {
   it("nightfall freezes the clock at hour 1", () => {
     expect(resolveServerConfig("nightfall").config.time.fixedHour).toBe(1);
   });
+
+  it("hardcore presets lean explored; ironcoast hides the map in loot", () => {
+    const iron = resolveServerConfig("ironcoast").config.map;
+    expect(iron.acquire).toBe("loot");
+    expect(iron.reveal).toBe("explored");
+    expect(iron.minimap).toBe(true); // inherited generous default
+
+    const war = resolveServerConfig("warpath").config.map;
+    expect(war.reveal).toBe("explored");
+    expect(war.acquire).toBe("spawn"); // not overridden — newspawns aren't blind
+
+    expect(resolveServerConfig("nightfall").config.map.reveal).toBe("explored");
+    // deadcoast keeps the generous default verbatim
+    expect(resolveServerConfig("deadcoast").config.map).toEqual(DEFAULT_CONFIG.map);
+  });
 });
 
 // =============================================================================
@@ -342,6 +366,16 @@ describe("clampConfig (client-side total clamp)", () => {
   it("never stores out-of-enum wipeSchedule", () => {
     const c = clampConfig({ session: { wipeSchedule: "hourly" } });
     expect(c.session.wipeSchedule).toBe(DEFAULT_CONFIG.session.wipeSchedule);
+  });
+
+  it("never stores out-of-enum map.acquire / map.reveal (LIVE-class)", () => {
+    expect(clampConfig({ map: { acquire: "buy" } }).map.acquire).toBe(DEFAULT_CONFIG.map.acquire);
+    expect(clampConfig({ map: { reveal: "xray" } }).map.reveal).toBe(DEFAULT_CONFIG.map.reveal);
+    // a valid partial is honored; the rest inherits the default
+    const c = clampConfig({ map: { reveal: "explored" } });
+    expect(c.map.reveal).toBe("explored");
+    expect(c.map.minimap).toBe(DEFAULT_CONFIG.map.minimap);
+    expect(c.map.acquire).toBe(DEFAULT_CONFIG.map.acquire);
   });
 
   it("the resolved-config from the server is what the client would store (round-trip)", () => {
@@ -473,5 +507,16 @@ describe("summarizeRules", () => {
 
   it("nightfall (fixedHour 1) reports night=always", () => {
     expect(summarizeRules(resolveServerConfig("nightfall").config).night).toBe("always");
+  });
+
+  it("map badge bands off > fog > find > full", () => {
+    expect(summarizeRules(DEFAULT_CONFIG).map).toBe("full");
+    // ironcoast = loot + explored → fog dominates find
+    expect(summarizeRules(resolveServerConfig("ironcoast").config).map).toBe("fog");
+    expect(summarizeRules(resolveServerConfig("warpath").config).map).toBe("fog");
+    expect(summarizeRules(clampConfig({ map: { acquire: "loot", reveal: "full" } })).map).toBe("find");
+    expect(
+      summarizeRules(clampConfig({ map: { minimap: false, acquire: "none", reveal: "full" } })).map,
+    ).toBe("off");
   });
 });

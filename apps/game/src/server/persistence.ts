@@ -23,6 +23,7 @@
 
 import { LEADERBOARD_MAX } from "@worldspring/shared/constants";
 import type { WipeSchedule } from "@worldspring/shared/config";
+import { encodeExplored } from "@worldspring/shared/fog";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, LeaderboardEntry, PlayerCore, Vitals } from "@worldspring/shared/protocol";
 import type {
@@ -55,6 +56,9 @@ export interface CharacterState {
    * between savedAt and the current clock is offline time — stats.bornAt is
    * shifted forward by it so survivedS never credits time spent logged out. */
   savedAt: number;
+  /** doc 12 — base64 fog-of-war explored bitset. ADDITIVE/optional: pre-feature
+   * rows lack it and load as all-unexplored, so SCHEMA_VERSION stays 2. */
+  explored?: string;
 }
 
 /** A characters-table row, decoded. */
@@ -479,6 +483,7 @@ export function saveCharacter(sql: SqlStorage, player: ServerPlayer, gameTime: n
     selectedSlot: player.selectedSlot,
     stats: player.stats,
     savedAt: gameTime,
+    explored: encodeExplored(player.explored),
   };
   sql.exec(
     `INSERT INTO characters (token_hash, id, name, alive, state_json, pending_recap_json, updated_at)

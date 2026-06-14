@@ -148,6 +148,25 @@ is non-null at mount. You may read it synchronously and keep a local ref).
 
 UI never touches three.js. It calls net action helpers and reads the store.
 
+### MAP & CARTOGRAPHY (`src/client/render/map/` + `src/client/ui/`, doc 12)
+
+A 2D-canvas map (never three.js) drawn from the world the client already rebuilds
+from the seed. The shared, render-target-agnostic core is `packages/shared/src/map/`
+(`projection` north-up +Z-up, `palette` lifted from `Terrain.tsx`, `raster`); it
+feeds both an offline `pnpm --filter @worldspring/shared map:render` and the in-game
+`mapBake.ts` (bake the biome+POI base once per seed to a detached canvas). `<Minimap>`
+(corner, gated on `cfg.map.minimap`) and `<MapPanel>` (full screen, opened by the
+`map` item, gated on `cfg.map.acquire`) mount in `App.tsx` and redraw off the rAF
+frame on a timer. The `map` ItemType is **additive** (no `PROTOCOL_VERSION` bump —
+all `ITEM_DEFS[type]` reads use `?? UNKNOWN_DEF`). `ServerConfig.map` is LIVE-class
+(never in `worldFingerprintOf`). `map.reveal === "explored"` engages
+**server-authoritative fog-of-war**: a per-character `ExploredGrid`
+(`@worldspring/shared/fog`) is marked from the authoritative position each tick,
+persisted as an additive `CharacterState.explored` base64 field (SCHEMA stays 2),
+shipped as additive-optional `welcome.explored` (full set) + `snap.fog` (per-tick
+delta) — both no-bump. Honest scope: the public seed means fog cannot hide static
+terrain, only persist a server-blessed explored set.
+
 ### SERVER (`src/server/`)
 
 - `GameRoom.ts` → `export class GameRoom extends DurableObject` —

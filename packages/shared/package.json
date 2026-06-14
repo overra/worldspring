@@ -6,7 +6,11 @@
   "exports": {
     "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
+    "./fog": "./src/fog.ts",
     "./items": "./src/items.ts",
+    "./map/projection": "./src/map/projection.ts",
+    "./map/palette": "./src/map/palette.ts",
+    "./map/raster": "./src/map/raster.ts",
     "./math": "./src/math.ts",
     "./movement": "./src/movement.ts",
     "./protocol": "./src/protocol.ts",
@@ -19,6 +23,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "fingerprint": "node scripts/fingerprint.mjs src",
+    "map:render": "node scripts/map-render.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

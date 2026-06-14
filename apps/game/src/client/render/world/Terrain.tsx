@@ -6,21 +6,24 @@ import type { ReactElement } from "react";
 import * as THREE from "three";
 import { WORLD_SIZE } from "@worldspring/shared/constants";
 import { clamp } from "@worldspring/shared/math";
+import { MAP_BIOME, MAP_PALETTE } from "@worldspring/shared/map/palette";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 
 const SEGMENTS = 200;
 
-// Palette (THREE.Color converts hex from sRGB to working space automatically).
-const SAND = new THREE.Color("#c2b280");
-const GRASS_LOW = new THREE.Color("#5a7247");
-const GRASS_HIGH = new THREE.Color("#49593b");
-const ROCK = new THREE.Color("#7d7f78");
+// Palette literals + thresholds are the SHARED source (packages/shared/src/map/
+// palette.ts) so the 3D terrain and the top-down map never drift (doc 12 M1).
+// THREE.Color converts the same hex from sRGB to working space automatically.
+const SAND = new THREE.Color(MAP_PALETTE.sand);
+const GRASS_LOW = new THREE.Color(MAP_PALETTE.grassLow);
+const GRASS_HIGH = new THREE.Color(MAP_PALETTE.grassHigh);
+const ROCK = new THREE.Color(MAP_PALETTE.rock);
 
-const SAND_MAX_H = 1.5; // sand below here, blending out just above
-const ROCK_HEIGHT = 14; // high altitude turns to bare rock
-const ROCK_SLOPE_START = 0.32; // gradient (m/m) where rock starts blending in
-const ROCK_SLOPE_FULL = 0.52;
+const SAND_MAX_H = MAP_BIOME.sandMaxH; // sand below here, blending out just above
+const ROCK_HEIGHT = MAP_BIOME.rockHeight; // high altitude turns to bare rock
+const ROCK_SLOPE_START = MAP_BIOME.rockSlopeStart; // gradient (m/m) where rock starts blending in
+const ROCK_SLOPE_FULL = MAP_BIOME.rockSlopeFull;
 
 function buildTerrainGeometry(heightAt: (x: number, z: number) => number): THREE.BufferGeometry {
   const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, SEGMENTS, SEGMENTS);

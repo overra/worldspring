@@ -2,6 +2,8 @@ name: CI
 
 # Gate every PR (and main) on the checks CodeRabbit can't run: real typecheck,
 # the test suites, a full build, and the worldgen determinism fingerprint.
+# On a push to main (a merged PR), `deploy-prod` then ships the game Worker to
+# production — but only after `verify` passes.
 on:
   pull_request:
   push:
@@ -12,9 +14,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Least-privilege: this job only reads the checkout — it uses no secrets and
-# writes nothing back to the repo. Pin the token to read-only rather than
-# inheriting the repo default.
+# Least-privilege: `verify` only reads the checkout and uses no secrets (so it
+# runs on fork PRs); `deploy-prod` adds the Cloudflare secrets but runs ONLY on
+# push-to-main, never on PRs/forks. Neither writes back to the repo, so pin the
+# token to read-only rather than inheriting the repo default.
 permissions:
   contents: read
 
@@ -77,3 +80,72 @@ jobs:
             exit 1
           fi
           echo "no TESTBED in wrangler config ✓"
+
+  deploy-prod:
+    # Production deploy of the game Worker. Gated on `verify` and run ONLY on a
+    # push to main (a merged PR) — the `if` skips PRs, and forks never produce a
+    # push event, so the Cloudflare secrets are never exposed to untrusted code.
+    # Mirrors preview.yml's build + wrangler-action, but with NO --name (deploys
+    # the prod `worldspring` Worker named in wrangler.jsonc) and NO --var TESTBED
+    # (the official deploy is var-less so the doc-10 testbed never reaches prod;
+    # keep_vars in wrangler.jsonc preserves an operator-set GAME_CONFIG across
+    # deploys). The top-of-file concurrency cancels a superseded in-flight run,
+    # so a burst of merges only ships the latest main. Web/prober are NOT auto-
+    # deployed (no automation today — `pnpm deploy:web` / `deploy:prober` manual).
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      # No secret → skip cleanly (green), so this workflow doesn't fail before the
+      # token is configured (matches preview.yml's gate).
+      - name: Check for Cloudflare secret
+        id: gate
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping prod deploy (see .github/workflows/README.md)."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.ok == 'true'
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - if: steps.gate.outputs.ok == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install
+        if: steps.gate.outputs.ok == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # Emits apps/game/dist/worldspring/{index.js,wrangler.json} + dist/client.
+      - name: Build game
+        if: steps.gate.outputs.ok == 'true'
+        run: pnpm --filter @worldspring/game build
+
+      - name: Deploy production worker
+        id: deploy
+        if: steps.gate.outputs.ok == 'true'
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.99.0"
+          workingDirectory: apps/game
+          command: deploy -c dist/worldspring/wrangler.json
+
+      - name: Summary
+        if: steps.gate.outputs.ok == 'true'
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "🚀 Deployed the **worldspring** game Worker to production." >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$URL" ]; then echo "URL: $URL" >> "$GITHUB_STEP_SUMMARY"; fi

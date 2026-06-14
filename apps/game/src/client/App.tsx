@@ -7,6 +7,10 @@ import { EscapeMenu } from "./ui/EscapeMenu";
 import { DebugOverlay } from "./ui/DebugOverlay";
 import { QaPanel } from "./ui/QaPanel";
 import { TouchControls } from "./ui/TouchControls";
+// doc 12 — DOM/2D-canvas map overlays (no three.js), so they mount HERE, not in
+// GameCanvas. Each self-gates: Minimap on cfg.map.minimap, MapPanel on mapOpen.
+import { MapPanel } from "./ui/MapPanel";
+import { Minimap } from "./ui/Minimap";
 
 // Lazy boundary: GameCanvas.tsx owns the <Canvas> subtree and every three.js /
 // R3F / postprocessing import, so the menu shell chunk stays tiny. The canvas
@@ -34,11 +38,41 @@ export function App(): React.ReactElement {
         <GameCanvas />
       </Suspense>
       <HUD />
+      <Minimap />
+      <MapPanel />
       <TouchControls />
       <DebugOverlay />
       <QaPanel />
       <EscapeMenu />
       {phase === "dead" && <DeathScreen />}
+      {phase === "reconnecting" && <ReconnectOverlay />}
+    </div>
+  );
+}
+
+/** Shown over the frozen last frame while the client auto-reconnects after an
+ * unexpected socket drop (e.g. the server DO instance was replaced under load).
+ * Distinct from a real disconnect, which returns to the main menu. */
+function ReconnectOverlay(): React.ReactElement {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: "fixed",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.55)",
+        color: "#e8e8e8",
+        font: "600 18px system-ui, sans-serif",
+        letterSpacing: "0.04em",
+        pointerEvents: "none",
+        zIndex: 50,
+      }}
+    >
+      Reconnecting…
     </div>
   );
 }

@@ -46,12 +46,24 @@ export function InputController(): null {
         return;
       }
 
+      if (e.code === "KeyM") {
+        if (e.repeat) return;
+        if (ui.menuOpen) return;
+        // Possession gates OPENING the map (doc 12: acquire decides who has one);
+        // closing is always allowed, so losing the item mid-view can't trap the
+        // panel open. Pointer release / re-lock ride the store subscription below.
+        if (!ui.mapOpen && !ui.inventory.some((s) => s?.type === "map")) return;
+        ui.setMapOpen(!ui.mapOpen);
+        return;
+      }
+
       // Movement only registers while in mouselook (or touch mode, where
       // input flows without pointer lock) — this matches the NetSystem gate
       // exactly, so the local rig never animates a walk the prediction isn't
       // actually running.
       const canMove =
         !ui.invOpen &&
+        !ui.mapOpen &&
         !ui.menuOpen &&
         (inputState.pointerLocked || inputState.touchMode);
       switch (e.code) {
@@ -99,6 +111,12 @@ export function InputController(): null {
           return;
         }
         case "KeyF":
+          // A held map opens the panel client-side (doc 12) — the item is a
+          // "tool" so the server `use` is a no-op anyway; skip the round-trip.
+          if (ui.inventory[ui.selectedSlot]?.type === "map") {
+            ui.setMapOpen(!ui.mapOpen);
+            return;
+          }
           // Use the selected hotbar slot (canteen fill/boil/drink, fishing rod,
           // cooking raw food near fire). Same message the Tab panel USE button
           // sends — zero wire change. Edge-triggered only (e.repeat already
@@ -191,7 +209,7 @@ export function InputController(): null {
       // before exitLock runs.
       if (!wasLocked || inputState.touchMode) return;
       const ui = useUIStore.getState();
-      if (ui.phase !== "playing" || ui.invOpen || ui.menuOpen || ui.chatOpen) return;
+      if (ui.phase !== "playing" || ui.invOpen || ui.mapOpen || ui.menuOpen || ui.chatOpen) return;
       ui.setMenuOpen(true);
     };
 
@@ -214,6 +232,11 @@ export function InputController(): null {
         clearMovementKeys();
         exitLock();
       }
+      // The full map needs clicks (close-on-backdrop) — release like inventory.
+      if (state.mapOpen && !prev.mapOpen) {
+        clearMovementKeys();
+        exitLock();
+      }
       // Chat opening releases the mouse the same way: the input needs focus
       // and clicks, and a locked pointer would swallow both.
       if (state.chatOpen && !prev.chatOpen) {
@@ -228,12 +251,14 @@ export function InputController(): null {
       // allow the request. If Chrome still refuses (≈1.5s cooldown after
       // Esc), requestLock's catch swallows it and a canvas click re-locks.
       const invClosed = !state.invOpen && prev.invOpen;
+      const mapClosed = !state.mapOpen && prev.mapOpen;
       const menuClosed = !state.menuOpen && prev.menuOpen;
       const chatClosed = !state.chatOpen && prev.chatOpen;
       if (
-        (invClosed || menuClosed || chatClosed) &&
+        (invClosed || mapClosed || menuClosed || chatClosed) &&
         state.phase === "playing" &&
         !state.invOpen &&
+        !state.mapOpen &&
         !state.menuOpen &&
         !state.chatOpen &&
         !inputState.touchMode
