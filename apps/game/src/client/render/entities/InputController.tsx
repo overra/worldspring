@@ -49,9 +49,10 @@ export function InputController(): null {
       if (e.code === "KeyM") {
         if (e.repeat) return;
         if (ui.menuOpen) return;
-        // The full map requires holding the map item (doc 12: acquire decides who
-        // has one). Pointer release / re-lock ride the store subscription below.
-        if (!ui.inventory.some((s) => s?.type === "map")) return;
+        // Possession gates OPENING the map (doc 12: acquire decides who has one);
+        // closing is always allowed, so losing the item mid-view can't trap the
+        // panel open. Pointer release / re-lock ride the store subscription below.
+        if (!ui.mapOpen && !ui.inventory.some((s) => s?.type === "map")) return;
         ui.setMapOpen(!ui.mapOpen);
         return;
       }
