@@ -33,7 +33,9 @@ import type { ItemStack, ItemType } from "./items";
  * it at runtime, so the comparison must keep compiling — and flip its
  * absent-proto handling — the instant this value bumps.
  */
-export const PROTOCOL_VERSION: number = 2;
+// doc 05 M2: new `craft` ClientMsg shape grows the wire vocabulary (doc 03's
+// bump rule covers any ClientMsg/ServerMsg shape change), so 2 → 3.
+export const PROTOCOL_VERSION: number = 3;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -98,6 +100,8 @@ export type ClientMsg =
    * LAG_COMP_MAX_REWIND_S — omitted/invalid means "no rewind". */
   | { t: "attack"; at?: number } // server resolves melee vs ranged
   | { t: "use"; slot: number }
+  /** Craft RECIPES[recipe] — server validates inputs/tool/station (doc 05 M2). */
+  | { t: "craft"; recipe: number }
   | { t: "equip"; slot: number }
   | { t: "pickup"; id: number }
   | { t: "drop"; slot: number }
@@ -378,6 +382,9 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       return { t: "attack", at: isFiniteNum(m.at) ? m.at : undefined };
     case "use":
       return isFiniteNum(m.slot) ? { t: "use", slot: m.slot | 0 } : null;
+    case "craft":
+      // recipe is a RECIPES index; range/identity checked in craftItem.
+      return isFiniteNum(m.recipe) ? { t: "craft", recipe: m.recipe | 0 } : null;
     case "equip":
       return isFiniteNum(m.slot) ? { t: "equip", slot: m.slot | 0 } : null;
     case "pickup":

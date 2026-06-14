@@ -277,6 +277,98 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   map: { type: "map", name: "Island Map", kind: "tool", stack: 1, color: "#d8c9a0", power: 0 },
 };
 
+// --- Crafting (doc 05 M2) ---
+
+/** Crafting station gate. Campfire is the first (and only) station; the field
+ * is built so workbenches/etc. slot in later without a wire change. */
+export type CraftStation = "campfire";
+
+export interface CraftRecipe {
+  /** Display name of the recipe's output (the crafted thing). */
+  name: string;
+  /** Inputs CONSUMED from the inventory (summed across stacks). */
+  inputs: ReadonlyArray<{ type: ItemType; count: number }>;
+  /** Granted on success; overflow drops at the player's feet. */
+  output: { type: ItemType; count: number };
+  /** Must be present anywhere in the inventory; NEVER consumed. */
+  tool?: ItemType;
+  /** Player must be within the station's radius (campfire = FIRE_WARMTH_RADIUS). */
+  station?: CraftStation;
+}
+
+/**
+ * Flat recipe table. The ARRAY INDEX is the stable wire id sent in
+ * `{t:"craft", recipe}` — APPEND-ONLY, never reorder or delete a row (doc 05
+ * §2). The client lists these in the Tab panel; the server is the authority on
+ * inputs/tool/station. Every type referenced here exists in ITEM_DEFS.
+ */
+export const RECIPES: readonly CraftRecipe[] = [
+  // 0
+  { name: "Bandage", inputs: [{ type: "cloth", count: 2 }], output: { type: "bandage", count: 2 } },
+  // 1
+  { name: "Rope", inputs: [{ type: "cloth", count: 3 }], output: { type: "rope", count: 1 } },
+  // 2
+  {
+    name: "Torch",
+    inputs: [
+      { type: "wood", count: 1 },
+      { type: "cloth", count: 1 },
+    ],
+    output: { type: "torch", count: 1 },
+    station: "campfire",
+  },
+  // 3
+  {
+    name: "Campfire Kit",
+    inputs: [
+      { type: "wood", count: 3 },
+      { type: "cloth", count: 1 },
+    ],
+    output: { type: "campfire_kit", count: 1 },
+  },
+  // 4
+  {
+    name: "Hunting Knife",
+    inputs: [
+      { type: "scrap", count: 2 },
+      { type: "wood", count: 1 },
+    ],
+    output: { type: "knife", count: 1 },
+  },
+  // 5
+  {
+    name: "Fishing Rod",
+    inputs: [
+      { type: "wood", count: 2 },
+      { type: "rope", count: 1 },
+      { type: "scrap", count: 1 },
+    ],
+    output: { type: "fishing_rod", count: 1 },
+    tool: "knife",
+  },
+  // 6
+  {
+    name: "Padded Jacket",
+    inputs: [
+      { type: "cloth", count: 4 },
+      { type: "deer_pelt", count: 2 },
+      { type: "rope", count: 1 },
+    ],
+    output: { type: "padded_jacket", count: 1 },
+    tool: "knife",
+  },
+  // 7
+  {
+    name: "Canvas Backpack",
+    inputs: [
+      { type: "cloth", count: 6 },
+      { type: "rope", count: 2 },
+    ],
+    output: { type: "backpack", count: 1 },
+    tool: "knife",
+  },
+];
+
 /** Airdrop crates roll this many stacks from this table. */
 export const AIRDROP_ROLLS = 5;
 export const AIRDROP_TABLE: LootTableEntry[] = [

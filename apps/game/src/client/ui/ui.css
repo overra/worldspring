@@ -474,6 +474,61 @@
   color: var(--ui-dim);
 }
 
+/* ----------------------------- crafting ------------------------------- */
+
+.inv-subtitle {
+  margin-top: 14px;
+}
+
+.craft-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  min-height: 32px;
+}
+
+.craft-row:last-of-type {
+  border-bottom: none;
+}
+
+.craft-out {
+  width: 118px;
+  flex: none;
+  color: var(--ui-text);
+}
+
+.craft-inputs {
+  flex: 1;
+  font-size: 11px;
+  color: var(--ui-dim);
+}
+
+.craft-hint {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ui-accent);
+  opacity: 0.85;
+}
+
+.craft-row--disabled {
+  opacity: 0.45;
+}
+
+.inv-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: var(--ui-border);
+  background: transparent;
+}
+
+.inv-btn:disabled:hover {
+  border-color: var(--ui-border);
+  background: transparent;
+}
+
 /* ============================ Death screen ============================= */
 
 .death-root {
