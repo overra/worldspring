@@ -431,6 +431,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   ui.setRecap(msg.recap);
   ui.setInventory(msg.inv, msg.selected);
   ui.setVitals(vitalsOf(msg.you));
+  ui.setAction(msg.you.action); // doc 11 M2: cast-bar progress (render-only)
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.you.hp > 0) {
     ui.setPhase("playing");
@@ -465,6 +466,7 @@ function onSnap(msg: SnapMsg): void {
   if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
 
   ui.setVitals(vitalsOf(msg.you));
+  ui.setAction(msg.you.action); // doc 11 M2: cast-bar progress (render-only)
   ui.setPlayerCount(msg.count);
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.events.length > 0) {

@@ -320,6 +320,28 @@
   white-space: nowrap;
 }
 
+/* --- cast bar for the channeled (timed) action (doc 11 M2) --- */
+
+.hud-channel {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 60px);
+  transform: translateX(-50%);
+  width: 280px;
+  padding: 5px 10px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+}
+
+.hud-channel .bar-label {
+  width: auto;
+  white-space: nowrap;
+}
+
+.bar-fill--channel {
+  background: var(--ui-accent);
+}
+
 .hud-prompt-key {
   color: var(--ui-accent);
   font-family: var(--ui-mono);

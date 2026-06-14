@@ -64,7 +64,10 @@ To be built (one owner each):
   (`INPUT_SEND_MS`), reconciliation against `snap.ack`/`snap.you`,
   interpolation of remote entities into `clientWorld` (delay
   `INTERP_DELAY_MS`), prompt computation (`promptLootId` + store prompt),
-  ping measurement.
+  ping measurement. `snap.you.action` (doc 11 M2 — the in-progress
+  `{kind: ChannelKind; remainingS; totalS}` cast) is **render-only**: `connection.ts`
+  pushes it to the store (`setAction`) for the HUD cast bar, and reconcile/prediction
+  ignore it entirely (it is not a predicted field).
 - `connection.ts` →
   - `export function connect(name: string): void` — opens
     `wss?://${location.host}/ws`, sends `join`, drives `useUIStore` phase.
@@ -196,7 +199,13 @@ terrain, only persist a server-blessed explored set.
   campfire_kit places fire `CAMPFIRE_PLACE_DIST` in front; `attack` resolves
   fists/melee (`inMeleeCone`) or pistol (consumes `ammo_9mm` from inventory,
   `rayVerticalCylinder` vs zombies/players, `world.raycastStatics` occlusion,
-  closest hit wins, `shot`/`hit` events).
+  closest hit wins, `shot`/`hit` events). doc 11: `{t:"use"}` no longer resolves
+  instantly — it now STARTS a server-driven channeled (timed) action that ticks
+  in game-time and applies its effect on completion, interrupting with no effect
+  on move/damage/slot-swap/death (cook also on leaving fire range). Cancel is
+  server-driven (no client cancel verb). Progress rides `snap.you.action` for the
+  HUD cast bar; this `{t:"use"}` semantics change is why `PROTOCOL_VERSION` bumped
+  to 4 (doc 11 M2).
 - Time: `time += TICK_MS/1000` per tick; hour via `gameHours(...)` from
   protocol helpers; ambient cold at night per constants.
 
