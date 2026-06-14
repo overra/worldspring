@@ -5,6 +5,12 @@
 // heightAt sampling runs here, once, off the server tick and off the rAF frame.
 
 import { WATER_LEVEL, WORLD_SIZE } from "@worldspring/shared/constants";
+import {
+  FOG_CELL_M,
+  FOG_REVEAL_RADIUS_M,
+  hasExploredIndex,
+  type ExploredGrid,
+} from "@worldspring/shared/fog";
 import { makeProjection, type MapProjection } from "@worldspring/shared/map/projection";
 import { mapPOIs, rasterizeBase, type MapShape } from "@worldspring/shared/map/raster";
 import { yawToDir } from "@worldspring/shared/math";
@@ -163,6 +169,34 @@ export function blitWindow(
 
 /** A world (x,z) -> destination canvas pixel mapping. */
 export type ToPx = (x: number, z: number) => { x: number; y: number };
+
+/**
+ * doc 12 M6 — darken every unexplored cell (the fog) over the already-drawn
+ * base. Call BETWEEN the base blit and drawDynamicLayer, so terrain + POI labels
+ * you haven't found are hidden but live entities + the you-marker stay visible.
+ * The disk around the player is always kept clear (the server marks it each tick,
+ * but this also smooths interpolation lag). Cheap: dim^2 fillRects (625 standard).
+ */
+export function drawFog(ctx: Ctx2D, g: ExploredGrid, toPx: ToPx): void {
+  const half = g.size / 2;
+  const me = clientWorld.me;
+  const r2 = FOG_REVEAL_RADIUS_M * FOG_REVEAL_RADIUS_M;
+  ctx.fillStyle = "rgba(8,11,15,0.86)";
+  for (let cz = 0; cz < g.dim; cz++) {
+    for (let cx = 0; cx < g.dim; cx++) {
+      if (hasExploredIndex(g, cz * g.dim + cx)) continue;
+      const wcx = (cx + 0.5) * FOG_CELL_M - half;
+      const wcz = (cz + 0.5) * FOG_CELL_M - half;
+      const dx = wcx - me.x;
+      const dz = wcz - me.z;
+      if (dx * dx + dz * dz <= r2) continue; // keep the player's surroundings lit
+      // +Z is image-up: the cell's top-left in image space is (minX, maxZ).
+      const tl = toPx(cx * FOG_CELL_M - half, (cz + 1) * FOG_CELL_M - half);
+      const br = toPx((cx + 1) * FOG_CELL_M - half, cz * FOG_CELL_M - half);
+      ctx.fillRect(tl.x, tl.y, br.x - tl.x + 1, br.y - tl.y + 1); // +1 px: no seams
+    }
+  }
+}
 
 /**
  * Draw the live overlay (airdrops island-wide, other players, zombies, and the

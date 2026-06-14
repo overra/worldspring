@@ -6,8 +6,10 @@
 import {
   CHAT_MAX_LENGTH,
   MAX_NAME_LENGTH,
+  WORLD_SIZE,
 } from "@worldspring/shared/constants";
 import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
+import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
@@ -316,6 +318,11 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // it but does not yet drive runtime behavior off it (clock swap deferred to
   // M4 to keep this PR byte-identical).
   clientWorld.config = clampConfig(msg.config);
+  // doc 12 — mirror the server-blessed explored set on fog servers (else null,
+  // and the map renders full). createWorld + the map bake both use WORLD_SIZE,
+  // so the grid's cell indices line up with the snapshot deltas below.
+  clientWorld.explored =
+    clientWorld.config.map.reveal === "explored" ? decodeExplored(WORLD_SIZE, msg.explored) : null;
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;
@@ -359,6 +366,9 @@ function onSnap(msg: SnapMsg): void {
   }
 
   pushSnap(msg, now);
+
+  // doc 12 — fold in any newly-explored cells the server revealed this tick.
+  if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
 
   ui.setVitals(vitalsOf(msg.you));
   ui.setPlayerCount(msg.count);

@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
-import { drawDynamicLayer, getBakedMap } from "@/client/render/map/mapBake";
+import { drawDynamicLayer, drawFog, getBakedMap } from "@/client/render/map/mapBake";
 import "./map.css";
 
 /** Panel drawing-buffer resolution (square); CSS scales it to the viewport. */
@@ -30,14 +30,13 @@ export function MapPanel(): ReactElement | null {
       if (!baked) return;
       ctx.drawImage(baked.base, 0, 0, baked.px, baked.px, 0, 0, R, R);
       const k = R / baked.px;
-      drawDynamicLayer(
-        ctx,
-        (x, z) => {
-          const c = baked.proj.worldToImage(x, z);
-          return { x: c.ix * k, y: c.iy * k };
-        },
-        1.4,
-      );
+      const toPx = (x: number, z: number): { x: number; y: number } => {
+        const c = baked.proj.worldToImage(x, z);
+        return { x: c.ix * k, y: c.iy * k };
+      };
+      const explored = clientWorld.explored;
+      if (clientWorld.config.map.reveal === "explored" && explored) drawFog(ctx, explored, toPx);
+      drawDynamicLayer(ctx, toPx, 1.4);
     };
 
     draw();
@@ -55,7 +54,7 @@ export function MapPanel(): ReactElement | null {
     >
       <div className="map-panel">
         <canvas ref={canvasRef} width={PANEL_PX} height={PANEL_PX} className="map-canvas" />
-        <div className="map-hint">{clientWorld.config.map.reveal === "explored" ? "FOG MODE (full reveal until M6)" : "ISLAND MAP"} · M or click outside to close</div>
+        <div className="map-hint">{clientWorld.config.map.reveal === "explored" ? "EXPLORED — fog of war" : "ISLAND MAP"} · M or click outside to close</div>
       </div>
     </div>
   );

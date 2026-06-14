@@ -37,6 +37,7 @@ import {
   TICK_MS,
   WORLD_SAVE_INTERVAL_S,
 } from "@worldspring/shared/constants";
+import { encodeExplored } from "@worldspring/shared/fog";
 import { distSq2D } from "@worldspring/shared/math";
 import {
   SERVER_INFO_SCHEMA_VERSION,
@@ -89,6 +90,7 @@ import {
   createPlayer,
   dropSlot,
   equipSlot,
+  markExploration,
   pickupLoot,
   queueInput,
   respawnPlayer,
@@ -792,6 +794,9 @@ export class GameRoom extends DurableObject<Env> {
       // Additive optional field (doc 04 §4): the whole resolved config. The
       // client clamps it (clampConfig) and never stores the raw object.
       config: this.config,
+      // doc 12 — the full explored set, only on fog servers (additive optional).
+      explored:
+        this.config.map.reveal === "explored" ? encodeExplored(player.explored) : undefined,
     });
   }
 
@@ -942,6 +947,9 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     applyQueuedInputs(game, dt);
+    // Fog-of-war: reveal cells around each player's just-updated position
+    // (no-op unless map.reveal === "explored").
+    markExploration(game);
     // Attacks resolve after this tick's movement so aim is current; the
     // client-reported aim time rides along for target rewind (lag comp).
     for (const player of game.players.values()) {
@@ -993,6 +1001,9 @@ export class GameRoom extends DurableObject<Env> {
       const player = game.players.get(id);
       if (!player) continue;
       this.send(ws, this.buildSnapshot(game, player, count));
+      // The snapshot carried this tick's newly-explored cells (by reference, but
+      // send() already serialized them) — reset for the next tick.
+      player.fogDelta.length = 0;
     }
   }
 
@@ -1128,6 +1139,8 @@ export class GameRoom extends DurableObject<Env> {
       weather: round2(game.weather),
       events,
       count,
+      // doc 12 — newly-explored cells this tick; omitted when empty (fog only).
+      fog: player.fogDelta.length > 0 ? player.fogDelta : undefined,
     };
   }
 

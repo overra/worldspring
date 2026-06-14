@@ -20,7 +20,15 @@ import {
   TEMP_NORMAL,
   WATER_LEVEL,
   WATER_SAMPLE_DIST,
+  WORLD_SIZE,
 } from "@worldspring/shared/constants";
+import {
+  createExploredGrid,
+  decodeExplored,
+  exploredCellAt,
+  FOG_REVEAL_RADIUS_M,
+  markExploredDisk,
+} from "@worldspring/shared/fog";
 import { ITEM_DEFS, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import { clamp, distSq2D, yawToDir } from "@worldspring/shared/math";
 import { stepPlayer } from "@worldspring/shared/movement";
@@ -147,6 +155,9 @@ export function createPlayer(
     movedThisTick: false,
     sprintedThisTick: false,
     fishCooldownT: 0,
+    explored: createExploredGrid(WORLD_SIZE),
+    fogDelta: [],
+    lastFogCell: -1,
   };
   state.players.set(id, player);
   return player;
@@ -195,6 +206,10 @@ export function restorePlayer(
     movedThisTick: false,
     sprintedThisTick: false,
     fishCooldownT: 0,
+    // Per-token fog: explored knowledge accrues across lives (doc 12 Open Q4).
+    explored: decodeExplored(WORLD_SIZE, saved.explored),
+    fogDelta: [],
+    lastFogCell: -1,
   };
   state.players.set(id, player);
   return player;
@@ -224,7 +239,29 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.attackAnimT = 0;
   player.fishCooldownT = 0;
   player.sprinting = false;
+  // Keep the explored set (per-token), but re-stamp from the new spawn position.
+  player.lastFogCell = -1;
   sendInventory(state, player);
+}
+
+/**
+ * doc 12 — server-authoritative fog-of-war. For each alive, online player on a
+ * fog server, reveal a disk around their authoritative (unrounded) position
+ * whenever they cross into a new cell, accumulating the newly-lit cells in
+ * fogDelta (shipped + cleared by the next snapshot). Pure XZ arithmetic — never
+ * touches heightAt, so it stays off the tick's hot path. No-op on full-reveal
+ * servers (the explored set is unused there).
+ */
+export function markExploration(state: GameState): void {
+  if (state.config.map.reveal !== "explored") return;
+  for (const player of state.players.values()) {
+    if (player.offline || !player.alive) continue;
+    const cell = exploredCellAt(player.explored, player.core.x, player.core.z);
+    if (cell === player.lastFogCell) continue;
+    player.lastFogCell = cell;
+    const revealed = markExploredDisk(player.explored, player.core.x, player.core.z, FOG_REVEAL_RADIUS_M);
+    if (revealed.length > 0) player.fogDelta.push(...revealed);
+  }
 }
 
 /** Enqueue input cmds, dropping the oldest beyond the queue cap. */
