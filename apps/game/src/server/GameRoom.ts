@@ -581,7 +581,7 @@ export class GameRoom extends DurableObject<Env> {
       );
       this.config.world.seed = world.seed;
     }
-    const game = createGameState(world, this.config);
+    const game = createGameState(world, this.config, this.testbed);
     // loadWorld hydrates loot/corpses/fires/respawn timers and restores
     // game.time/tick from meta; a fresh database stocks the world instead.
     if (!loadWorld(this.ctx.storage.sql, game)) stockInitialLoot(game);

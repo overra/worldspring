@@ -10,10 +10,13 @@ import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { MAX_PORTALS } from "@worldspring/shared/constants";
 import type { Realm } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 
-const POOL_SIZE = 16;
+// Match the server's world-wide cap so the client never silently hides a
+// portal the server is sending.
+const POOL_SIZE = MAX_PORTALS;
 
 // Archway dimensions: a ~2.9m doorway you walk through. OW = opening half-width
 // and the arch radius; PH = straight pillar height before the arch springs.

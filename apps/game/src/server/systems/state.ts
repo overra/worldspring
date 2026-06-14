@@ -256,6 +256,9 @@ export interface GameState {
   /** Resolved server config (deploy-time rules). Read by systems at their point
    * of use; the WIPE-class world fields here match `world` by construction. */
   config: ServerConfig;
+  /** Preview-only testbed switch (env.TESTBED). Gates testing-only aids like the
+   * red-portal spawn grant; false in prod. */
+  testbed: boolean;
   /** Game time in seconds since room boot. */
   time: number;
   tick: number;
@@ -294,10 +297,12 @@ export interface GameState {
 export function createGameState(
   world: World,
   config: ServerConfig,
+  testbed = false,
 ): GameState {
   return {
     world,
     config,
+    testbed,
     time: 0,
     tick: 0,
     players: new Map(),

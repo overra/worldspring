@@ -33,6 +33,7 @@ import type {
   LootEntity,
   LootRespawnTimer,
   PlayerStats,
+  Portal,
   ServerPlayer,
 } from "./systems/state";
 
@@ -305,6 +306,7 @@ interface WorldSnapshot {
   loot: LootEntity[];
   corpses: Corpse[];
   fires: Campfire[];
+  portals: Portal[];
   lootRespawns: LootRespawnTimer[];
   drops: Airdrop[];
   time: number;
@@ -329,6 +331,7 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     loot: [...game.loot.values()],
     corpses: [...game.corpses.values()],
     fires: game.fires,
+    portals: game.portals,
     lootRespawns: game.lootRespawns,
     drops: [...game.drops.values()],
     time: game.time,
@@ -381,7 +384,7 @@ function hasNumericId(v: unknown): v is { id: number } {
 function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops"] as const) {
+  for (const key of ["loot", "corpses", "fires", "portals", "lootRespawns", "drops"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
@@ -430,6 +433,11 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     if (!hasNumericId(fire)) continue;
     game.fires.push(fire);
     maxId = Math.max(maxId, fire.id);
+  }
+  for (const portal of snapshot.portals) {
+    if (!hasNumericId(portal)) continue;
+    game.portals.push(portal);
+    maxId = Math.max(maxId, portal.id);
   }
   for (const timer of snapshot.lootRespawns) {
     if (timer && typeof timer === "object") game.lootRespawns.push(timer);

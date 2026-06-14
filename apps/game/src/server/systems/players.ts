@@ -105,19 +105,31 @@ function freshStats(state: GameState): PlayerStats {
   return { bornAt: state.time, kills: 0, zombieKills: 0, distanceM: 0 };
 }
 
-/**
- * EXPERIMENT-BRANCH TESTING AID (red portal feature): every fresh spawn carries
- * a couple of Red Ender Portals so the feature is playable with zero setup —
- * local `pnpm dev`, any deploy, with or without the preview testbed. Idempotent
- * (skips if a kit is already present) so it composes with testbed provisioning
- * and with keep-inventory respawns. Remove this before a real merge.
- */
-function grantTestPortals(inventory: (ItemStack | null)[]): void {
-  if (inventory.some((stack) => stack?.type === "portal_kit")) return;
-  addToInventory(inventory, "portal_kit", 2);
+/** Build the inventory a brand-new player spawns with: a flashlight and a bandage. */
+function startingInventory(): (ItemStack | null)[] {
+  const inv = emptyInventory();
+  addToInventory(inv, "flashlight", 1);
+  addToInventory(inv, "bandage", 1);
+  return inv;
 }
 
-/** Spawn a brand-new player: random beach spawn, full vitals, empty inventory. */
+/**
+ * EXPERIMENT-BRANCH TESTING AID (red portal feature): on a preview/testbed
+ * deploy, make sure every spawn/restore/respawn carries Red Ender Portals so the
+ * feature is reliably testable even on resumed characters (which skip scenario
+ * provisioning). Gated behind state.testbed → a no-op in prod, so it never
+ * pollutes the normal loot/discovery flow. Idempotent (skips when a kit is
+ * already held), and if the inventory is full the kit drops at the player's
+ * feet rather than vanishing. Remove this before a real merge.
+ */
+function grantTestPortals(state: GameState, player: ServerPlayer): void {
+  if (!state.testbed) return;
+  if (player.inventory.some((stack) => stack?.type === "portal_kit")) return;
+  const leftover = addToInventory(player.inventory, "portal_kit", 2);
+  if (leftover > 0) dropAtFeet(state, player, "portal_kit", leftover);
+}
+
+/** Spawn a brand-new player: random beach spawn, full vitals, starting loadout. */
 export function createPlayer(
   state: GameState,
   id: string,
@@ -130,7 +142,7 @@ export function createPlayer(
     name,
     core: freshSpawnCore(state),
     vitals: { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL },
-    inventory: emptyInventory(),
+    inventory: startingInventory(),
     selectedSlot: 0,
     alive: true,
     offline: false,
@@ -152,7 +164,7 @@ export function createPlayer(
     realm: "overworld",
     portalArmed: true,
   };
-  grantTestPortals(player.inventory);
+  grantTestPortals(state, player);
   state.players.set(id, player);
   return player;
 }
@@ -203,7 +215,7 @@ export function restorePlayer(
     realm: "overworld",
     portalArmed: true,
   };
-  grantTestPortals(player.inventory); // top up if the resumed kit has room
+  grantTestPortals(state, player); // top up if the resumed kit has room
   state.players.set(id, player);
   return player;
 }
@@ -214,12 +226,12 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   player.vitals = { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL };
   // Keep-inventory (pvp.fullLoot=false): the corpse spawned empty (see
   // spawnPlayerCorpse), so the new life keeps the items held at death rather
-  // than starting empty. fullLoot (default) wipes to a fresh inventory.
+  // than starting empty. fullLoot (default) resets to the starting loadout.
   if (state.config.pvp.fullLoot) {
-    player.inventory = emptyInventory();
+    player.inventory = startingInventory();
     player.selectedSlot = 0;
   }
-  grantTestPortals(player.inventory); // keep the feature testable across respawns
+  grantTestPortals(state, player); // keep the feature testable across respawns
   player.alive = true;
   // A new life: stats restart here. The stale pending recap (if any) is
   // storage-side state — GameRoom calls saveCharacter right after respawn,
@@ -568,7 +580,9 @@ function placeRedPortal(state: GameState, player: ServerPlayer): void {
 export function stepPortals(state: GameState): void {
   const rSq = PORTAL_RADIUS * PORTAL_RADIUS;
   for (const player of state.players.values()) {
-    if (!player.alive) continue;
+    // Skip disconnected linger bodies: a logged-out body resting in a portal's
+    // radius must not auto-cross and resurface its owner in another realm.
+    if (!player.alive || player.offline) continue;
     let on: Portal | null = null;
     for (const portal of state.portals) {
       if (portal.realm !== player.realm) continue;
