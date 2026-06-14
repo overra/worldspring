@@ -21,6 +21,14 @@ export interface MapProjection {
 }
 
 export function makeProjection(size: number, px: number): MapProjection {
+  // Validate the public-API inputs: a zero/negative/NaN px would make mpp a
+  // div-by-zero or NaN and silently corrupt every coordinate downstream.
+  if (!Number.isFinite(size) || size <= 0) {
+    throw new RangeError(`makeProjection: size must be positive and finite (got ${size})`);
+  }
+  if (!Number.isInteger(px) || px <= 0) {
+    throw new RangeError(`makeProjection: px must be a positive integer (got ${px})`);
+  }
   const half = size / 2;
   const mpp = size / px;
   return {
