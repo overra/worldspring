@@ -15,6 +15,7 @@ import { Terrain } from "./render/world/Terrain";
 import { WaterPlane } from "./render/world/WaterPlane";
 import { Buildings } from "./render/world/Buildings";
 import { BuildingTrim } from "./render/world/BuildingTrim";
+import { Containers } from "./render/world/Containers";
 import { Trees } from "./render/world/Trees";
 import { Scatter } from "./render/world/Scatter";
 import { Grass } from "./render/world/Grass";
@@ -59,6 +60,7 @@ export function GameCanvas(): React.ReactElement {
       <WaterPlane />
       <Buildings />
       <BuildingTrim />
+      <Containers />
       <Trees />
       <Scatter />
       <Grass />
