@@ -1,0 +1,27 @@
+{
+  "name": "channel",
+  "provision": [
+    { "kind": "position", "zone": "coastal", "face": "ocean" },
+    { "kind": "fire", "atFeet": true },
+    {
+      "kind": "loadout",
+      "items": [
+        { "type": "raw_venison", "count": 3 },
+        { "type": "bandage", "count": 2 },
+        { "type": "beans", "count": 3 },
+        { "type": "water_bottle", "count": 2 }
+      ]
+    },
+    { "kind": "vitals", "hp": 50, "food": 50, "water": 50, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack", "item"] }
+  ],
+  "checklist": [
+    "Spawn at the coast with a lit campfire at your feet, holding raw venison, bandages, beans, and water bottles.",
+    "Stand IN the fire and use raw venison (F key, or the Tab USE button) — a ~3s cast runs, then it cooks to Cooked Venison with no HP loss.",
+    "Start the cook, then walk out of the fire before it finishes — the cast cancels with the notice 'Moved away from the fire' and the venison is NOT consumed.",
+    "Use raw venison while away from any fire — nothing happens except the notice 'Stand within 5m of a fire to cook it' (raw venison can no longer be eaten raw).",
+    "Use a bandage — a ~1.2s cast runs, then HP rises. Start it and immediately move — it cancels and the bandage is NOT consumed.",
+    "Eat beans / drink a water bottle — each is a short ~1.2s cast; food/water rise on completion, and moving mid-cast cancels with nothing consumed.",
+    "Note: there is no on-screen cast bar yet (that is the next milestone) — you feel the delay and see the inventory change only when the cast completes."
+  ]
+}

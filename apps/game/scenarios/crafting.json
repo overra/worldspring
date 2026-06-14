@@ -1,0 +1,31 @@
+{
+  "name": "crafting",
+  "provision": [
+    { "kind": "position", "zone": "coastal", "face": "ocean" },
+    { "kind": "fire", "atFeet": true },
+    {
+      "kind": "loadout",
+      "items": [
+        { "type": "cloth", "count": 8 },
+        { "type": "wood", "count": 8 },
+        { "type": "scrap", "count": 8 },
+        { "type": "rope", "count": 4 },
+        { "type": "deer_pelt", "count": 4 },
+        { "type": "knife", "count": 1 }
+      ]
+    },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack", "item"] }
+  ],
+  "checklist": [
+    "Spawn at the coast with a lit campfire at your feet, holding Cloth Scraps, Wood Branches, Scrap Metal, Rope, Deer Pelt, and a Hunting Knife.",
+    "Open the Tab inventory — a CRAFTING section lists all 8 recipes; rows you can't afford are greyed.",
+    "Craft Bandage (2x Cloth Scraps) — cloth drops by 2, you gain Bandage x2, notice 'crafted Bandage'.",
+    "Craft Rope (3x Cloth Scraps) — cloth drops by 3, gain Rope x1, notice 'crafted Rope'.",
+    "Craft Hunting Knife (2x Scrap Metal, 1x Wood Branches) — gain a second Hunting Knife.",
+    "Craft Fishing Rod (2x Wood, 1x Rope, 1x Scrap Metal; needs a Knife) — the three inputs are consumed but the Knife is NOT, and you gain Fishing Rod x1.",
+    "Standing in the fire, craft Torch (1x Wood, 1x Cloth) — succeeds. Walk a few steps away and try again — it fails with the notice 'needs a campfire' and consumes nothing.",
+    "Craft Padded Jacket (4x Cloth, 2x Deer Pelt, 1x Rope; needs a Knife). Then RESET via the QA panel and craft Canvas Backpack (6x Cloth, 2x Rope; needs a Knife) — RESET restocks the cloth.",
+    "Note: the crafting materials have no icons yet (colour-swatch tiles in the hotbar/CRAFTING list) — expected, not a bug."
+  ]
+}
