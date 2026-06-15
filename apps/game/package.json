@@ -13,6 +13,7 @@
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "models:export": "node scripts/export-models.mjs",
+    "models:icons": "node scripts/render-icons.mjs",
     "loadtest": "node scripts/loadtest.mjs",
     "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:testbed",
     "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",

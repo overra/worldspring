@@ -26,6 +26,6 @@
     "Craft Fishing Rod (2x Wood, 1x Rope, 1x Scrap Metal; needs a Knife) — the three inputs are consumed but the Knife is NOT, and you gain Fishing Rod x1.",
     "Standing in the fire, craft Torch (1x Wood, 1x Cloth) — succeeds. Walk a few steps away and try again — it fails with the notice 'needs a campfire' and consumes nothing.",
     "Craft Padded Jacket (4x Cloth, 2x Deer Pelt, 1x Rope; needs a Knife). Then RESET via the QA panel and craft Canvas Backpack (6x Cloth, 2x Rope; needs a Knife) — RESET restocks the cloth.",
-    "Note: the crafting materials have no icons yet (colour-swatch tiles in the hotbar/CRAFTING list) — expected, not a bug."
+    "Every material + crafted output now shows a rendered icon in the hotbar/CRAFTING list (no colour-swatch fallbacks)."
   ]
 }

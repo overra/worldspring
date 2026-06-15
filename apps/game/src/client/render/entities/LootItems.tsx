@@ -11,6 +11,7 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
+import { ITEM_NODE_ALIAS } from "./ItemNodeAlias";
 import { clientWorld } from "@/client/runtime";
 
 const POOL_SIZE = 64;
@@ -54,7 +55,7 @@ function buildTemplates(scene: THREE.Group): Map<ItemType, LootTemplate> {
   const box = new THREE.Box3();
   const size = new THREE.Vector3();
   for (const type of Object.keys(ITEM_DEFS) as ItemType[]) {
-    const node = scene.getObjectByName(type);
+    const node = scene.getObjectByName(ITEM_NODE_ALIAS[type] ?? type);
     if (!node) continue;
     // Clones inherit castShadow, so flag the source meshes once here.
     node.traverse((obj) => {

@@ -69,6 +69,30 @@ const COMBAT_JSON: unknown = {
   checklist: ["spawn at compound"],
 };
 
+// Canonical content of apps/game/scenarios/crafting.json (the materials set:
+// only the crafting inputs + the knife tool, plus a campfire for station recipes).
+const CRAFTING_JSON: unknown = {
+  name: "crafting",
+  provision: [
+    { kind: "position", zone: "coastal", face: "ocean" },
+    { kind: "fire", atFeet: true },
+    {
+      kind: "loadout",
+      items: [
+        { type: "cloth", count: 8 },
+        { type: "wood", count: 8 },
+        { type: "scrap", count: 8 },
+        { type: "rope", count: 4 },
+        { type: "deer_pelt", count: 4 },
+        { type: "knife", count: 1 },
+      ],
+    },
+    { kind: "vitals", hp: 100, food: 100, water: 100, temp: 37 },
+    { kind: "clearCooldowns", which: ["attack", "item"] },
+  ],
+  checklist: ["spawn with crafting materials"],
+};
+
 function loadout(s: Scenario): Provision & { kind: "loadout" } {
   const p = s.provision.find((x): x is Provision & { kind: "loadout" } => x.kind === "loadout");
   if (!p) throw new Error(`scenario "${s.name}" has no loadout`);
@@ -367,9 +391,19 @@ describe("apps/game/scenarios/*.json shape is parse-valid", () => {
     expect(types).toContain("shotgun");
   });
 
-  it("the two named sets have distinct names (multiplicity)", () => {
-    const a = parseScenario(SURVIVAL_JSON).name;
-    const b = parseScenario(COMBAT_JSON).name;
-    expect(a).not.toBe(b);
+  it("crafting set parses to the materials-only set (inputs + knife tool, no weapons/food)", () => {
+    const crafting = parseScenario(CRAFTING_JSON);
+    expect(crafting.name).toBe("crafting");
+    const types = loadout(crafting).items.map((i) => i.type);
+    // Exactly the recipe inputs across RECIPES + the knife tool that gates the
+    // fishing rod / jacket / backpack — and nothing extraneous to craft-testing.
+    expect(types).toEqual(["cloth", "wood", "scrap", "rope", "deer_pelt", "knife"]);
+    // A lit campfire is provisioned so the station-gated torch recipe is testable.
+    expect(crafting.provision.some((p) => p.kind === "fire")).toBe(true);
+  });
+
+  it("the three named sets have distinct names (multiplicity)", () => {
+    const names = [SURVIVAL_JSON, COMBAT_JSON, CRAFTING_JSON].map((j) => parseScenario(j).name);
+    expect(new Set(names).size).toBe(names.length);
   });
 });

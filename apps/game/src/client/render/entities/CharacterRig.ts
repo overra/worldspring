@@ -12,6 +12,7 @@ import { useGLTF } from "@react-three/drei";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { PLAYER_HEIGHT } from "@worldspring/shared/constants";
 import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
+import { ITEM_NODE_ALIAS } from "./ItemNodeAlias";
 
 export type CharacterKind = "survivor" | "zombie";
 export type LocomotionState = "idle" | "walk" | "run" | "shamble";
@@ -130,6 +131,11 @@ export interface GripTransform {
 
 const DEFAULT_GRIP: GripTransform = { pos: [0, 0, 0], rotDeg: [0, 0, 0], scale: 1 };
 
+// Grips for the doc-05 items + map are seeded from the closest original analog
+// (compact consumables/materials use the [0,90,0] baseline with a base-origin
+// −Y sink; the knife pitches like the axe; the rod runs long like the rifle).
+// They render the real GLB mesh instead of the fallback box; the exact in-hand
+// pose can be nudged later from an aim-pose pass like the originals were.
 export const GRIP_TRANSFORMS: Partial<Record<ItemType, GripTransform>> = {
   beans: { pos: [0, -0.06, 0], rotDeg: [0, 90, 0], scale: 1 },
   water_bottle: { pos: [0, -0.08, 0], rotDeg: [0, 90, 0], scale: 1 },
@@ -145,6 +151,24 @@ export const GRIP_TRANSFORMS: Partial<Record<ItemType, GripTransform>> = {
   flashlight: { pos: [0, -0.03, 0], rotDeg: [0, 90, 0], scale: 1 },
   raw_venison: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
   cooked_venison: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
+  // --- doc-05 items + map ---
+  wood: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
+  cloth: { pos: [0, -0.03, 0], rotDeg: [0, 90, 0], scale: 1 },
+  scrap: { pos: [0, -0.03, 0], rotDeg: [0, 90, 0], scale: 1 },
+  rope: { pos: [0, -0.03, 0], rotDeg: [0, 90, 0], scale: 1 },
+  deer_pelt: { pos: [0, -0.02, 0], rotDeg: [0, 90, 0], scale: 1 },
+  knife: { pos: [0, -0.04, 0], rotDeg: [-90, 0, 0], scale: 1 },
+  fishing_rod: { pos: [0, 0, 0], rotDeg: [0, 90, 0], scale: 1 },
+  raw_fish: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
+  cooked_fish: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
+  canteen_empty: { pos: [0, -0.08, 0], rotDeg: [0, 90, 0], scale: 1 },
+  canteen_dirty: { pos: [0, -0.08, 0], rotDeg: [0, 90, 0], scale: 1 },
+  canteen_clean: { pos: [0, -0.08, 0], rotDeg: [0, 90, 0], scale: 1 },
+  torch: { pos: [0, -0.06, 0], rotDeg: [0, 90, 0], scale: 1 },
+  first_aid_kit: { pos: [0, -0.05, 0], rotDeg: [0, 90, 0], scale: 1 },
+  padded_jacket: { pos: [0, -0.06, 0], rotDeg: [0, 90, 0], scale: 1 },
+  backpack: { pos: [0, -0.12, 0], rotDeg: [0, 90, 0], scale: 1 },
+  map: { pos: [0, -0.02, 0], rotDeg: [0, 90, 0], scale: 1 },
 };
 
 // --- Held-item meshes (clones of the items.glb templates) ---
@@ -178,7 +202,7 @@ function registerHeldItemTemplates(scene: THREE.Group): void {
   if (heldTemplatesRegistered) return;
   heldTemplatesRegistered = true;
   for (const type of Object.keys(ITEM_DEFS) as ItemType[]) {
-    const node = scene.getObjectByName(type);
+    const node = scene.getObjectByName(ITEM_NODE_ALIAS[type] ?? type);
     if (!node) continue;
     // Clones inherit castShadow, so flag the source meshes once here.
     node.traverse((obj) => {
