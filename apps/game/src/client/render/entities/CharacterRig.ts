@@ -12,6 +12,7 @@ import { useGLTF } from "@react-three/drei";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { PLAYER_HEIGHT } from "@worldspring/shared/constants";
 import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
+import { ITEM_NODE_ALIAS } from "./ItemNodeAlias";
 
 export type CharacterKind = "survivor" | "zombie";
 export type LocomotionState = "idle" | "walk" | "run" | "shamble";
@@ -129,19 +130,6 @@ export interface GripTransform {
 }
 
 const DEFAULT_GRIP: GripTransform = { pos: [0, 0, 0], rotDeg: [0, 0, 0], scale: 1 };
-
-/**
- * ItemTypes that render from a different (shared) items.glb node than their own
- * name. The canteen is one mesh; its three water states (empty/dirty/clean)
- * differ only by item name + UI swatch, never the canvas — so all three resolve
- * to the single `canteen` node instead of duplicating geometry. Consumed by
- * both the held-item registry (below) and ground loot (LootItems.tsx).
- */
-export const ITEM_NODE_ALIAS: Partial<Record<ItemType, string>> = {
-  canteen_empty: "canteen",
-  canteen_dirty: "canteen",
-  canteen_clean: "canteen",
-};
 
 // Grips for the doc-05 items + map are seeded from the closest original analog
 // (compact consumables/materials use the [0,90,0] baseline with a base-origin

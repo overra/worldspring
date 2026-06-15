@@ -111,6 +111,16 @@ def world_bounds(obj):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+
+    # Validate the optional allow-list up front: a typo'd item name should fail
+    # loudly, not silently render nothing (and exit 0 as if it worked).
+    if ONLY:
+        unknown = sorted(ONLY - set(ITEM_NODE))
+        if unknown:
+            print(f"[render-icons] ERROR: unknown item type(s): {', '.join(unknown)}")
+            print(f"[render-icons] known: {', '.join(sorted(ITEM_NODE))}")
+            sys.exit(1)
+
     scene, cam, cam_data = build_rig()
     all_objs = renderable_objects()
 
@@ -123,10 +133,11 @@ def main():
         node_to_names.setdefault(node, []).append(item)
 
     rendered = []
+    missing = []
     for node_name, names in node_to_names.items():
         target = bpy.data.objects.get(node_name)
         if target is None:
-            print(f"[render-icons] WARNING: no node '{node_name}' in items.blend — skipped")
+            missing.append(node_name)
             continue
         keep = set([target] + list(target.children_recursive))
         for o in all_objs:
@@ -150,6 +161,13 @@ def main():
 
     print(f"[render-icons] {len(rendered)} icons -> {OUT_DIR}")
     print(f"[render-icons] {', '.join(sorted(rendered))}")
+
+    # A node named in ITEM_NODE but absent from items.blend means an item lost
+    # its mesh (or was never modeled) — fail so the gap isn't shipped as a
+    # silent icon-less item. We still rendered everything else above first.
+    if missing:
+        print(f"[render-icons] ERROR: missing node(s) in items.blend: {', '.join(sorted(set(missing)))}")
+        sys.exit(1)
 
 
 main()

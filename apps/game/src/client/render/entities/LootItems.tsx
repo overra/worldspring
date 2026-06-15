@@ -11,7 +11,7 @@ import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
-import { ITEM_NODE_ALIAS } from "./CharacterRig";
+import { ITEM_NODE_ALIAS } from "./ItemNodeAlias";
 import { clientWorld } from "@/client/runtime";
 
 const POOL_SIZE = 64;
