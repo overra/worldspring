@@ -13,6 +13,7 @@ import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.j
 import { PLAYER_HEIGHT } from "@worldspring/shared/constants";
 import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
 import { ITEM_NODE_ALIAS } from "./ItemNodeAlias";
+import { useItemModelTemplates } from "@/client/render/itemModels";
 
 export type CharacterKind = "survivor" | "zombie";
 export type LocomotionState = "idle" | "walk" | "run" | "shamble";
@@ -198,17 +199,28 @@ function heldBox(color: string): THREE.Mesh {
 const HELD_TEMPLATES = new Map<ItemType, THREE.Object3D>();
 let heldTemplatesRegistered = false;
 
-function registerHeldItemTemplates(scene: THREE.Group): void {
+function registerHeldItemTemplates(
+  scene: THREE.Group,
+  itemModels: Map<ItemType, THREE.Object3D>,
+): void {
   if (heldTemplatesRegistered) return;
+  // Safe to register once: useItemModelTemplates loads via the array form of
+  // useGLTF, which suspends until every per-item GLB is ready, so by the time
+  // this runs `itemModels` is complete (or empty when nothing is registered).
   heldTemplatesRegistered = true;
   for (const type of Object.keys(ITEM_DEFS) as ItemType[]) {
-    const node = scene.getObjectByName(ITEM_NODE_ALIAS[type] ?? type);
-    if (!node) continue;
-    // Clones inherit castShadow, so flag the source meshes once here.
-    node.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) obj.castShadow = true;
-    });
-    HELD_TEMPLATES.set(type, node);
+    // Per-item GLB wins over the items.glb node (resolved through the node
+    // alias). Registry templates are already normalized + shadow-flagged;
+    // items.glb nodes get flagged here once.
+    const override = itemModels.get(type);
+    const source = override ?? scene.getObjectByName(ITEM_NODE_ALIAS[type] ?? type);
+    if (!source) continue;
+    if (!override) {
+      source.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) obj.castShadow = true;
+      });
+    }
+    HELD_TEMPLATES.set(type, source);
   }
 }
 
@@ -311,8 +323,9 @@ useGLTF.preload(ITEMS_MODEL_URL);
 export function useCharacterModel(kind: CharacterKind): void {
   const gltf = useGLTF(MODEL_URLS[kind]);
   const items = useGLTF(ITEMS_MODEL_URL);
+  const itemModels = useItemModelTemplates();
   if (!SOURCES.has(kind)) SOURCES.set(kind, buildSource(gltf));
-  registerHeldItemTemplates(items.scene);
+  registerHeldItemTemplates(items.scene, itemModels);
 }
 
 // --- Rig factory ---

@@ -1,9 +1,9 @@
-// Ground loot: a pool of bobbing, spinning GLB models — items.glb holds one
-// node per ItemType (named exactly by type, base-origin, standing on y=0).
-// Each pool slot is a Group whose child is swapped for a template clone when
-// the item type changes; clones share geometry + materials. Types missing
-// from the GLB fall back to the old tinted box so a future ItemType never
-// crashes the renderer. (Corpses render separately in Corpses.tsx.)
+// Ground loot: a pool of bobbing, spinning GLB models. Each ItemType resolves
+// to a template by precedence: a per-item standalone GLB (itemModels registry)
+// → the same-named node in items.glb (base-origin, standing on y=0) → the old
+// tinted box, so a future ItemType never crashes the renderer. Each pool slot
+// is a Group whose child is swapped for a template clone when the item type
+// changes; clones share geometry + materials. (Corpses render in Corpses.tsx.)
 
 import { useMemo } from "react";
 import type { ReactElement } from "react";
@@ -13,6 +13,7 @@ import * as THREE from "three";
 import { ITEM_DEFS, UNKNOWN_DEF, type ItemType } from "@worldspring/shared/items";
 import { ITEM_NODE_ALIAS } from "./ItemNodeAlias";
 import { clientWorld } from "@/client/runtime";
+import { useItemModelTemplates } from "@/client/render/itemModels";
 
 const POOL_SIZE = 64;
 // Model origins sit at the base (minY = 0 for every node), so the lowest
@@ -50,21 +51,29 @@ interface LootTemplate {
   scale: number;
 }
 
-function buildTemplates(scene: THREE.Group): Map<ItemType, LootTemplate> {
+function buildTemplates(
+  scene: THREE.Group,
+  itemModels: Map<ItemType, THREE.Object3D>,
+): Map<ItemType, LootTemplate> {
   const map = new Map<ItemType, LootTemplate>();
   const box = new THREE.Box3();
   const size = new THREE.Vector3();
   for (const type of Object.keys(ITEM_DEFS) as ItemType[]) {
-    const node = scene.getObjectByName(ITEM_NODE_ALIAS[type] ?? type);
-    if (!node) continue;
-    // Clones inherit castShadow, so flag the source meshes once here.
-    node.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) obj.castShadow = true;
-    });
-    box.setFromObject(node);
+    // Per-item GLB wins over the items.glb node (resolved through the node
+    // alias). Registry templates are already normalized + shadow-flagged;
+    // items.glb nodes get flagged here once.
+    const override = itemModels.get(type);
+    const source = override ?? scene.getObjectByName(ITEM_NODE_ALIAS[type] ?? type);
+    if (!source) continue;
+    if (!override) {
+      source.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) obj.castShadow = true;
+      });
+    }
+    box.setFromObject(source);
     box.getSize(size);
     const maxXZ = Math.max(size.x, size.z, 1e-3);
-    map.set(type, { source: node, scale: Math.max(1, MIN_GROUND_XZ / maxXZ) });
+    map.set(type, { source, scale: Math.max(1, MIN_GROUND_XZ / maxXZ) });
   }
   return map;
 }
@@ -94,7 +103,11 @@ export function LootItems(): ReactElement {
   // Suspends until the GLB loads; the Canvas mounts post-welcome so the
   // suspension is invisible. Same drei cache entry CharacterRig uses.
   const gltf = useGLTF(ITEMS_MODEL_URL);
-  const templates = useMemo(() => buildTemplates(gltf.scene), [gltf.scene]);
+  const itemModels = useItemModelTemplates();
+  const templates = useMemo(
+    () => buildTemplates(gltf.scene, itemModels),
+    [gltf.scene, itemModels],
+  );
   const pool = useMemo(createPool, []);
 
   useFrame((state) => {
