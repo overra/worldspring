@@ -8,16 +8,20 @@ import * as THREE from "three";
 
 /**
  * Normalizes a standalone GLB scene into a template ready to clone: x/z
- * centered, base sitting at y=0, every mesh flagged castShadow. With
- * `opts.heightM` the model is uniformly scaled to stand that many meters tall
- * (use when the GLB was NOT exported at real-world scale); omit it when scale
- * is already baked in and only re-seating is needed. The result is wrapped in
- * a Group so the per-clone transform survives `.clone()`. Returns null when the
- * scene has no mesh geometry, letting the caller fall back to a primitive.
+ * centered, base sitting at y=0, every mesh flagged castShadow. Optional
+ * rescale (Meshy outputs arbitrary scale):
+ *  - `opts.maxSizeM` scales so the LARGEST of x/y/z spans that many meters —
+ *    orientation-independent, the right choice when the model's upright axis
+ *    isn't guaranteed (most loot items).
+ *  - `opts.heightM` scales by the y-extent to stand that many meters tall —
+ *    use only when the model is known upright (e.g. the crate).
+ * maxSizeM wins if both are given; omit both to re-seat without rescaling. The
+ * result is wrapped in a Group so the per-clone transform survives `.clone()`.
+ * Returns null when the scene has no mesh geometry (caller → primitive).
  */
 export function normalizeModel(
   scene: THREE.Group,
-  opts: { heightM?: number } = {},
+  opts: { heightM?: number; maxSizeM?: number } = {},
 ): THREE.Object3D | null {
   const model = scene.clone(true);
   let hasMesh = false;
@@ -37,7 +41,10 @@ export function normalizeModel(
   model.position.set(-center.x, -box.min.y, -center.z);
   const wrap = new THREE.Group();
   wrap.add(model);
-  if (opts.heightM !== undefined) {
+  if (opts.maxSizeM !== undefined) {
+    const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
+    wrap.scale.setScalar(opts.maxSizeM / maxDim);
+  } else if (opts.heightM !== undefined) {
     wrap.scale.setScalar(size.y > 0 ? opts.heightM / size.y : 1);
   }
   return wrap;
