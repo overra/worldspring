@@ -40,7 +40,9 @@ import type { ItemStack, ItemType } from "./items";
 // now STARTS a server-driven cast instead of resolving instantly, a message
 // SEMANTICS change (an old client expecting an instant inventory delta would
 // mis-render a multi-tick channel). So 3 → 4.
-export const PROTOCOL_VERSION: number = 4;
+// red realm: YouState gains `realm` and snapshots gain a `portals` array — both
+// additive ServerMsg SHAPE changes (doc 03's shape clause), so 4 → 5.
+export const PROTOCOL_VERSION: number = 5;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -52,6 +54,15 @@ export const PROTOCOL_VERSION: number = 4;
  * reference ONE definition.
  */
 export type ChannelKind = "cook" | "use" | "reload" | "craft" | "fish";
+
+/**
+ * Which realm a player is standing in. "overworld" is the normal island;
+ * "red" is the alternate realm reached through a red portal — same world
+ * geometry (the deterministic sim is unchanged) but the client re-themes the
+ * terrain, sky and props. Carried per-player in YouState and per-entity on
+ * WirePortal (the realm a portal leads to).
+ */
+export type Realm = "overworld" | "red";
 
 // --- Sim state shared by prediction (client) and authority (server) ---
 
@@ -174,6 +185,18 @@ export interface WireFire {
   z: number;
 }
 
+/** A placed red portal. Interest- AND realm-filtered server-side (a client
+ * only ever receives the portals standing in its own realm). `to` is the realm
+ * this portal leads to — the client tints the outbound (→red) and return
+ * (→overworld) gateways differently. */
+export interface WirePortal {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  to: Realm;
+}
+
 /** An airdrop crate. Sent in EVERY snapshot regardless of distance — the
  * smoke column must be visible across the whole island. */
 export interface WireDrop {
@@ -237,6 +260,8 @@ export interface YouState extends Vitals {
    * (totalS - remainingS) / totalS.
    */
   action?: { kind: ChannelKind; remainingS: number; totalS: number };
+  /** Which realm you are in — drives the client's terrain/sky theming. */
+  realm: Realm;
 }
 
 export type GameEvent =
@@ -296,6 +321,8 @@ export type ServerMsg =
       loot: WireLoot[];
       corpses: WireCorpse[];
       fires: WireFire[];
+      /** Red portals in YOUR realm within interest range. */
+      portals: WirePortal[];
       /** All active airdrops, never interest-filtered (island-wide smoke). */
       drops: WireDrop[];
       animals: WireAnimal[];

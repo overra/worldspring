@@ -59,6 +59,7 @@ import {
   type WireFire,
   type WireLoot,
   type WirePlayer,
+  type WirePortal,
   type WireZombie,
   type YouState,
 } from "@worldspring/shared/protocol";
@@ -98,6 +99,7 @@ import {
   restorePlayer,
   sanitizeName,
   startUse,
+  stepPortals,
   STRIP_TEXT_RE,
   tickActiveActions,
 } from "./systems/players";
@@ -1118,6 +1120,8 @@ export class GameRoom extends DurableObject<Env> {
         if (player.alive) performAttack(game, player, aimTime);
       }
     }
+    // Portal crossings resolve against this tick's post-movement positions.
+    stepPortals(game);
     tickZombies(game, dt);
     tickZombieRespawns(game, dt);
     tickSurvival(game, dt);
@@ -1245,6 +1249,14 @@ export class GameRoom extends DurableObject<Env> {
       fires.push({ id: fire.id, x: round2(fire.x), y: round2(fire.y), z: round2(fire.z) });
     }
 
+    // Portals: only those in the player's own realm, within interest range.
+    const portals: WirePortal[] = [];
+    for (const portal of game.portals) {
+      if (portal.realm !== player.realm) continue;
+      if (distSq2D(px, pz, portal.x, portal.z) > interestSq) continue;
+      portals.push({ id: portal.id, x: round2(portal.x), y: round2(portal.y), z: round2(portal.z), to: portal.toRealm });
+    }
+
     // Airdrops are NEVER interest-filtered: the smoke column (and the falling
     // crate) must be visible from anywhere on the island.
     const drops: WireDrop[] = [];
@@ -1292,6 +1304,7 @@ export class GameRoom extends DurableObject<Env> {
       loot,
       corpses,
       fires,
+      portals,
       drops,
       animals,
       weather: round2(game.weather),
@@ -1312,6 +1325,7 @@ export class GameRoom extends DurableObject<Env> {
       z: round2(c.z),
       vy: c.vy,
       grounded: c.grounded,
+      realm: player.realm,
       hp: v.hp,
       food: v.food,
       water: v.water,

@@ -11,7 +11,8 @@
         { "type": "ammo_762", "count": 20 },
         { "type": "shotgun", "count": 1 },
         { "type": "shells", "count": 12 },
-        { "type": "bandage", "count": 4 }
+        { "type": "bandage", "count": 4 },
+        { "type": "portal_kit", "count": 2 }
       ]
     },
     { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 },

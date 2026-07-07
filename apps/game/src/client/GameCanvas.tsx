@@ -5,6 +5,7 @@
 
 import { Canvas } from "@react-three/fiber";
 import { useSettingsStore, QUALITY_CONFIGS } from "./state/settings";
+import { useUIStore } from "./state/store";
 import { clientWorld } from "./runtime";
 import { NetSystem } from "./net/NetSystem";
 import { AudioSystem } from "./audio/AudioSystem";
@@ -29,11 +30,17 @@ import { Corpses } from "./render/entities/Corpses";
 import { Animals } from "./render/entities/Animals";
 import { Airdrops } from "./render/entities/Airdrops";
 import { Campfires } from "./render/entities/Campfires";
+import { Portals } from "./render/entities/Portals";
 import { EffectsLayer } from "./render/entities/EffectsLayer";
 
 export function GameCanvas(): React.ReactElement {
   const quality = useSettingsStore((s) => s.quality);
   const qualityCfg = QUALITY_CONFIGS[quality];
+  // Realm gates the overworld-only set dressing: in the red realm the island's
+  // water, buildings, trees, grass, scatter and rain are hidden so only the
+  // (red-tinted) terrain and the wild sky remain. Low-rate store value, so this
+  // re-renders only on a portal crossing.
+  const realm = useUIStore((s) => s.realm);
   // clientWorld.config is written by onWelcome before the canvas is ever mounted
   // (App.tsx only unmounts the menu once phase becomes "playing"), so this read
   // is always post-welcome. The config never changes while the canvas is mounted
@@ -57,21 +64,26 @@ export function GameCanvas(): React.ReactElement {
       <PostFX />
       <SkyAndLighting />
       <Terrain />
-      <WaterPlane />
-      <Buildings />
-      <BuildingTrim />
-      <Containers />
-      <Trees />
-      <Scatter />
-      <Grass />
+      {realm !== "red" && (
+        <>
+          <WaterPlane />
+          <Buildings />
+          <BuildingTrim />
+          <Containers />
+          <Trees />
+          <Scatter />
+          <Grass />
+          <RainLayer />
+        </>
+      )}
       <RemotePlayers />
       {cfg.threats.zombies && <Zombies />}
       <LootItems />
       <Corpses />
       {cfg.wildlife.deerDensity > 0 && <Animals />}
       <Airdrops />
-      <RainLayer />
       <Campfires />
+      <Portals />
       <EffectsLayer />
     </Canvas>
   );
