@@ -27,3 +27,6 @@ dist/
 .claude/skills/
 !/.claude/skills
 .skills.json
+
+# Meshy generation scratch output
+meshy_output/

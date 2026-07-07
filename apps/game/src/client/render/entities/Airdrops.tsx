@@ -1,12 +1,13 @@
 // Airdrop crates from clientWorld.drops (never interest-filtered): the
-// props.glb supply_crate (1m, base-origin) descending under the props.glb
-// parachute while drop.falling (client-side cosmetic fall — the server only
-// flips the flag), and a 40m billboarded smoke column while drop.smoke so
-// the landing reads from across the island. Smoke materials are fog: false
-// on purpose — scene fog must never swallow the column at distance (visible
-// out to the 600m camera far plane). Same imperative pooling pattern as
-// Zombies; GLB clones share geometry + materials like LootItems, with the
-// old primitive crate/cone as fallback if a node goes missing.
+// crate.glb supply crate (normalized to 1m, base-origin at load — see
+// buildCrateTemplate) descending under the props.glb parachute while
+// drop.falling (client-side cosmetic fall — the server only flips the flag),
+// and a 40m billboarded smoke column while drop.smoke so the landing reads
+// from across the island. Smoke materials are fog: false on purpose — scene
+// fog must never swallow the column at distance (visible out to the 600m
+// camera far plane). Same imperative pooling pattern as Zombies; GLB clones
+// share geometry + materials like LootItems, with the old primitive
+// crate/cone as fallback if a model/node goes missing.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
@@ -15,12 +16,23 @@ import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import { AIRDROP_FALL_DELAY_S } from "@worldspring/shared/constants";
 import { clientWorld } from "@/client/runtime";
+import { normalizeModel } from "@/client/render/modelTemplate";
 
 const POOL_SIZE = 6;
 const MAX_FRAME_DT = 0.1;
 
 const PROPS_MODEL_URL = "/models/props.glb";
 useGLTF.preload(PROPS_MODEL_URL);
+
+// Standalone crate asset (Meshy-generated, optimized to meshopt + 512 webp).
+// Its own GLB rather than a props.glb node — modeled centered/arbitrary scale,
+// so buildCrateTemplate normalizes it to the old 1m base-origin crate.
+const CRATE_MODEL_URL = "/models/crate.glb";
+useGLTF.preload(CRATE_MODEL_URL);
+
+// Target crate height in meters — matches the legacy 1m supply_crate so the
+// CHUTE_ATTACH_Y / smoke / flare offsets below still line up.
+const CRATE_TARGET_HEIGHT = 1;
 
 // The parachute node's origin is the riser-line convergence point (canopy
 // apex ~3.4m above it). Attach just above the 1m crate top so the canopy
@@ -185,10 +197,13 @@ function createSlot(crateSource: THREE.Object3D | null, chuteSource: THREE.Objec
   return { root, chute, smoke, smokeMats, flare, flareMat, light, fallOffset: 0 };
 }
 
-function createPool(scene: THREE.Group): DropPool {
+function createPool(propsScene: THREE.Group, crateScene: THREE.Group): DropPool {
+  // Crate comes from its own GLB now; parachute still rides in props.glb. The
+  // crate is modeled centered at arbitrary scale, so normalize it to the legacy
+  // supply_crate footprint (CRATE_TARGET_HEIGHT tall, base-origin, x/z centered).
   // Old cone chute never cast a shadow; keep the parachute shadowless too.
-  const crateSource = propTemplate(scene, "supply_crate", true);
-  const chuteSource = propTemplate(scene, "parachute", false);
+  const crateSource = normalizeModel(crateScene, { heightM: CRATE_TARGET_HEIGHT });
+  const chuteSource = propTemplate(propsScene, "parachute", false);
   const root = new THREE.Group();
   const slots: DropSlot[] = [];
   const free: number[] = [];
@@ -205,7 +220,11 @@ export function Airdrops(): ReactElement {
   // Suspends until the GLB loads; the Canvas mounts post-welcome so the
   // suspension is invisible. Same drei cache entry the other props use.
   const gltf = useGLTF(PROPS_MODEL_URL);
-  const pool = useMemo(() => createPool(gltf.scene), [gltf.scene]);
+  const crateGltf = useGLTF(CRATE_MODEL_URL);
+  const pool = useMemo(
+    () => createPool(gltf.scene, crateGltf.scene),
+    [gltf.scene, crateGltf.scene],
+  );
 
   // Smoke materials are per-slot (animated opacity) — dispose with the pool.
   useEffect(

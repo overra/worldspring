@@ -59,13 +59,25 @@
       "source": "shadcn/improve",
       "sourceType": "github",
       "skillPath": "skills/improve/SKILL.md",
-      "computedHash": "431adaf38132005b32cacb952313f18b4c03ee98ee4c5859bad323156a48bb02"
+      "computedHash": "7a0f09dd535fc84391dc63bea826d6aeab985b92423fa4dd93edacb5dfb82524"
     },
     "improve-codebase-architecture": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
       "computedHash": "ef32aea0a8fab9b365ff9e08a95f8d353e20ca21ea46ec2e73587c86dd341351"
+    },
+    "meshy-3d-agent": {
+      "source": "meshy-dev/meshy-3d-agent",
+      "sourceType": "github",
+      "skillPath": "skills/meshy-openclaw/SKILL.md",
+      "computedHash": "78614acb4c83bfc19aefda054b295dd2fe16e1d525e6233a29f0877ff811b463"
+    },
+    "meshy-3d-generation": {
+      "source": "meshy-dev/meshy-3d-agent",
+      "sourceType": "github",
+      "skillPath": "skills/meshy-3d-generation/SKILL.md",
+      "computedHash": "f4bfc004870d2215df819a3b8a8a836374864c26727b04020653129c02750b15"
     },
     "prototype": {
       "source": "mattpocock/skills",
