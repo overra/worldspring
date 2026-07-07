@@ -7,13 +7,20 @@
   "name": "worldspring-web",
   "compatibility_date": "2026-06-01",
   "compatibility_flags": ["nodejs_compat"],
+  // The official site domain (doc 01 open Q1, resolved 2026-07-07). Custom
+  // domain = Cloudflare manages DNS + cert on the worldspring.games zone
+  // automatically at deploy. The GAME worker deliberately stays on workers.dev
+  // for v1 (doc 01 §Open-questions recommendation); this apex is also the
+  // future OAuth client URL + redirect origin (doc 01 §2), which is why it
+  // lives on the SITE worker and must not move casually.
+  "routes": [{ "pattern": "worldspring.games", "custom_domain": true }],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "worldspring-directory",
-      // SETUP: `wrangler d1 create worldspring-directory` then paste the id here
+      // Created 2026-07-07 via `wrangler d1 create worldspring-directory`
       // (apps/prober binds the SAME id).
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "cde769c2-c346-4ca9-914b-9b60ecb4a0dc"
     }
   ],
   "observability": { "enabled": true }

@@ -817,11 +817,16 @@ is acceptable in the interim). The persistAll one-row-snapshot fix (research/cf-
 
 ## Open questions
 
-1. **Custom domain for the site** — hard blocker for public OAuth visibility (TXT
+1. **Custom domain for the site** — ~~hard blocker for public OAuth visibility (TXT
    verification cannot happen under workers.dev, research/cf-oauth.md §8). Which domain, and
-   does Adam want the game itself to move under it too (e.g. `play.<domain>`)?
-   *Recommendation: buy one domain now, put only the site on it for v1; the game worker can
-   stay on workers.dev indefinitely.*
+   does Adam want the game itself to move under it too (e.g. `play.<domain>`)?~~
+   **RESOLVED 2026-07-07: `worldspring.games`** (a zone on Adam's Cloudflare account).
+   The apex is a Workers custom domain on `worldspring-web` (`apps/web/wrangler.jsonc`
+   `routes`); the game worker stays on workers.dev for v1 per the recommendation
+   (`play.worldspring.games` remains a later option). OAuth client URL is
+   `https://worldspring.games`, redirect URI `https://worldspring.games/oauth/callback`;
+   the M9 public-visibility promotion does its `cloudflare_oauth_client_publisher` TXT
+   verification on this zone.
 2. **Ephemeral tokens — confirm the call.** The §6 table is the case; the cost is one OAuth
    bounce per update. *Recommendation: ephemeral. Revisit only if fleet auto-update becomes
    a real ask, and then as a separate opt-in consent.*
