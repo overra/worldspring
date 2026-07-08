@@ -193,6 +193,14 @@ export interface ClientWorldState {
   /** doc 06 — door/gate piece id in interact range (E toggles). Only set
    * while no loot prompt wins; null otherwise. */
   promptDoorId: number | null;
+  /** doc 06 M6 — crate piece id in interact range (E opens the panel). Only
+   * set while no loot and no door prompt wins; null otherwise. */
+  promptCrateId: number | null;
+  /** doc 06 M5 — UX cache: doors this session has opened through their lock
+   * (owner toggle observed or a tryCode accepted), so E goes straight to the
+   * toggle instead of the code pad. Server-truth is the authorized list; a
+   * stale entry just earns a "locked" notice. Cleared on lock change/reset. */
+  unlockedDoors: Set<number>;
   /** VFX queue: net layer pushes, render effects drain via drainEvents(). */
   events: GameEvent[];
   /** Same events, separate queue for the audio engine (drainAudioEvents). */
@@ -235,6 +243,8 @@ export const clientWorld: ClientWorldState = {
   renderGameTime: 0,
   promptLootId: null,
   promptDoorId: null,
+  promptCrateId: null,
+  unlockedDoors: new Set(),
   events: [],
   audioEvents: [],
   world: null,
@@ -335,6 +345,8 @@ export function resetClientWorld(): void {
   clientWorld.felledTrees.clear();
   clientWorld.felledVersion++;
   clientWorld.promptDoorId = null;
+  clientWorld.promptCrateId = null;
+  clientWorld.unlockedDoors.clear();
   clientWorld.structuresVersion++;
   buildState.active = false;
   buildState.target = null;

@@ -13,7 +13,7 @@ import {
 import { clamp, dist2D } from "@worldspring/shared/math";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { pieceCenter } from "@worldspring/shared/structures";
-import type { InputCmd } from "@worldspring/shared/protocol";
+import type { InputCmd, WirePiece } from "@worldspring/shared/protocol";
 import { clientWorld, inputState } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import type { UIState } from "@/client/state/store";
@@ -41,7 +41,9 @@ export function NetSystem(): null {
       inputState.jump = false;
       clientWorld.promptLootId = null;
       clientWorld.promptDoorId = null;
+      clientWorld.promptCrateId = null;
       ui.setPrompt(null);
+      ui.setDoorPromptId(null);
       return;
     }
 
@@ -49,11 +51,14 @@ export function NetSystem(): null {
     const jumpEdge = inputState.jump;
     inputState.jump = false;
     // chatOpen must be here explicitly: on desktop the pointer unlock already
-    // blocks, but in touchMode there is no pointer lock to lose.
+    // blocks, but in touchMode there is no pointer lock to lose. codePad is a
+    // modal like inventory; the crate panel deliberately is NOT — walking
+    // away is its close gesture (checked below).
     const blocked =
       ui.invOpen ||
       ui.menuOpen ||
       ui.chatOpen ||
+      ui.codePad !== null ||
       (!inputState.pointerLocked && !inputState.touchMode);
     let mx = 0;
     let mz = 0;
@@ -103,8 +108,39 @@ export function NetSystem(): null {
     }
 
     updatePrompt(ui);
+    closeOutOfRangePanels(ui);
   });
   return null;
+}
+
+/**
+ * doc 06 — the crate panel closes on walk-away (client-side; the server just
+ * rejects out-of-range moves) and the code pad drops when its door leaves
+ * interact range or vanishes. Small slack over the open range so standing at
+ * the boundary doesn't flicker the panel.
+ */
+function closeOutOfRangePanels(ui: UIState): void {
+  const world = clientWorld.world;
+  if (!world) return;
+  const me = clientWorld.me;
+  if (ui.container !== null) {
+    const piece = world.structures.pieces.get(ui.container.id);
+    if (!piece) {
+      ui.setContainer(null);
+    } else {
+      const [cx, cz] = pieceCenter(piece);
+      if (dist2D(me.x, me.z, cx, cz) > PICKUP_RANGE + 0.6) ui.setContainer(null);
+    }
+  }
+  if (ui.codePad !== null) {
+    const piece = world.structures.pieces.get(ui.codePad.id);
+    if (!piece) {
+      ui.setCodePad(null);
+    } else {
+      const [cx, cz] = pieceCenter(piece);
+      if (dist2D(me.x, me.z, cx, cz) > PICKUP_RANGE + 1.2) ui.setCodePad(null);
+    }
+  }
 }
 
 /**
@@ -142,22 +178,24 @@ function updatePrompt(ui: UIState): void {
       bestLabel = "Supply Crate";
     }
   }
-  // doc 06 — door/gate toggle prompt, only when no pickup prompt won (E
+  // doc 06 — door/gate/crate prompt, only when no pickup prompt won (E
   // prioritizes loot). Realm-gated like BuildPreview: structures render (and
-  // handleDoor accepts) in the overworld only, so a red-realm scan would
-  // prompt "Open door" for something invisible whose toggle the server
+  // the server handlers accept) in the overworld only, so a red-realm scan
+  // would prompt for something invisible whose interaction the server
   // rejects. O(pieces) scan of the shared index at frame rate is fine at the
   // 3000-piece world cap — the kind check plus the integer-grid distance
   // precheck below skip non-candidates without allocating.
   let doorId: number | null = null;
+  let crateId: number | null = null;
   const world = clientWorld.world;
   if (bestId === null && world !== null && ui.realm === "overworld") {
-    let doorDist = PICKUP_RANGE + 0.6; // gates are 3m wide — a little slack
+    let pieceDist = PICKUP_RANGE + 0.6; // gates are 3m wide — a little slack
     for (const piece of world.structures.pieces.values()) {
-      if (piece.kind !== "door" && piece.kind !== "gate") continue;
+      const isDoor = piece.kind === "door" || piece.kind === "gate";
+      if (!isDoor && piece.kind !== "crate") continue;
       // pieceCenter lies within [g*BUILD_CELL, g*BUILD_CELL + BUILD_CELL] on
       // each axis — a cheap reject before the tuple-allocating center call.
-      const reach = doorDist + BUILD_CELL;
+      const reach = pieceDist + BUILD_CELL;
       if (
         Math.abs(piece.gx * BUILD_CELL - me.x) > reach ||
         Math.abs(piece.gz * BUILD_CELL - me.z) > reach
@@ -166,14 +204,33 @@ function updatePrompt(ui: UIState): void {
       }
       const [cx, cz] = pieceCenter(piece);
       const d = dist2D(me.x, me.z, cx, cz);
-      if (d <= doorDist) {
-        doorDist = d;
+      // Crates get the STRICT server range: reachableCrate rejects past
+      // PICKUP_RANGE with no notice, so a prompt in the slack band would
+      // advertise an E that silently does nothing. (The +0.6 close-range
+      // hysteresis in closeOutOfRangePanels stays — open strict, close slack.)
+      if (d > pieceDist || (!isDoor && d > PICKUP_RANGE)) continue;
+      pieceDist = d;
+      if (isDoor) {
         doorId = piece.id;
-        bestLabel = `${piece.open === true ? "Close" : "Open"} ${piece.kind}`;
+        crateId = null;
+        // `locked` rides the wire record (M5); a door this session already
+        // unlocked prompts as a plain toggle. The [L] hint shows in BOTH
+        // states — the owner rotates/removes a code exactly when one is set.
+        const locked =
+          (piece as WirePiece).locked === true && !clientWorld.unlockedDoors.has(piece.id);
+        bestLabel = locked
+          ? `Unlock ${piece.kind} · [L] code`
+          : `${piece.open === true ? "Close" : "Open"} ${piece.kind} · [L] code`;
+      } else {
+        crateId = piece.id;
+        doorId = null;
+        bestLabel = "Open storage crate";
       }
     }
   }
   clientWorld.promptLootId = bestId;
   clientWorld.promptDoorId = doorId;
-  ui.setPrompt(bestId === null && doorId === null ? null : bestLabel);
+  clientWorld.promptCrateId = crateId;
+  ui.setDoorPromptId(doorId);
+  ui.setPrompt(bestId === null && doorId === null && crateId === null ? null : bestLabel);
 }

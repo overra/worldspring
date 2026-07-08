@@ -20,10 +20,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
+import type { WirePiece } from "@worldspring/shared/protocol";
 import { buildState, clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
-import { doAttack, doDoor, doPickup, doPlace } from "@/client/net/connection";
+import { doAttack, doContainerOpen, doDoor, doPickup, doPlace } from "@/client/net/connection";
 import "./ui.css";
 
 const STICK_RADIUS_PX = 60; // base circle is 120px in ui.css
@@ -32,10 +33,13 @@ const STICK_SPRINT_AT = 0.95; // push past 95% of the rim to sprint
 const LOOK_SENSITIVITY = 0.005; // rad per px at sensitivity 1
 const PITCH_LIMIT = 1.45; // rad — same clamp as InputController
 
-/** Same gate as NetSystem/InputController: no gameplay input through UI. */
+/** Same gate as NetSystem/InputController: no gameplay input through UI.
+ * The crate panel is deliberately absent — walking away closes it. */
 function gameplayBlocked(): boolean {
   const ui = useUIStore.getState();
-  return ui.invOpen || ui.menuOpen || ui.chatOpen || ui.phase !== "playing";
+  return (
+    ui.invOpen || ui.menuOpen || ui.chatOpen || ui.codePad !== null || ui.phase !== "playing"
+  );
 }
 
 export function TouchControls(): ReactElement | null {
@@ -45,6 +49,8 @@ export function TouchControls(): ReactElement | null {
   const phase = useUIStore((s) => s.phase);
   const prompt = useUIStore((s) => s.prompt);
   const invOpen = useUIStore((s) => s.invOpen);
+  // doc 06 M5 — a door in range shows the LOCK button (L-key touch parity).
+  const doorPromptId = useUIStore((s) => s.doorPromptId);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const zoneRef = useRef<HTMLDivElement | null>(null);
@@ -164,11 +170,32 @@ export function TouchControls(): ReactElement | null {
             doPickup(lootId);
             return;
           }
-          // doc 06 — no loot in range: the tap toggles a nearby door/gate,
-          // mirroring InputController's E handler (the prompt already reads
-          // "Open door" — without this the button was a no-op on doors).
+          // doc 06 — no loot in range: the tap works a nearby door/gate,
+          // mirroring InputController's E handler exactly — a locked door
+          // with no cached grant opens the code pad instead of a doomed
+          // toggle round-trip (M5 touch parity).
           const doorId = clientWorld.promptDoorId;
-          if (doorId !== null) doDoor(doorId);
+          if (doorId !== null) {
+            const piece = clientWorld.world?.structures.pieces.get(doorId) as
+              | WirePiece
+              | undefined;
+            const needsCode =
+              piece?.locked === true && !clientWorld.unlockedDoors.has(doorId);
+            if (needsCode) ui.setCodePad({ id: doorId, mode: "try" });
+            else doDoor(doorId);
+            return;
+          }
+          // doc 06 M6 — last: open a nearby storage crate (E parity).
+          const crateId = clientWorld.promptCrateId;
+          if (crateId !== null) doContainerOpen(crateId);
+          return;
+        }
+        case "lock": {
+          // doc 06 M5 — the L-key parity button: owner set/change/remove a
+          // door code (server enforces ownership).
+          if (gameplayBlocked()) return;
+          const lockDoorId = clientWorld.promptDoorId;
+          if (lockDoorId !== null) ui.setCodePad({ id: lockDoorId, mode: "set" });
           return;
         }
         case "bag":
@@ -203,7 +230,7 @@ export function TouchControls(): ReactElement | null {
         const target = t.target;
         if (!(target instanceof Element)) continue;
         if (zone.contains(target)) continue; // stick zone never look-drags
-        if (target.closest("button, input, [data-tc], .hud-inv") !== null) continue;
+        if (target.closest("button, input, [data-tc], .hud-inv, .hud-codepad, .hud-crate") !== null) continue;
         lookId = t.identifier;
         lookLastX = t.clientX;
         lookLastY = t.clientY;
@@ -280,6 +307,11 @@ export function TouchControls(): ReactElement | null {
         {prompt !== null && (
           <button type="button" data-tc="interact" className="tc-btn tc-btn--interact">
             TAKE
+          </button>
+        )}
+        {doorPromptId !== null && (
+          <button type="button" data-tc="lock" className="tc-btn tc-btn--lock">
+            LOCK
           </button>
         )}
         <button type="button" data-tc="attack" className="tc-btn tc-btn--attack">

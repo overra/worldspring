@@ -194,6 +194,31 @@ export const WORLD_PIECE_CAP = 3000;
 export const BUILD_DENSITY_RADIUS = 12;
 /** Max pieces within BUILD_DENSITY_RADIUS of a new piece's center. */
 export const BUILD_DENSITY_CAP = 120;
+/** Storage crate slot count (doc 06 M6) — fixed-length contents array; slot
+ * indices are stable identifiers (removal nulls, never compacts). */
+export const CRATE_SLOTS = 12;
+/** Bare-fist structure damage (doc 06 M7) — the FIST_DMG precedent: the
+ * fallback when the equipped ItemDef has no structDmg. Guarantees nothing is
+ * inescapable (a naked trapped player can punch through a wood wall). */
+export const FIST_STRUCT_DMG = 1;
+/** Offline shield grace: seconds after the owner's LAST game.players entry
+ * left before offlineRaidMult kicks in — combat-logging buys nothing inside
+ * an active raid window (doc 06 §Offline protection). */
+export const RAID_OFFLINE_GRACE_S = 300;
+/** Per-identity tryCode cooldown — UX anti-mash ONLY, never a security
+ * control (identities are free to mint; see the per-door backoff below). */
+export const DOOR_CODE_TRY_COOLDOWN_S = 1;
+/** Per-DOOR (never per-identity) brute-force budget: after this many failed
+ * tryCodes on one door FROM ANY IDENTITY COMBINED, the door locks out. */
+export const DOOR_CODE_FAILS_PER_LOCKOUT = 5;
+/** First lockout duration; doubles per subsequent lockout. */
+export const DOOR_CODE_BACKOFF_BASE_S = 30;
+/** Backoff ceiling (1h) — ~weeks of continuous hammering to span 10^4 codes. */
+export const DOOR_CODE_BACKOFF_MAX_S = 3600;
+/** Decay sweep cadence (game-seconds): every 5 game-minutes plus once at boot
+ * (the boot sweep covers idle-server gaps). Decay itself is WALL-clock
+ * (characters.updated_at vs decayHours). */
+export const DECAY_SWEEP_INTERVAL_S = 300;
 
 // --- Respawn ---
 export const RESPAWN_DELAY_S = 4;

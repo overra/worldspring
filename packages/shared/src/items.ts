@@ -123,6 +123,13 @@ export interface ItemDef {
   color: string;
   /** Restored amount for consumables, damage for weapons (per pellet). */
   power: number;
+  /**
+   * Base damage vs player STRUCTURES (doc 06 M7) — per swing for melee, per
+   * PELLET for ranged (the `power` convention). Absent ⇒ FIST_STRUCT_DMG for
+   * melee/fists, zero effect for anything unequippable. Effective damage =
+   * structDmg × TIER_DMG_MULT[tier][melee|bullet] × offline shield.
+   */
+  structDmg?: number;
   /** Present only on kind === "ranged" items. */
   ranged?: RangedConfig;
   /**
@@ -155,6 +162,7 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     stack: 1,
     color: "#3a3a3f",
     power: 30,
+    structDmg: 1, // doc 06 M7 — ammo scarcity makes gun-raiding wasteful by design
     // magSize/reloadS: doc 11 M3 placeholders flagged for the combat tuning pass (M5).
     ranged: { range: 90, cooldownS: 0.35, pellets: 1, spreadRad: 0, ammo: "ammo_9mm", magSize: 12, reloadS: 1.5, sound: "pistol" },
   },
@@ -165,6 +173,7 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     stack: 1,
     color: "#4a4030",
     power: 65,
+    structDmg: 2, // doc 06 M7
     ranged: { range: 180, cooldownS: 1.15, pellets: 1, spreadRad: 0, ammo: "ammo_762", magSize: 5, reloadS: 2.5, sound: "rifle" },
   },
   shotgun: {
@@ -174,12 +183,14 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     stack: 1,
     color: "#3d3328",
     power: 13,
+    structDmg: 0.5, // doc 06 M7 — per PELLET (6 pellets ≈ 3/shell point-blank)
     ranged: { range: 28, cooldownS: 1.3, pellets: 6, spreadRad: 0.085, ammo: "shells", magSize: 6, reloadS: 2.8, sound: "shotgun" },
   },
   ammo_9mm: { type: "ammo_9mm", name: "9mm Rounds", kind: "ammo", stack: 30, color: "#c9a227", power: 0 },
   ammo_762: { type: "ammo_762", name: "7.62 Rounds", kind: "ammo", stack: 20, color: "#a8842c", power: 0 },
   shells: { type: "shells", name: "Shotgun Shells", kind: "ammo", stack: 12, color: "#b03a2e", power: 0 },
-  axe: { type: "axe", name: "Fire Axe", kind: "melee", stack: 1, color: "#a33327", power: 35 },
+  // structDmg 6 (doc 06 M7): the axe is THE raid tool — wood door ≈ 30s.
+  axe: { type: "axe", name: "Fire Axe", kind: "melee", stack: 1, color: "#a33327", power: 35, structDmg: 6 },
   campfire_kit: { type: "campfire_kit", name: "Campfire Kit", kind: "placeable", stack: 2, color: "#7a5230", power: 0 },
   flashlight: { type: "flashlight", name: "Flashlight", kind: "tool", stack: 1, color: "#c8c23a", power: 0 },
   // Raw venison: migrated from the hardcoded branch in players.ts — now data-driven

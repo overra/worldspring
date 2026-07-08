@@ -20,6 +20,7 @@ const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
   "window",
   "door",
   "gate",
+  "crate",
 ];
 
 // --- Protocol version: the two-sided join gate ---
@@ -80,7 +81,13 @@ const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
 // sFull/sAdd/sRemove/sState server messages. An old client would never build
 // the index and would mispredict every step inside a base — the exact
 // divergence the two-sided gate exists to stop. So 8 → 9.
-export const PROTOCOL_VERSION: number = 9;
+// doc 06 M5–M7 (locks, crates, raiding): NEW ClientMsg shapes `setCode`/
+// `tryCode`/`cOpen`/`cMove` grow the wire vocabulary (doc 03's shape clause —
+// the rule that forced 2 → 3 for `craft`), plus `place` gains crate x/z and a
+// new `cont` ServerMsg. The additive `locked`/`hp` fields on sState/WirePiece
+// would NOT bump on their own (fog/felled posture); the new messages do.
+// So 9 → 10.
+export const PROTOCOL_VERSION: number = 10;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -180,13 +187,29 @@ export type ClientMsg =
   /** doc 06 — place a structure piece at a snapped grid address. Server-side
    * validation is the shared canPlace + hammer/cost/cap checks; the parser
    * whitelists PLACEABLE_KINDS and clamps gx/gz to the max-tier bound only
-   * (the real bounds check reads World.size, which the parser cannot). */
-  | { t: "place"; kind: PieceKind; tier: PieceTier; gx: number; gz: number; edge?: 0 | 2 }
+   * (the real bounds check reads World.size, which the parser cannot).
+   * `x`/`z` = a crate's free position inside its cell (crates only). */
+  | { t: "place"; kind: PieceKind; tier: PieceTier; gx: number; gz: number; edge?: 0 | 2; x?: number; z?: number }
   /** doc 06 — owner-only removal (hold-X client-side). No refund. */
   | { t: "demolish"; id: number }
-  /** doc 06 — toggle a door/gate open/closed. ANYONE may toggle in this slice
-   * (locks are the follow-up half of doc 06 M5). */
+  /** doc 06 M5 — toggle a door/gate open/closed. Opens iff the piece is
+   * unlocked OR the sender's tokenHash is owner/authorized (server-checked). */
   | { t: "door"; id: number }
+  /** doc 06 M5 — owner-only: set/change a door/gate's 4-digit code (clears
+   * the authorized list — changing the code revokes everyone). An EMPTY code
+   * removes the lock (the owner unlock affordance). */
+  | { t: "setCode"; id: number; code: string }
+  /** doc 06 M5 — try a 4-digit code on a locked door/gate. Correct appends
+   * the sender to the authorized list and opens; failures burn the PER-DOOR
+   * global backoff budget (never per-identity — identities are free). */
+  | { t: "tryCode"; id: number; code: string }
+  /** doc 06 M6 — request a container view (server replies `cont`). */
+  | { t: "cOpen"; id: number }
+  /** doc 06 M6 — move ONE whole stack between player inventory slot `from`
+   * and container slot `to` (dir "in"), or container slot `from` to inventory
+   * slot `to` (dir "out"). Range re-validated per message; the reply is an
+   * authoritative `cont` + full `inv`. */
+  | { t: "cMove"; id: number; from: number; to: number; dir: "in" | "out" }
   | { t: "respawn" }
   | { t: "chat"; text: string }
   | { t: "ping"; ts: number };
@@ -295,14 +318,18 @@ export interface WireBody {
 }
 
 /**
- * doc 06 — a structure piece on the wire. EXACTLY the shared StructurePiece
- * (no server fields exist on it): produced exclusively by the server system's
- * `toWirePiece`, which strips ownerHash/placedAtMs (and every future secret)
- * from the server's meta. Structure deltas are GLOBAL — never
- * interest-filtered, never in snapshots — because prediction needs the
+ * doc 06 — a structure piece on the wire: the shared StructurePiece plus a
+ * derived `locked` flag for doors/gates (so the client can prompt for a
+ * code). Produced exclusively by the server system's `toWirePiece`, which
+ * strips ownerHash/placedAtMs/code/authorized/contents (every server secret)
+ * from the server's meta and derives `locked`. Structure deltas are GLOBAL —
+ * never interest-filtered, never in snapshots — because prediction needs the
  * complete collision set everywhere (doc 06:172-175).
  */
-export type WirePiece = StructurePiece;
+export type WirePiece = StructurePiece & {
+  /** Door/gate only: a code is set. Never carries WHICH hashes are authorized. */
+  locked?: boolean;
+};
 
 /** An airdrop crate. Sent in EVERY snapshot regardless of distance — the
  * smoke column must be visible across the whole island. */
@@ -471,10 +498,14 @@ export type ServerMsg =
   /** doc 06 — global structure deltas (never interest-filtered). */
   | { t: "sAdd"; piece: WirePiece }
   | { t: "sRemove"; id: number }
-  /** doc 06 — piece state change. `open` is the door/gate toggle; `hp` and
-   * `locked` are reserved additive-optional fields for the raiding/locks
-   * follow-up, so later slices add them without another proto bump. */
+  /** doc 06 — piece state change. `open` is the door/gate toggle; `hp` rides
+   * every structure hit (damage-tier rendering, M7); `locked` flips on
+   * setCode (lock set/changed/removed, M5). */
   | { t: "sState"; id: number; open?: boolean; hp?: number; locked?: boolean }
+  /** doc 06 M6 — authoritative full container state, sent to the requester of
+   * a cOpen/cMove. Fixed CRATE_SLOTS-length array; slot indices are stable
+   * (removal nulls, never compacts). */
+  | { t: "cont"; id: number; slots: (ItemStack | null)[] }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
   | { t: "chat"; name: string; text: string }
   | { t: "death"; by: string; recap: DeathRecap }
@@ -578,32 +609,69 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
     case "drop":
       return isFiniteNum(m.slot) ? { t: "drop", slot: m.slot | 0 } : null;
     case "place": {
-      // doc 06 — kind whitelist (crate is NOT placeable this slice), tier
-      // 0|1, integer grid coords with a loose parse-time clamp at the
-      // max-tier bound (±534 build cells covers the huge tier's ±533; the
-      // authoritative bounds check in canPlace reads World.size).
+      // doc 06 — kind whitelist, tier 0|1, integer grid coords with a loose
+      // parse-time clamp at the max-tier bound (±534 build cells covers the
+      // huge tier's ±533; the authoritative bounds check in canPlace reads
+      // World.size).
       if (typeof m.kind !== "string" || !(PLACE_KIND_WHITELIST as readonly string[]).includes(m.kind)) {
         return null;
       }
       if (m.tier !== 0 && m.tier !== 1) return null;
+      // Crates are wood-only in v1 (PIECE_DEFS hp [200, 200]) — a scrap-tier
+      // crate on the wire is malformed.
+      if (m.kind === "crate" && m.tier !== 0) return null;
       if (!isFiniteNum(m.gx) || !isFiniteNum(m.gz)) return null;
       const gx = Math.max(-534, Math.min(534, m.gx | 0));
       const gz = Math.max(-534, Math.min(534, m.gz | 0));
       let edge: 0 | 2 | undefined;
       if (m.edge !== undefined) {
         if (m.edge !== 0 && m.edge !== 2) return null;
-        // A foundation is a CELL piece — an attached edge would shift
-        // pieceCenter 1.5m and shave every center-based server check
+        // Cell pieces (foundation/crate) must not carry an edge — it would
+        // shift pieceCenter 1.5m and shave every center-based server check
         // (no-build margins, BUILD_RANGE, density). Malformed, reject.
-        if (m.kind === "foundation") return null;
+        if (m.kind === "foundation" || m.kind === "crate") return null;
         edge = m.edge;
       }
-      return { t: "place", kind: m.kind as PieceKind, tier: m.tier, gx, gz, edge };
+      // Free position — crates only (doc 06 M6): both coords or neither;
+      // cell membership is canPlace's authoritative check. Round2 keeps the
+      // wire/persist records tidy (the snapshot round2 convention).
+      let x: number | undefined;
+      let z: number | undefined;
+      if (m.x !== undefined || m.z !== undefined) {
+        if (m.kind !== "crate") return null;
+        if (!isFiniteNum(m.x) || !isFiniteNum(m.z)) return null;
+        x = Math.round(m.x * 100) / 100;
+        z = Math.round(m.z * 100) / 100;
+        // Re-check: |v| > ~1.79e306 overflows the *100 to Infinity, which
+        // would break the parse layer's no-NaN/Infinity contract.
+        if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+      }
+      return { t: "place", kind: m.kind as PieceKind, tier: m.tier, gx, gz, edge, x, z };
     }
     case "demolish":
       return isFiniteNum(m.id) ? { t: "demolish", id: m.id | 0 } : null;
     case "door":
       return isFiniteNum(m.id) ? { t: "door", id: m.id | 0 } : null;
+    case "setCode":
+      // doc 06 M5 — 4 digits sets/changes; the EMPTY string removes the lock
+      // (owner unlock affordance). Anything else is malformed.
+      if (!isFiniteNum(m.id)) return null;
+      if (typeof m.code !== "string" || !/^(\d{4})?$/.test(m.code)) return null;
+      return { t: "setCode", id: m.id | 0, code: m.code };
+    case "tryCode":
+      // doc 06 M5 — strictly 4 digits; guessing burns the per-door budget.
+      if (!isFiniteNum(m.id)) return null;
+      if (typeof m.code !== "string" || !/^\d{4}$/.test(m.code)) return null;
+      return { t: "tryCode", id: m.id | 0, code: m.code };
+    case "cOpen":
+      return isFiniteNum(m.id) ? { t: "cOpen", id: m.id | 0 } : null;
+    case "cMove": {
+      // doc 06 M6 — slot indices `| 0` (doc wire section); bounds are the
+      // server handler's authoritative check.
+      if (!isFiniteNum(m.id) || !isFiniteNum(m.from) || !isFiniteNum(m.to)) return null;
+      if (m.dir !== "in" && m.dir !== "out") return null;
+      return { t: "cMove", id: m.id | 0, from: m.from | 0, to: m.to | 0, dir: m.dir };
+    }
     case "respawn":
       return { t: "respawn" };
     case "chat":

@@ -39,6 +39,20 @@ export interface BuildInfo {
   status: string | null;
 }
 
+/** doc 06 M5 — 4-digit code pad overlay state. "try" = unlock a locked door
+ * (tryCode); "set" = owner set/change/remove the code (setCode). */
+export interface CodePadState {
+  id: number;
+  mode: "try" | "set";
+}
+
+/** doc 06 M6 — the open crate panel: id + the last authoritative `cont`
+ * slots. Replaced wholesale on every cont; null = panel closed. */
+export interface ContainerState {
+  id: number;
+  slots: (ItemStack | null)[];
+}
+
 export interface UIState {
   phase: GamePhase;
   error: string | null;
@@ -78,6 +92,14 @@ export interface UIState {
   realm: Realm;
   /** doc 06 — build-mode HUD state; null while the hammer is not equipped. */
   buildInfo: BuildInfo | null;
+  /** doc 06 M5 — code pad overlay; gates gameplay input like invOpen. */
+  codePad: CodePadState | null;
+  /** doc 06 M6 — open crate panel. Deliberately does NOT gate movement:
+   * walking away is the close gesture (NetSystem's range check). */
+  container: ContainerState | null;
+  /** doc 06 M5 — mirrors runtime.promptDoorId at store rate so touch can
+   * show the LOCK button (runtime reads don't re-render React). */
+  doorPromptId: number | null;
 
   setPhase(phase: GamePhase): void;
   setError(error: string | null): void;
@@ -106,6 +128,12 @@ export interface UIState {
   setRealm(realm: Realm): void;
   /** doc 06 — build HUD mirror; the writer (BuildPreview) guards on change. */
   setBuildInfo(info: BuildInfo | null): void;
+  /** doc 06 M5 — open/close the code pad (no-ops when unchanged). */
+  setCodePad(pad: CodePadState | null): void;
+  /** doc 06 M6 — open/replace/close the crate panel. */
+  setContainer(container: ContainerState | null): void;
+  /** doc 06 M5 — door-prompt mirror (writer: NetSystem, guarded on change). */
+  setDoorPromptId(id: number | null): void;
 }
 
 let noticeId = 0;
@@ -134,6 +162,9 @@ export const useUIStore = create<UIState>((set) => ({
   chatLog: [],
   realm: "overworld",
   buildInfo: null,
+  codePad: null,
+  container: null,
+  doorPromptId: null,
 
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error }),
@@ -177,6 +208,12 @@ export const useUIStore = create<UIState>((set) => ({
     })),
   setRealm: (realm) => set((s) => (s.realm === realm ? s : { realm })),
   setBuildInfo: (buildInfo) => set({ buildInfo }),
+  setCodePad: (codePad) =>
+    set((s) => (s.codePad === codePad ? s : { codePad })),
+  setContainer: (container) =>
+    set((s) => (s.container === container ? s : { container })),
+  setDoorPromptId: (doorPromptId) =>
+    set((s) => (s.doorPromptId === doorPromptId ? s : { doorPromptId })),
 }));
 
 /**

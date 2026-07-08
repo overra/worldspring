@@ -42,9 +42,7 @@ export type PieceKind =
   | "crate";
 export type PieceTier = 0 | 1; // 0 = wood, 1 = scrap
 
-/** Kinds placeable in THIS slice — crates (containers) are a follow-up; the
- * parser and canPlace both reject them. The full 7-kind union stays in the
- * types because types are cheap and the follow-up is additive. */
+/** Every placeable kind (doc 06 M6 added the crate — the full 7-kind set). */
 export const PLACEABLE_KINDS: readonly PieceKind[] = [
   "foundation",
   "wall",
@@ -52,11 +50,12 @@ export const PLACEABLE_KINDS: readonly PieceKind[] = [
   "window",
   "door",
   "gate",
+  "crate",
 ];
 
-/** The wire/client/persisted piece shape. `ownerHash`/`placedAtMs` (and the
- * follow-up's code/contents/authorized) are SERVER-ONLY — they live in the
- * server system's meta map, never in this record, never in this index. */
+/** The wire/client/persisted piece shape. `ownerHash`/`placedAtMs`/`code`/
+ * `authorized`/`contents` are SERVER-ONLY — they live in the server system's
+ * meta map (game.structureMeta), never in this record, never in this index. */
 export interface StructurePiece {
   /** From game.nextEntityId — the ONE shared id space. */
   id: number;
@@ -68,7 +67,8 @@ export interface StructurePiece {
    * cell pieces. Side 1/-Z of (gx,gz) is stored as edge 0 of (gx, gz-1);
    * side 3/-X as edge 2 of (gx-1, gz). */
   edge?: 0 | 2;
-  /** Free position within the cell — crates only (unused this slice). */
+  /** Free position within the cell — crates only (doc 06 M6). Must fall
+   * inside cell (gx,gz); absent reads as the cell center. */
   x?: number;
   z?: number;
   /** Computed ONCE at placement on the server (max of the anchoring cell's 4
@@ -96,7 +96,15 @@ export const PIECE_DEFS: Record<PieceKind, PieceDef> = {
   window: { kind: "window", cost: 6, hp: [350, 1050] },
   door: { kind: "door", cost: 4, hp: [250, 750] },
   gate: { kind: "gate", cost: 8, hp: [450, 1350] },
-  crate: { kind: "crate", cost: 6, hp: [200, 200] }, // unplaceable this slice
+  crate: { kind: "crate", cost: 6, hp: [200, 200] }, // wood-only in v1
+};
+
+/** Incoming structure damage multiplier per tier: [melee, bullet] (doc 06
+ * §Piece data). Wood falls to a patient axe; scrap effectively waits for
+ * future explosives. */
+export const TIER_DMG_MULT: Record<PieceTier, [number, number]> = {
+  0: [1.0, 0.5],
+  1: [0.25, 0.25],
 };
 
 // --- Geometry (doc 06 §Build grid table) ---
@@ -180,15 +188,21 @@ export function edgeFloorY(
   return best;
 }
 
-/** World-space center of a piece's footprint (cell center / edge midpoint). */
+/** World-space center of a piece's footprint (cell center / edge midpoint /
+ * a crate's free position when it carries one). */
 export function pieceCenter(piece: {
   kind: PieceKind;
   gx: number;
   gz: number;
   edge?: 0 | 2;
+  x?: number;
+  z?: number;
 }): [number, number] {
   const x0 = piece.gx * BUILD_CELL;
   const z0 = piece.gz * BUILD_CELL;
+  if (piece.kind === "crate" && piece.x !== undefined && piece.z !== undefined) {
+    return [piece.x, piece.z];
+  }
   if (piece.edge === 0) return [x0 + BUILD_CELL / 2, z0 + BUILD_CELL];
   if (piece.edge === 2) return [x0 + BUILD_CELL, z0 + BUILD_CELL / 2];
   return [x0 + BUILD_CELL / 2, z0 + BUILD_CELL / 2];
@@ -210,7 +224,12 @@ export function pieceAabbs(piece: StructurePiece): Aabb[] {
       { minX: x0, minZ: z0, maxX: x0 + c, maxZ: z0 + c, y0: fy - FOUNDATION_SKIRT, y1: fy },
     ];
   }
-  if (piece.kind === "crate") return []; // non-colliding (follow-up slice)
+  // Crates are NON-COLLIDING (doc 06 open Q1's decided recommendation — the
+  // campfire precedent): zero boxes keeps them out of the collision-sync
+  // surface and kills crate-stair exploits. The index adds a RAYCAST-ONLY
+  // body box (crateAabb) so combat attribution and the demolish aim can
+  // still hit them — see createStructureIndex.
+  if (piece.kind === "crate") return [];
 
   const edge = piece.edge;
   if (edge === undefined) return [];
@@ -260,6 +279,35 @@ export function pieceAabbs(piece: StructurePiece): Aabb[] {
   }
 }
 
+/** Crate body dims — one source for the render box AND the raycast-only
+ * attribution box, so what you see is exactly what you hit. */
+export const CRATE_SIZE = 0.9;
+export const CRATE_HEIGHT = 0.7;
+
+/**
+ * A crate's body box at its free position (or cell center). Crates stay
+ * collision-free (pieceAabbs returns [] — doc 06 open Q1), but the index
+ * inserts this box RAYCAST-ONLY so melee/pellet attribution and the client's
+ * demolish aim can reach crates: the doc's destruction-spill (06:214, M6
+ * acceptance) would be dead code otherwise, and a foreign crate would be an
+ * indestructible cell blocker. Never returned by queryWalls — movement and
+ * the canPlace overlap check are unaffected.
+ */
+export function crateAabb(
+  piece: Pick<StructurePiece, "kind" | "gx" | "gz" | "x" | "z" | "floorY">,
+): Aabb {
+  const [cx, cz] = pieceCenter(piece);
+  const h = CRATE_SIZE / 2;
+  return {
+    minX: cx - h,
+    maxX: cx + h,
+    minZ: cz - h,
+    maxZ: cz + h,
+    y0: piece.floorY,
+    y1: piece.floorY + CRATE_HEIGHT,
+  };
+}
+
 // --- StructureIndex (doc 06 §The StructureIndex) ---
 
 export interface PieceRayHit {
@@ -275,14 +323,19 @@ export interface StructureIndex {
   remove(id: number): void;
   /** Door/gate toggles swap collision boxes in/out of the grid. */
   setOpen(id: number, open: boolean): void;
-  /** Walls near a point — merged into World.queryStatics results. */
+  /** Walls near a point — merged into World.queryStatics results. Excludes
+   * crate bodies (raycast-only boxes never collide). */
   queryWalls(x: number, z: number, r: number): Aabb[];
   /** Foundation top of the cell containing (x,z), or null. */
   floorAt(x: number, z: number): number | null;
-  /** Nearest piece hit WITH attribution. dir must be normalized. */
+  /** Nearest piece hit WITH attribution — includes crate bodies (crateAabb),
+   * so combat damage and the demolish aim reach crates. dir normalized. */
   raycastPiece(origin: Vec3, dir: Vec3, maxDist: number): PieceRayHit | null;
-  /** Cell occupancy (foundations/crates); canPlace support. */
+  /** Cell occupancy — FOUNDATIONS (a crate can share a foundation's cell,
+   * so it tracks its own map; see cratePiece). canPlace support. */
   cellPiece(gx: number, gz: number): StructurePiece | null;
+  /** Crate occupancy: the one crate in cell (gx,gz), or null (doc 06 M6). */
+  cratePiece(gx: number, gz: number): StructurePiece | null;
   /** Edge occupancy: the wall-class piece and the door attachment. */
   edgePieces(
     gx: number,
@@ -314,10 +367,13 @@ function edgeKey(gx: number, gz: number, edge: 0 | 2): number {
   return cellKey(gx, gz) * 2 + (edge === 2 ? 1 : 0);
 }
 
-/** A grid entry: one collision box + the piece it belongs to. */
+/** A grid entry: one box + the piece it belongs to. `solid: false` marks a
+ * raycast-only box (crate bodies): raycastPiece attributes hits to it, but
+ * queryWalls never returns it — no movement/overlap collision. */
 interface BoxEntry {
   id: number;
   box: Aabb;
+  solid: boolean;
 }
 
 const WALL_CLASS: ReadonlySet<PieceKind> = new Set(["wall", "doorway", "window", "gate"]);
@@ -329,14 +385,35 @@ export function createStructureIndex(): StructureIndex {
   const boxesById = new Map<number, Aabb[]>();
   /** cellKey -> piece id (foundations). */
   const cellOcc = new Map<number, number>();
+  /** cellKey -> piece id (crates) — separate from cellOcc because a crate can
+   * stand ON a foundation in the same cell (doc 06 M6). */
+  const crateOcc = new Map<number, number>();
   /** edgeKey -> occupancy (wall-class piece + door attachment). */
   const edgeOcc = new Map<number, { wall: number | null; door: number | null }>();
 
   const gridOf = (v: number): number => Math.floor(v / GRID_CELL);
 
-  const insertBoxes = (id: number, boxes: Aabb[]): void => {
-    boxesById.set(id, boxes);
-    for (const box of boxes) {
+  /** All grid entries a piece derives: its collision boxes (solid) plus, for
+   * crates, the raycast-only body box (crateAabb). */
+  const entriesOf = (piece: StructurePiece): BoxEntry[] => {
+    const entries: BoxEntry[] = pieceAabbs(piece).map((box) => ({
+      id: piece.id,
+      box,
+      solid: true,
+    }));
+    if (piece.kind === "crate") {
+      entries.push({ id: piece.id, box: crateAabb(piece), solid: false });
+    }
+    return entries;
+  };
+
+  const insertBoxes = (id: number, entries: BoxEntry[]): void => {
+    boxesById.set(
+      id,
+      entries.map((e) => e.box),
+    );
+    for (const entry of entries) {
+      const { box } = entry;
       for (let ix = gridOf(box.minX); ix <= gridOf(box.maxX); ix++) {
         for (let iz = gridOf(box.minZ); iz <= gridOf(box.maxZ); iz++) {
           const key = gridKey(ix, iz);
@@ -345,7 +422,7 @@ export function createStructureIndex(): StructureIndex {
             cell = [];
             grid.set(key, cell);
           }
-          cell.push({ id, box });
+          cell.push(entry);
         }
       }
     }
@@ -387,12 +464,14 @@ export function createStructureIndex(): StructureIndex {
       pieces.set(piece.id, piece);
       if (piece.kind === "foundation") {
         cellOcc.set(cellKey(piece.gx, piece.gz), piece.id);
+      } else if (piece.kind === "crate") {
+        crateOcc.set(cellKey(piece.gx, piece.gz), piece.id);
       } else if (piece.edge !== undefined) {
         const slot = edgeSlot(piece.gx, piece.gz, piece.edge);
         if (piece.kind === "door") slot.door = piece.id;
         else if (WALL_CLASS.has(piece.kind)) slot.wall = piece.id;
       }
-      insertBoxes(piece.id, pieceAabbs(piece));
+      insertBoxes(piece.id, entriesOf(piece));
     },
 
     remove(id: number): void {
@@ -402,6 +481,8 @@ export function createStructureIndex(): StructureIndex {
       pieces.delete(id);
       if (piece.kind === "foundation") {
         cellOcc.delete(cellKey(piece.gx, piece.gz));
+      } else if (piece.kind === "crate") {
+        crateOcc.delete(cellKey(piece.gx, piece.gz));
       } else if (piece.edge !== undefined) {
         const slot = edgeOcc.get(edgeKey(piece.gx, piece.gz, piece.edge));
         if (slot) {
@@ -420,7 +501,7 @@ export function createStructureIndex(): StructureIndex {
       if (piece.open === open) return;
       removeBoxes(id);
       piece.open = open;
-      insertBoxes(id, pieceAabbs(piece));
+      insertBoxes(id, entriesOf(piece));
     },
 
     queryWalls(x: number, z: number, r: number): Aabb[] {
@@ -431,6 +512,7 @@ export function createStructureIndex(): StructureIndex {
           const cell = grid.get(gridKey(ix, iz));
           if (!cell) continue;
           for (const e of cell) {
+            if (!e.solid) continue; // crate bodies: raycast-only, never collide
             if (!seen.has(e.box)) {
               seen.add(e.box);
               out.push(e.box);
@@ -478,6 +560,11 @@ export function createStructureIndex(): StructureIndex {
       return id === undefined ? null : (pieces.get(id) ?? null);
     },
 
+    cratePiece(gx: number, gz: number): StructurePiece | null {
+      const id = crateOcc.get(cellKey(gx, gz));
+      return id === undefined ? null : (pieces.get(id) ?? null);
+    },
+
     edgePieces(
       gx: number,
       gz: number,
@@ -507,6 +594,7 @@ export function createStructureIndex(): StructureIndex {
       grid.clear();
       boxesById.clear();
       cellOcc.clear();
+      crateOcc.clear();
       edgeOcc.clear();
     },
   };
@@ -576,6 +664,15 @@ function boxesIntersect(a: Aabb, b: Aabb): boolean {
  * doorway) — canPlace turns that into the right rejection. */
 export function targetFloorY(world: World, t: PlaceTarget): number | null {
   if (t.kind === "foundation") return computeFoundationFloorY(world, t.gx, t.gz);
+  if (t.kind === "crate") {
+    // On a foundation the crate sits on the slab top; on bare terrain it sits
+    // on quantized ground at its free position (doc 06 table: "on foundation
+    // or terrain"). Same derivation on both sides — ghost parity.
+    const cell = world.structures.cellPiece(t.gx, t.gz);
+    if (cell && cell.kind === "foundation") return cell.floorY;
+    const [cx, cz] = pieceCenter(t);
+    return quantizeFloorY(world.heightAt(cx, cz));
+  }
   if (t.edge === undefined) return null;
   if (t.kind === "door") {
     const { wall } = world.structures.edgePieces(t.gx, t.gz, t.edge);
@@ -601,16 +698,32 @@ export function canPlace(
   t: PlaceTarget,
   occupants?: Iterable<{ x: number; y: number; z: number }>,
 ): PlaceRejection | null {
-  // Kind whitelist — crates (and anything future) are not placeable here.
+  // Kind whitelist (anything future is not placeable here). Crates are
+  // wood-only in v1 (PIECE_DEFS hp [200, 200]) — parity with the parser, so
+  // a scrap-tier crate ghost can never read green.
   if (!PLACEABLE_KINDS.includes(t.kind)) return "kind";
+  if (t.kind === "crate" && t.tier !== 0) return "kind";
   if (!Number.isInteger(t.gx) || !Number.isInteger(t.gz)) return "bounds";
-  const isEdgePiece = t.kind !== "foundation";
+  const isEdgePiece = t.kind !== "foundation" && t.kind !== "crate";
   if (isEdgePiece && t.edge !== 0 && t.edge !== 2) return "bounds";
   // A cell piece must not carry an edge: pieceCenter would shift 1.5m and
   // every center-based check below (zones, density — and the server's
   // BUILD_RANGE) would be evaluated at the wrong point. The parser rejects
   // this on the wire; this guard covers every other path.
   if (!isEdgePiece && t.edge !== undefined) return "bounds";
+  // Free position (crates only): both coords or neither, and inside the cell —
+  // an out-of-cell x/z would shift every center-based check off-address.
+  if (t.kind === "crate") {
+    if ((t.x === undefined) !== (t.z === undefined)) return "bounds";
+    if (t.x !== undefined && t.z !== undefined) {
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.z)) return "bounds";
+      if (Math.floor(t.x / BUILD_CELL) !== t.gx || Math.floor(t.z / BUILD_CELL) !== t.gz) {
+        return "bounds";
+      }
+    }
+  } else if (t.x !== undefined || t.z !== undefined) {
+    return "bounds";
+  }
 
   // Bounds: the whole footprint inside ±world.size * 0.48.
   const half = world.size * 0.48;
@@ -624,9 +737,12 @@ export function canPlace(
 
   const index = world.structures;
 
-  // Occupancy: one piece per cell / wall-class per edge / door per edge.
+  // Occupancy: one foundation per cell / one crate per cell / wall-class per
+  // edge / door per edge.
   if (t.kind === "foundation") {
     if (index.cellPiece(t.gx, t.gz)) return "occupied";
+  } else if (t.kind === "crate") {
+    if (index.cratePiece(t.gx, t.gz)) return "occupied";
   } else {
     const edge = t.edge as 0 | 2;
     const { wall, door } = index.edgePieces(t.gx, t.gz, edge);
@@ -663,6 +779,14 @@ export function canPlace(
 
   const [cx, cz] = pieceCenter(t);
 
+  // Crates on bare terrain (no foundation in the cell) need dry land at their
+  // free position — the foundation water rule at a point (doc 06 M6).
+  if (t.kind === "crate") {
+    const cell = index.cellPiece(t.gx, t.gz);
+    const onFoundation = cell !== null && cell.kind === "foundation";
+    if (!onFoundation && world.heightAt(cx, cz) <= BUILD_MIN_TERRAIN_H) return "water";
+  }
+
   // No-build zones — all derived from existing World data (doc 06:41).
   for (const town of world.towns) {
     const r = town.radius + NO_BUILD_TOWN_MARGIN;
@@ -696,6 +820,9 @@ export function canPlace(
     gx: t.gx,
     gz: t.gz,
     ...(isEdgePiece ? { edge: t.edge as 0 | 2 } : {}),
+    ...(t.kind === "crate" && t.x !== undefined && t.z !== undefined
+      ? { x: t.x, z: t.z }
+      : {}),
     floorY,
     hp: 0,
     ...(t.kind === "door" || t.kind === "gate" ? { open: false } : {}),

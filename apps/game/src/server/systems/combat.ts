@@ -11,6 +11,7 @@
 import {
   ATTACK_COOLDOWN_S,
   FIST_DMG,
+  FIST_STRUCT_DMG,
   HIT_CAPSULE_RADIUS,
   LAG_COMP_MAX_REWIND_S,
   MELEE_HALF_ANGLE_RAD,
@@ -28,6 +29,7 @@ import {
 } from "@worldspring/shared/math";
 import { roundsInMag, tryConsumeRound } from "./magazine";
 import { sendInventory, startReload } from "./players";
+import { damageStructure } from "./structures";
 import {
   queueEvent,
   type Deer,
@@ -260,9 +262,11 @@ function meleeAttack(
   }
 
   if (!hitPos) {
-    // Whiffed every living target: an axe swing may still land on a tree
+    // Whiffed every living target: a directly-aimed structure piece takes the
+    // swing (doc 06 M7 — raiding), else an axe swing may still land on a tree
     // trunk (doc 13 M2 — chopping reuses the melee verb; living targets in
-    // front of a tree always win the swing). Trees are static, so no rewind.
+    // front of either always win the swing). Both are static, so no rewind.
+    if (tryHitStructure(state, player, def)) return;
     tryChopTree(state, player);
     return;
   }
@@ -291,6 +295,41 @@ function meleeAttack(
     const pvpDmg = dmg * state.config.pvp.damageMult;
     if (damagePlayer(state, hitPlayer, pvpDmg, player.name, true)) player.stats.kills++;
   }
+}
+
+/**
+ * doc 06 M7 — melee vs structures: cast the LOOK ray (yaw + pitch, chest
+ * height) up to MELEE_RANGE via the attributing raycastPiece; damage the
+ * piece iff nothing in the plain walls-only raycastStatics sits IN FRONT of
+ * it (a worldgen wall eats the swing exactly as it does for living targets;
+ * raycastStatics already folds structure boxes in, so the piece being the
+ * nearest static reads as t ≈ staticT). Fists fall back to FIST_STRUCT_DMG —
+ * nothing is inescapable (griefing policy layer 2). Zombies/deer never call
+ * this path; the red realm renders no structures, so it never swings there.
+ */
+function tryHitStructure(
+  state: GameState,
+  player: ServerPlayer,
+  def: ItemDef | null,
+): boolean {
+  if (player.realm !== "overworld") return false;
+  const { x, z, yaw, pitch } = player.core;
+  const py = player.core.y;
+  const origin: Vec3 = { x, y: py + MELEE_RAY_HEIGHT, z };
+  const dir = lookDir(yaw, pitch);
+  const pieceHit = state.world.structures.raycastPiece(origin, dir, MELEE_RANGE);
+  if (!pieceHit) return false;
+  const staticT = state.world.raycastStatics(origin, dir, MELEE_RANGE, false);
+  if (staticT !== null && staticT < pieceHit.t - 0.05) return false; // occluded
+
+  const baseDmg = def?.structDmg ?? FIST_STRUCT_DMG;
+  if (!damageStructure(state, pieceHit.id, baseDmg, 0)) return false;
+  // Impact flash at the strike point — the standard melee-hit feedback.
+  const hx = origin.x + dir.x * pieceHit.t;
+  const hy = origin.y + dir.y * pieceHit.t;
+  const hz = origin.z + dir.z * pieceHit.t;
+  queueEvent(state, { e: "hit", x: hx, y: hy, z: hz }, hx, hz);
+  return true;
 }
 
 /**
@@ -345,6 +384,12 @@ function fireRanged(
     z: player.core.z,
   };
 
+  // doc 06 M7 — structure damage accumulates per piece across the pull and
+  // lands as ONE damageStructure call after the pellet loop: one sState.hp
+  // broadcast per trigger pull instead of one per pellet (a shotgun blast
+  // would otherwise broadcast up to 6× redundant hp updates to every client).
+  const pieceDmg = new Map<number, number>();
+
   for (let pellet = 0; pellet < ranged.pellets; pellet++) {
     // Per-pellet random cone: offsets vanish exactly when spreadRad is 0.
     // Non-seeded randomness is fine server-side — pellets never need to
@@ -359,6 +404,14 @@ function fireRanged(
     // sits behind a wall — occlusion stays consistent with the rewound world.
     const staticT = state.world.raycastStatics(origin, dir, ranged.range);
     const maxT = staticT ?? ranged.range;
+    // doc 06 M7 — per-pellet piece attribution: raycastStatics folds structure
+    // boxes in but cannot say WHAT it hit; raycastPiece can. A pellet whose
+    // nearest static IS a piece (t ≈ staticT) damages it below — unless a
+    // living target caught the pellet first.
+    const pieceHit =
+      player.realm === "overworld"
+        ? state.world.structures.raycastPiece(origin, dir, ranged.range)
+        : null;
 
     let hitT = Infinity;
     let hitZombie: Zombie | null = null;
@@ -440,6 +493,19 @@ function fireRanged(
       queueEvent(state, { e: "hit", x: tx, y: ty, z: tz }, tx, tz);
     }
 
+    // No living target caught the pellet and the closest static is a
+    // structure piece → bullet-column structure damage (doc 06 M7). Ammo
+    // scarcity makes gun-raiding wasteful by design.
+    if (
+      hitT === Infinity &&
+      pieceHit !== null &&
+      staticT !== null &&
+      pieceHit.t <= staticT + 0.01
+    ) {
+      const base = def.structDmg ?? FIST_STRUCT_DMG;
+      pieceDmg.set(pieceHit.id, (pieceDmg.get(pieceHit.id) ?? 0) + base);
+    }
+
     // Kill credit lands at most once per victim per trigger pull: killZombie/
     // killDeer remove the target (later pellets can't re-hit it) and
     // damagePlayer returns true only on the living->dead transition (dead
@@ -464,4 +530,8 @@ function fireRanged(
       player.stats.kills++;
     }
   }
+
+  // Apply the pull's accumulated structure damage (see pieceDmg above). Same
+  // total as per-pellet application — tier/shield multipliers are linear.
+  for (const [pieceId, base] of pieceDmg) damageStructure(state, pieceId, base, 1);
 }
