@@ -71,6 +71,17 @@ big builds stay parked until the platform loop closes.
 the moment the directory is live, and gates any public announcement. It does
 not wait for "Wave 3".
 
+**Amendment 2026-07-07 — shared dynamic physics (doc 13).** Adam wants falling
+trees, physics props, and vehicles. [Doc 13](13-shared-dynamic-physics.md) adds
+the substrate: a WASM engine (Rapier now, Box3D tracked) stepped
+server-authoritatively, clients interpolate — the kinematic player and
+`movement.ts` are untouched. Sequencing: doc 13 **M0** (determinism + cost
+spike, GO/NO-GO) runs as a weekly slice; if it passes, doc 13 **M1 substrate**
+becomes the anchored Wave 2 big build; **doc 07 M1–M2 moves ahead of vehicles**
+(M4 needs the bigger islands) and doc 06 slides behind or parallel — bases stay
+static colliders either way. The scaling roadmap's spatial-index/30 Hz calls
+are now made physics-aware.
+
 ## Doc index
 
 | Doc | One line |
@@ -87,6 +98,7 @@ not wait for "Wave 3".
 | [10-preview-testbed-qa.md](10-preview-testbed-qa.md) | **Infrastructure / process:** makes the per-PR `worldspring-pr-<N>` preview *testable* — a prod-gated (`env.TESTBED`, never in `wrangler.jsonc`) `provisionTestbed` that lands a fresh-token join fully kitted at a coast station by a lit fire through existing systems (no new wire surface), an extensible typed `Scenario` schema (`parseScenario` in `packages/shared`) driving both that setup and a headless `@worldspring/testkit` harness, and a `/testbed` Claude Code skill that authors scenarios + the human checklist from a diff. The QA acceptance harness docs 05/06/07 defer to. |
 | [11-channeled-timed-actions.md](11-channeled-timed-actions.md) | The channeled-action primitive: a shared `ActiveAction` on `ServerPlayer` (durationS + cancel-on-move/damage/slot-swap/leave-fire), zero new ClientMsg (server-driven cancel) + an additive `you.action` snapshot/`welcome` field + a HUD cast bar, server-authoritative game-time countdown that fires the existing completion path (cook/boil, use, craft, reload, deer-harvest, fishing cast) on finish — turning doc 05's instant `use`/`craft` and combat's instant ranged fire into interruptible casts (forcing the net-new reload + magazine model), with one `PROTOCOL_VERSION` bump owned by doc 03. |
 | [12-map-and-cartography.md](12-map-and-cartography.md) | In-game map + minimap + offline `pnpm map:render`, all from a shared three.js-free raster core over the deterministic `createWorld(seed)` (zero new wire for a full map); a `MapConfig` server dial (minimap on/off, map item `spawn`/`loot`/`none`, reveal `full`/`explored`) + a `map` `ItemType`; and server-authoritative, persisted **fog-of-war** (per-character `ExploredGrid`, additive `CharacterState` JSON + additive `welcome`/`snap` wire) for the `explored` mode — honest that fog can't hide terrain (public seed). |
+| [13-shared-dynamic-physics.md](13-shared-dynamic-physics.md) | Shared rigid-body dynamics on a deterministic WASM engine (Rapier now, Box3D tracked): server-auth stepping in the DO tick + client interpolation (players stay kinematic, `movement.ts` untouched), `WireBody` snapshot sync, bodies in the world snapshot, CI replay harness; features in tracer order — falling trees → props → vehicles (after doc 07 tiers). M0 is a determinism+cost GO/NO-GO spike. |
 | `research/` | Ground truth the docs cite: `cf-costs.md` (billing math — read this one regardless), `cf-deploy.md`, `cf-oauth.md`, `codebase-server.md`, `codebase-sim.md`, `directory-prior-art.md`. |
 
 ### Canonical vocabulary (who owns what)
