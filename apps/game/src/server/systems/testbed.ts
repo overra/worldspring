@@ -12,7 +12,14 @@
 // ./scenarios.ts) instead of a hardcoded loadout — so a single preview can
 // switch between sets by rejoining.
 
-import { CAMPFIRE_BURN_S, MAX_CAMPFIRES } from "@worldspring/shared/constants";
+import {
+  CAMPFIRE_BURN_S,
+  MAX_CAMPFIRES,
+  VEHICLE_FUEL_MAX,
+  VEHICLE_HALF_Y,
+  VEHICLE_HP_MAX,
+  VEHICLE_SEATS,
+} from "@worldspring/shared/constants";
 import { yawToDir } from "@worldspring/shared/math";
 import { ITEM_DEFS, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import type { Provision, Scenario, ScenarioFace, ScenarioZone } from "@worldspring/shared/scenario";
@@ -131,6 +138,43 @@ function applyProvision(state: GameState, player: ServerPlayer, p: Provision): v
         const y = state.world.groundHeight(x, z) + 4 + i * 1.1;
         state.physics.spawnBody(state.nextEntityId++, p.body, x, y, z);
       }
+      return;
+    }
+    case "spawnVehicle": {
+      // doc 13 M4 — drop ONE drivable buggy just ahead of the player on open
+      // ground: a full VehicleMeta (seats/fuel/hp) + the dynamic "vehicle" body,
+      // so a testbed can board and drive immediately instead of trekking to a
+      // building-blocked worldgen spawn. spawnBody buffers if the engine hasn't
+      // attached yet; no-op when physics is disabled. The meta literal is inlined
+      // (this module's runtime imports stay @worldspring/shared-only, so the
+      // strip-types harness need not pull systems/vehicles.ts's value chain — the
+      // same discipline as the inlined addToInventory above).
+      if (!state.config.physics.enabled) {
+        console.warn("[testbed] spawnVehicle ignored — config.physics.enabled is false");
+        return;
+      }
+      // ~2.8 m ahead: inside VEHICLE_ENTER_RANGE (3.2) so the player (and a
+      // same-position passenger) boards without a walk, clear of the hull body.
+      const [fx, fz] = yawToDir(player.core.yaw);
+      const x = player.core.x + fx * 2.8;
+      const z = player.core.z + fz * 2.8;
+      const gy = state.world.groundHeight(x, z);
+      const id = state.nextEntityId++;
+      // Lift the hull base a hair above the sampled seam (the vehicles.ts spawn
+      // lift), so it settles instead of starting intersected with the terrain.
+      state.physics.spawnBody(id, "vehicle", x, gy + VEHICLE_HALF_Y + 0.3, z);
+      const fuel = p.fuel === undefined ? VEHICLE_FUEL_MAX : Math.max(0, Math.min(VEHICLE_FUEL_MAX, p.fuel));
+      state.vehicleMeta.set(id, {
+        id,
+        fuel,
+        hp: VEHICLE_HP_MAX,
+        wrecked: false,
+        seats: new Array(VEHICLE_SEATS).fill(null),
+        input: { throttle: 0, steer: 0, brake: 0 },
+        lastInputAt: 0,
+        lastForward: 0,
+        ramCooldown: 0,
+      });
       return;
     }
     default:

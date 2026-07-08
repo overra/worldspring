@@ -1,0 +1,19 @@
+{
+  "name": "vehicles",
+  "provision": [
+    { "kind": "position", "zone": "inland", "face": "inland" },
+    { "kind": "spawnVehicle", "fuel": 6 },
+    { "kind": "loadout", "items": [{ "type": "fuel", "count": 1 }] },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack"] }
+  ],
+  "checklist": [
+    "doc 13 M4 — a beat-up buggy sits a few metres ahead on open ground.",
+    "Board the driver seat, drive: the hull moves under server-auth control; both clients see the same pose.",
+    "A passenger can board seat 2 and ride; only the driver's input steers.",
+    "The small tank (6 units) runs dry after a short drive — throttle then makes no force, the hull coasts.",
+    "Add the jerry can (refuel) to top the tank back up.",
+    "Ram a zombie at speed to damage it; a hard head-on crash chips hull hp and can wreck it, ejecting riders.",
+    "Restart the preview after a save: the buggy rehydrates at its resting pose with its fuel/hp, seats empty."
+  ]
+}

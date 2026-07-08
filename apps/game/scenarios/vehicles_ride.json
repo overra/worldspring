@@ -1,0 +1,13 @@
+{
+  "name": "vehicles_ride",
+  "provision": [
+    { "kind": "position", "zone": "inland", "face": "inland" },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack"] }
+  ],
+  "checklist": [
+    "doc 13 M4 — a PASSENGER/second-client set: spawns at the same inland spot as the 'vehicles' driver, next to their buggy, but spawns NO vehicle of its own.",
+    "Board the passenger seat of the driver's buggy and ride; your drive input must be ignored (only the driver steers).",
+    "Also used by the vehicles-probe verify pass to observe a rehydrated buggy without provisioning a second one."
+  ]
+}
