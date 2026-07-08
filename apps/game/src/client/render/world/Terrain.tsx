@@ -1,104 +1,63 @@
-// Static island terrain: one displaced, vertex-colored plane built once from
-// the deterministic world heightfield. Low-poly flat-shaded, no textures.
+// Chunked island terrain (doc 07 §4): 128m chunks on a fixed grid, displaced
+// and vertex-colored from the deterministic analytic heightfield. Two LOD
+// rings by chunk-center distance (LOD0 4m verts ≤336m — full density under
+// every entity the interest filter can send; LOD1 8m ≤448m) with ±16m
+// hysteresis, 3m skirts hiding LOD cracks, ≤2 geometry builds per frame, and
+// an LRU geometry cache. All of that lives in terrainChunks.ts (React-free,
+// tested headlessly by scripts/terrain-chunks.mjs); this file is only the
+// React/R3F shell. Low-poly flat-shaded, no textures — the mesh is cosmetic,
+// the sim only ever reads the analytic heightAt.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { WORLD_SIZE } from "@worldspring/shared/constants";
-import { clamp } from "@worldspring/shared/math";
-import { MAP_BIOME, MAP_PALETTE } from "@worldspring/shared/map/palette";
-import type { World } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
-
-/** Plane segments at the standard 800 m tier (4 m cells). Scales with
- * world.size so vertex density stays constant per tier (doc 07 M2-minimal;
- * the chunked/LOD terrain is doc 07 M3). */
-const SEGMENTS = 200;
-
-// Palette literals + thresholds are the SHARED source (packages/shared/src/map/
-// palette.ts) so the 3D terrain and the top-down map never drift (doc 12 M1).
-// THREE.Color converts the same hex from sRGB to working space automatically.
-const SAND = new THREE.Color(MAP_PALETTE.sand);
-const GRASS_LOW = new THREE.Color(MAP_PALETTE.grassLow);
-const GRASS_HIGH = new THREE.Color(MAP_PALETTE.grassHigh);
-const ROCK = new THREE.Color(MAP_PALETTE.rock);
-
-const SAND_MAX_H = MAP_BIOME.sandMaxH; // sand below here, blending out just above
-const ROCK_HEIGHT = MAP_BIOME.rockHeight; // high altitude turns to bare rock
-const ROCK_SLOPE_START = MAP_BIOME.rockSlopeStart; // gradient (m/m) where rock starts blending in
-const ROCK_SLOPE_FULL = MAP_BIOME.rockSlopeFull;
-
-function buildTerrainGeometry(world: World): THREE.BufferGeometry {
-  const heightAt = world.heightAt;
-  const segments = Math.round(SEGMENTS * (world.size / WORLD_SIZE));
-  const geometry = new THREE.PlaneGeometry(world.size, world.size, segments, segments);
-  geometry.rotateX(-Math.PI / 2); // lie flat: plane XY -> world XZ
-
-  const pos = geometry.getAttribute("position") as THREE.BufferAttribute;
-  const count = pos.count;
-  const colors = new Float32Array(count * 3);
-  const tmp = new THREE.Color();
-
-  for (let i = 0; i < count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const h = heightAt(x, z);
-    pos.setY(i, h);
-
-    // Local slope: central-difference gradient magnitude (m per m).
-    const dhdx = (heightAt(x + 2, z) - heightAt(x - 2, z)) / 4;
-    const dhdz = (heightAt(x, z + 2) - heightAt(x, z - 2)) / 4;
-    const slope = Math.sqrt(dhdx * dhdx + dhdz * dhdz);
-
-    // Grass darkens subtly with altitude.
-    tmp.copy(GRASS_LOW).lerp(GRASS_HIGH, clamp((h - 2) / 14, 0, 1));
-    // Beach sand below the waterline fringe.
-    tmp.lerp(SAND, clamp((SAND_MAX_H + 0.3 - h) / 0.6, 0, 1));
-    // Bare rock on steep faces and high ground.
-    const rockT = Math.max(
-      clamp((slope - ROCK_SLOPE_START) / (ROCK_SLOPE_FULL - ROCK_SLOPE_START), 0, 1),
-      clamp((h - ROCK_HEIGHT) / 2.5, 0, 1),
-    );
-    tmp.lerp(ROCK, rockT);
-
-    colors[i * 3] = tmp.r;
-    colors[i * 3 + 1] = tmp.g;
-    colors[i * 3 + 2] = tmp.b;
-  }
-
-  pos.needsUpdate = true;
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.computeVertexNormals();
-  return geometry;
-}
+import {
+  createChunkRenderer,
+  disposeChunkRenderer,
+  updateChunks,
+} from "./terrainChunks";
 
 export function Terrain(): ReactElement | null {
   const world = clientWorld.world;
-  // Red realm: a single multiply tint reddens the whole island while preserving
-  // the baked height/slope shading, plus a faint emissive so the barren ground
-  // glows under the wild sky. Overworld keeps white (vertex colors as-is).
+  // Red realm: a single multiply tint reddens the whole island while
+  // preserving the baked height/slope shading, plus a faint emissive so the
+  // barren ground glows under the wild sky. Overworld keeps white (vertex
+  // colors as-is). One shared material tints every chunk at once.
   const realm = useUIStore((s) => s.realm);
   const isRed = realm === "red";
-  const geometry = useMemo(
-    () => (world ? buildTerrainGeometry(world) : null),
-    [world],
+
+  const material = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        flatShading: true,
+      }),
+    [],
+  );
+  useEffect(() => () => material.dispose(), [material]);
+  useEffect(() => {
+    material.color.set(isRed ? "#d04a2c" : "#ffffff");
+    material.emissive.set(isRed ? "#3a0c06" : "#000000");
+  }, [material, isRed]);
+
+  const renderer = useMemo(
+    () => (world ? createChunkRenderer(world.size, world.heightAt, material) : null),
+    [world, material],
   );
 
   useEffect(() => {
-    if (!geometry) return;
-    return () => geometry.dispose();
-  }, [geometry]);
+    if (!renderer) return;
+    return () => disposeChunkRenderer(renderer);
+  }, [renderer]);
 
-  if (!geometry) return null;
-  return (
-    <mesh geometry={geometry} frustumCulled={false} receiveShadow>
-      <meshStandardMaterial
-        vertexColors
-        flatShading
-        color={isRed ? "#d04a2c" : "#ffffff"}
-        emissive={isRed ? "#3a0c06" : "#000000"}
-      />
-    </mesh>
-  );
+  useFrame((state) => {
+    if (!renderer) return;
+    updateChunks(renderer, state.camera.position.x, state.camera.position.z);
+  });
+
+  if (!renderer) return null;
+  return <primitive object={renderer.group} />;
 }
