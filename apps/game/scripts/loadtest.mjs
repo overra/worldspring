@@ -36,12 +36,17 @@
 //    `inMsgCount`), so caveat 2 is falsifiable: we know the DO actually received
 //    the load rather than the client failing to deliver it.
 //
-// Plain Node ESM, zero deps; uses the built-in WebSocket global (Node 22+).
+// Node ESM, zero deps; uses the built-in WebSocket global. Run via
+// `pnpm loadtest` — the script needs --experimental-strip-types for the
+// shared-package import below (Node 22+, same as the other .mjs probes).
 
 import { randomBytes } from "node:crypto";
+// The join gate: imported (not mirrored) so a server protocol bump can never
+// silently invalidate the load test — every join would be rejected at the
+// proto check and the run would measure nothing.
+import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 
 // --- Mirrored constants (packages/shared/src/constants.ts) ---
-const PROTOCOL_VERSION = 2; // keep == server PROTOCOL_VERSION or every join is rejected
 const MAX_INPUT_DT = 0.05; // clamp for a single cmd dt (seconds)
 const MAX_CMDS_PER_FRAME = 6; // burst allowance for long frames
 const RESPAWN_DELAY_S = 4; // server gates respawn requests on this

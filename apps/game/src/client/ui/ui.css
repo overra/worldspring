@@ -324,11 +324,14 @@
 
 .hud-ammo {
   position: absolute;
-  /* Just above the hotbar, centered with it — survives the mobile hotbar
-   * rescales without pinning to the bar's (variable) right edge. */
-  bottom: calc(16px + 48px + 8px + env(safe-area-inset-bottom, 0px));
+  /* Rendered INSIDE .hud-hotbar and anchored to its top edge, so it follows
+   * every media-query relocation/rescale of the bar (980px lift, coarse-pointer
+   * portrait/landscape moves, 40px slots) for free — no offsets to mirror. */
+  bottom: calc(100% + 8px);
   left: 50%;
   transform: translateX(-50%);
+  /* The hotbar opts into pointer-events; the readout is cosmetic. */
+  pointer-events: none;
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -345,7 +348,7 @@
 }
 
 .hud-ammo--empty .hud-ammo-mag {
-  color: #e05a4e;
+  color: var(--ui-danger);
 }
 
 .hud-ammo-sep,
@@ -824,6 +827,13 @@
   }
 
   .inv-hint {
+    display: none;
+  }
+
+  /* "[R] reload" is a keyboard prompt — meaningless on touch (same rule as
+     .menu-controls / .inv-hint). Touch reloads via the inv-panel RELOAD
+     button or the server auto-reload on an empty trigger pull. */
+  .hud-ammo-hint {
     display: none;
   }
 }

@@ -3,6 +3,7 @@
 
 import { create } from "zustand";
 import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
+import { ITEM_DEFS } from "@worldspring/shared/items";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, Realm, Vitals, YouState } from "@worldspring/shared/protocol";
 
@@ -155,3 +156,23 @@ export const useUIStore = create<UIState>((set) => ({
     })),
   setRealm: (realm) => set((s) => (s.realm === realm ? s : { realm })),
 }));
+
+/**
+ * Whether a trigger pull right now can actually produce a swing/shot — the
+ * client-visible mirror of fireRanged's gates (doc 11 M3). Ranged with an
+ * empty mag fires NOTHING (the server auto-starts the reload instead) and the
+ * trigger is dead mid-reload, so the optimistic local attack animation must
+ * not play for those pulls — a visible "shot" with no tracer/sound/hit
+ * undercuts the dead-trigger design. Melee/unarmed/non-ranged always animate.
+ * Plain getState() read: called from input event handlers, not render.
+ */
+export function attackAnimAllowed(): boolean {
+  const s = useUIStore.getState();
+  if (s.channelAction?.kind === "reload") return false;
+  const stack = s.inventory[s.selectedSlot];
+  if (!stack) return true;
+  const ranged = ITEM_DEFS[stack.type]?.ranged;
+  if (!ranged) return true;
+  // Mirror of the server/HUD read: absent mag ⇒ full (rollback-safe default).
+  return Math.min(ranged.magSize, stack.mag ?? ranged.magSize) > 0;
+}

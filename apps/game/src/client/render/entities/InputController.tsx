@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
-import { useUIStore } from "@/client/state/store";
+import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
 import { doAttack, doDrop, doEquip, doPickup, doUse } from "@/client/net/connection";
 
@@ -180,7 +180,11 @@ export function InputController(): null {
       if (!inputState.pointerLocked) return;
       const ui = useUIStore.getState();
       if (ui.invOpen || ui.chatOpen || ui.phase !== "playing") return;
-      triggerLocalAttackAnim();
+      // The attack message always goes out (an empty-mag pull is what triggers
+      // the server auto-reload), but the optimistic swing animation only plays
+      // when a shot is actually possible — no phantom "shots" on a dry mag or
+      // mid-reload (doc 11 M3: the trigger is dead during the cast).
+      if (attackAnimAllowed()) triggerLocalAttackAnim();
       doAttack();
     };
 

@@ -21,7 +21,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
-import { useUIStore } from "@/client/state/store";
+import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
 import { doAttack, doPickup } from "@/client/net/connection";
 import "./ui.css";
@@ -139,7 +139,10 @@ export function TouchControls(): ReactElement | null {
       switch (btn.dataset.tc) {
         case "attack":
           if (gameplayBlocked()) return;
-          triggerLocalAttackAnim();
+          // Attack always goes to the server (an empty-mag pull triggers the
+          // auto-reload) but the local swing only animates when a shot can
+          // actually happen — no phantom fire on a dry mag or mid-reload.
+          if (attackAnimAllowed()) triggerLocalAttackAnim();
           doAttack();
           return;
         case "jump":

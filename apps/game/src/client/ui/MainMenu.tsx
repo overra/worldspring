@@ -15,8 +15,8 @@ const LEGACY_NAME_KEY = "dc_name";
 const LEADERBOARD_SHOWN = 5;
 
 const CONTROLS_LEGEND =
-  "WASD move · Shift sprint · Mouse look · LMB attack · E pick up · " +
-  "1-8 hotbar · Tab inventory · G drop · V camera · Space jump";
+  "WASD move · Shift sprint · Mouse look · LMB attack · R reload · " +
+  "E pick up · 1-8 hotbar · Tab inventory · G drop · V camera · Space jump";
 
 function loadSavedName(): string {
   // localStorage can throw in private browsing / blocked-storage contexts.
