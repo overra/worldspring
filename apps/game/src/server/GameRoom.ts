@@ -116,11 +116,12 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
+import { handleDemolish, handleDoor, handlePlace, structuresFullMsgs } from "./systems/structures";
 import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
-import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
+import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -584,7 +585,27 @@ export class GameRoom extends DurableObject<Env> {
       case "drop":
         dropSlot(game, player, msg.slot);
         break;
+      case "place":
+        handlePlace(game, player, msg);
+        break;
+      case "demolish":
+        handleDemolish(game, player, msg.id);
+        break;
+      case "door":
+        handleDoor(game, player, msg.id);
+        break;
       case "respawn":
+        // doc 06 griefing policy: "respawn is always available" is layer 2 of
+        // the walling-in mitigation. Until structure damage lands (milestone
+        // 7's FIST_STRUCT_DMG), a respawn request from a LIVING player is a
+        // give-up: die in place (body + inventory stay), then the normal
+        // death→respawn flow applies. Without this, a walled-in player's only
+        // exit is waiting out starvation.
+        if (player.alive) {
+          killPlayer(game, player, "gave up");
+          this.persistAll(game);
+          break;
+        }
         if (!player.alive && game.time - player.diedAt >= this.config.session.respawnDelayS) {
           respawnPlayer(game, player);
           // Persist the new life right away (atomically with the world):
@@ -923,6 +944,11 @@ export class GameRoom extends DurableObject<Env> {
       // static forest on join. Omitted while none are felled (additive optional).
       felled: game.felledTrees.size > 0 ? [...game.felledTrees] : undefined,
     });
+    // doc 06 — the FULL structure set, synchronously after welcome on the
+    // same socket (socket ordering ⇒ it precedes any tick snapshot or delta).
+    // Every welcome path needs this: the client rebuilds its world (and an
+    // empty structure index) from scratch on every welcome.
+    for (const msg of structuresFullMsgs(game)) this.send(ws, msg);
   }
 
   private dropSocket(ws: WebSocket): void {

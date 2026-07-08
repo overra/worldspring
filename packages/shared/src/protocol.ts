@@ -4,6 +4,23 @@
 
 import type { ServerConfig } from "./config";
 import type { ItemStack, ItemType } from "./items";
+import type { PieceKind, PieceTier, StructurePiece } from "./structures";
+
+/**
+ * doc 06 — parse-time whitelist of placeable piece kinds. A LITERAL mirror of
+ * structures.ts `PLACEABLE_KINDS`, duplicated deliberately: protocol.ts must
+ * stay value-import-free of non-leaf shared modules so the node strip-types
+ * test harnesses (wear-slots.mjs etc.) can import it directly. The
+ * structures.mjs harness asserts the two lists stay identical.
+ */
+const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
+  "foundation",
+  "wall",
+  "doorway",
+  "window",
+  "door",
+  "gate",
+];
 
 // --- Protocol version: the two-sided join gate ---
 
@@ -56,7 +73,14 @@ import type { ItemStack, ItemType } from "./items";
 // vocabulary (doc 03's shape clause — the exact rule that forced 2 → 3 for
 // `craft`). The additive `worn?` field on inv/welcome would NOT bump on its
 // own (fog/felled posture); the new messages do. So 7 → 8.
-export const PROTOCOL_VERSION: number = 8;
+// doc 06 core build loop: NEW ClientMsg shapes `place`/`demolish`/`door` grow
+// the wire vocabulary (doc 03's shape clause), AND placed structures change
+// PREDICTED COLLISION semantics — the shared World's queryStatics/groundHeight/
+// raycastStatics now include a mutable StructureIndex fed by the new
+// sFull/sAdd/sRemove/sState server messages. An old client would never build
+// the index and would mispredict every step inside a base — the exact
+// divergence the two-sided gate exists to stop. So 8 → 9.
+export const PROTOCOL_VERSION: number = 9;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -153,6 +177,16 @@ export type ClientMsg =
   | { t: "equip"; slot: number }
   | { t: "pickup"; id: number }
   | { t: "drop"; slot: number }
+  /** doc 06 — place a structure piece at a snapped grid address. Server-side
+   * validation is the shared canPlace + hammer/cost/cap checks; the parser
+   * whitelists PLACEABLE_KINDS and clamps gx/gz to the max-tier bound only
+   * (the real bounds check reads World.size, which the parser cannot). */
+  | { t: "place"; kind: PieceKind; tier: PieceTier; gx: number; gz: number; edge?: 0 | 2 }
+  /** doc 06 — owner-only removal (hold-X client-side). No refund. */
+  | { t: "demolish"; id: number }
+  /** doc 06 — toggle a door/gate open/closed. ANYONE may toggle in this slice
+   * (locks are the follow-up half of doc 06 M5). */
+  | { t: "door"; id: number }
   | { t: "respawn" }
   | { t: "chat"; text: string }
   | { t: "ping"; ts: number };
@@ -259,6 +293,16 @@ export interface WireBody {
   dims?: [number, number, number];
   asleep?: true;
 }
+
+/**
+ * doc 06 — a structure piece on the wire. EXACTLY the shared StructurePiece
+ * (no server fields exist on it): produced exclusively by the server system's
+ * `toWirePiece`, which strips ownerHash/placedAtMs (and every future secret)
+ * from the server's meta. Structure deltas are GLOBAL — never
+ * interest-filtered, never in snapshots — because prediction needs the
+ * complete collision set everywhere (doc 06:172-175).
+ */
+export type WirePiece = StructurePiece;
 
 /** An airdrop crate. Sent in EVERY snapshot regardless of distance — the
  * smoke column must be visible across the whole island. */
@@ -420,6 +464,17 @@ export type ServerMsg =
    * `slots` length is INVENTORY_SLOTS, or INVENTORY_SLOTS + extraSlots while
    * a backpack is worn (pack slots render under the Tab panel's PACK divider). */
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number; worn?: WornState }
+  /** doc 06 — full structure set on join: batches of ≤500 pieces sent
+   * synchronously right after `welcome` (same socket stretch, so they precede
+   * any tick snapshot). `done` marks the last batch. */
+  | { t: "sFull"; pieces: WirePiece[]; done: boolean }
+  /** doc 06 — global structure deltas (never interest-filtered). */
+  | { t: "sAdd"; piece: WirePiece }
+  | { t: "sRemove"; id: number }
+  /** doc 06 — piece state change. `open` is the door/gate toggle; `hp` and
+   * `locked` are reserved additive-optional fields for the raiding/locks
+   * follow-up, so later slices add them without another proto bump. */
+  | { t: "sState"; id: number; open?: boolean; hp?: number; locked?: boolean }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
   | { t: "chat"; name: string; text: string }
   | { t: "death"; by: string; recap: DeathRecap }
@@ -522,6 +577,33 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       return isFiniteNum(m.id) ? { t: "pickup", id: m.id | 0 } : null;
     case "drop":
       return isFiniteNum(m.slot) ? { t: "drop", slot: m.slot | 0 } : null;
+    case "place": {
+      // doc 06 — kind whitelist (crate is NOT placeable this slice), tier
+      // 0|1, integer grid coords with a loose parse-time clamp at the
+      // max-tier bound (±534 build cells covers the huge tier's ±533; the
+      // authoritative bounds check in canPlace reads World.size).
+      if (typeof m.kind !== "string" || !(PLACE_KIND_WHITELIST as readonly string[]).includes(m.kind)) {
+        return null;
+      }
+      if (m.tier !== 0 && m.tier !== 1) return null;
+      if (!isFiniteNum(m.gx) || !isFiniteNum(m.gz)) return null;
+      const gx = Math.max(-534, Math.min(534, m.gx | 0));
+      const gz = Math.max(-534, Math.min(534, m.gz | 0));
+      let edge: 0 | 2 | undefined;
+      if (m.edge !== undefined) {
+        if (m.edge !== 0 && m.edge !== 2) return null;
+        // A foundation is a CELL piece — an attached edge would shift
+        // pieceCenter 1.5m and shave every center-based server check
+        // (no-build margins, BUILD_RANGE, density). Malformed, reject.
+        if (m.kind === "foundation") return null;
+        edge = m.edge;
+      }
+      return { t: "place", kind: m.kind as PieceKind, tier: m.tier, gx, gz, edge };
+    }
+    case "demolish":
+      return isFiniteNum(m.id) ? { t: "demolish", id: m.id | 0 } : null;
+    case "door":
+      return isFiniteNum(m.id) ? { t: "door", id: m.id | 0 } : null;
     case "respawn":
       return { t: "respawn" };
     case "chat":

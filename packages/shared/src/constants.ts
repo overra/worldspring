@@ -171,6 +171,30 @@ export const TRUNK_WOOD_BONUS = 2;
 /** Seconds a settled (sleeping) trunk lies around before despawning to loot. */
 export const TRUNK_SETTLE_TTL_S = 30;
 
+// --- Base building (doc 06) ---
+// Geometry details (skirts, door gap, sill/head) live in structures.ts with
+// pieceAabbs; these are the gameplay tunables per house rules.
+/** Global build grid pitch, meters. */
+export const BUILD_CELL = 3;
+/** Max distance from the player to a piece's center for place/demolish/door. */
+export const BUILD_RANGE = 6;
+/** Wall-class piece height above floorY — above the jump apex (~0.85 m). */
+export const BUILD_WALL_HEIGHT = 2.6;
+export const BUILD_WALL_THICKNESS = 0.25;
+/** Max corner-height spread for a foundation cell. */
+export const BUILD_FOUNDATION_MAX_SLOPE = 1.1;
+/** Every foundation corner must sit above this terrain height (no sea bases). */
+export const BUILD_MIN_TERRAIN_H = 0.5;
+export const NO_BUILD_TOWN_MARGIN = 12;
+export const NO_BUILD_MILITARY_MARGIN = 16;
+export const NO_BUILD_BUILDING_MARGIN = 6;
+export const NO_BUILD_SPAWN_RADIUS = 24;
+/** Hard world-wide piece cap — the only limit a Sybil can't mint around. */
+export const WORLD_PIECE_CAP = 3000;
+export const BUILD_DENSITY_RADIUS = 12;
+/** Max pieces within BUILD_DENSITY_RADIUS of a new piece's center. */
+export const BUILD_DENSITY_CAP = 120;
+
 // --- Respawn ---
 export const RESPAWN_DELAY_S = 4;
 

@@ -56,7 +56,13 @@ const GRID = 48; // (GRID+1)^2 sample points per seed
 // to the pre-M2 baseline — the exclusion loses nothing (size fully determines
 // via the params, and every geometry field reflects it). No nested field is
 // named "size"; if one ever appears, rename it or version the baseline.
-const dropSize = (key, value) => (key === "size" ? undefined : value);
+//
+// doc 06 added World.structures (the MUTABLE player-structure index) — not
+// worldgen geometry: created empty with zero rng draws, filled only by server
+// deltas at runtime. Excluded for the same reason (and so the baseline stays
+// byte-identical); no nested field shares either name.
+const dropSize = (key, value) =>
+  key === "size" || key === "structures" ? undefined : value;
 
 function fingerprintWorld(seed, tier) {
   const w = createWorld({ seed, ...tierParamsOf(tier) });

@@ -20,6 +20,7 @@ import type {
   WornState,
   ZombieState,
 } from "@worldspring/shared/protocol";
+import { pieceAabbs } from "@worldspring/shared/structures";
 import type { World } from "@worldspring/shared/world";
 import { PhysicsSystem } from "../physics/PhysicsSystem";
 
@@ -315,6 +316,20 @@ export interface OutboundMsg {
   msg: ServerMsg;
 }
 
+/**
+ * doc 06 — SERVER-ONLY per-piece extension, kept BESIDE the shared
+ * world.structures index (keyed by the same piece id) so secrets never enter
+ * shared code or the wire. The follow-up slice's code/contents/authorized
+ * fields land here too. Persisted with the world snapshot; toWirePiece
+ * (systems/structures.ts) is the only wire path and never reads this map.
+ */
+export interface StructureMeta {
+  /** Placer's tokenHash — ownership key, stable like character rows. */
+  ownerHash: string;
+  /** Date.now() at placement — decay (follow-up) uses wall-clock. */
+  placedAtMs: number;
+}
+
 export interface GameState {
   world: World;
   /** Resolved server config (deploy-time rules). Read by systems at their point
@@ -350,6 +365,9 @@ export interface GameState {
   /** Server-auth dynamic physics (doc 13) — engine attaches async in the DO;
    * a no-op shell in harnesses/tests that never attach one. */
   physics: PhysicsSystem;
+  /** doc 06 — server-only piece meta (ownership) beside world.structures,
+   * same id space. Every mutation path keeps the two maps in lockstep. */
+  structureMeta: Map<number, StructureMeta>;
   /** doc 13 M2 — indices (into world.trees) of felled trees. Persisted with
    * the world snapshot; mirrored into PhysicsSystem (static-collider
    * exclusion) and to clients (welcome.felled + the per-tick delta below). */
@@ -396,7 +414,11 @@ export function createGameState(
     events: [],
     outbox: [],
     nextEntityId: 1,
-    physics: new PhysicsSystem(world, config.physics),
+    // pieceAabbs injected (doc 06) so attachEngine can build static colliders
+    // for restored structures without PhysicsSystem value-importing shared
+    // non-leaf modules (strip-types harness constraint).
+    physics: new PhysicsSystem(world, config.physics, pieceAabbs),
+    structureMeta: new Map(),
     felledTrees: new Set(),
     felledDelta: [],
     treeChops: new Map(),

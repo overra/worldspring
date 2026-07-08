@@ -3,10 +3,10 @@
 // InputController owns the opening side (pointer-lock Esc → setMenuOpen(true))
 // and re-locks the pointer when the menu closes; this component only closes.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { QUALITY_CONFIGS, useSettingsStore, type QualityPreset } from "@/client/state/settings";
 import { useUIStore } from "@/client/state/store";
-import { disconnect } from "@/client/net/connection";
+import { disconnect, doRespawn } from "@/client/net/connection";
 import "./menu.css";
 
 // Lightest → heaviest. Must stay in sync with the QualityPreset union and
@@ -32,6 +32,13 @@ function qualityHint(preset: QualityPreset): string {
 export function EscapeMenu(): React.ReactElement | null {
   const menuOpen = useUIStore((s) => s.menuOpen);
   const setMenuOpen = useUIStore((s) => s.setMenuOpen);
+  // Two-tap confirm for GIVE UP — it kills the character and leaves the body.
+  const [confirmGiveUp, setConfirmGiveUp] = useState(false);
+
+  // Never carry a half-armed confirm across menu opens.
+  useEffect(() => {
+    if (!menuOpen) setConfirmGiveUp(false);
+  }, [menuOpen]);
 
   const masterVolume = useSettingsStore((s) => s.masterVolume);
   const sensitivity = useSettingsStore((s) => s.sensitivity);
@@ -142,6 +149,25 @@ export function EscapeMenu(): React.ReactElement | null {
             </label>
           </div>
         </div>
+
+        {/* doc 06 griefing policy: respawn is ALWAYS available — the escape
+            hatch for a walled-in player until structure damage ships. The
+            server treats a living player's respawn request as a give-up
+            (die in place, body + inventory stay). */}
+        <button
+          className="esc-btn esc-btn--leave"
+          onClick={() => {
+            if (!confirmGiveUp) {
+              setConfirmGiveUp(true);
+              return;
+            }
+            setConfirmGiveUp(false);
+            setMenuOpen(false);
+            doRespawn();
+          }}
+        >
+          {confirmGiveUp ? "REALLY GIVE UP? (you die here)" : "GIVE UP (respawn)"}
+        </button>
 
         <button className="esc-btn esc-btn--leave" onClick={leaveGame}>
           LEAVE GAME

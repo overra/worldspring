@@ -12,6 +12,7 @@ import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, WearSlot, YouState } from "@worldspring/shared/protocol";
+import type { PlaceTarget } from "@worldspring/shared/structures";
 import { createWorld } from "@worldspring/shared/world";
 import { clientWorld, resetClientWorld } from "@/client/runtime";
 import { cueSound } from "@/client/audio/cues";
@@ -240,6 +241,31 @@ export function doRespawn(): void {
   sendMsg({ t: "respawn" });
 }
 
+/** doc 06 — request a structure placement at a snapped grid address. The
+ * server re-validates everything; the ghost's shared canPlace makes a
+ * rejection rare (occupancy races aside). */
+export function doPlace(target: PlaceTarget): void {
+  sendMsg({
+    t: "place",
+    kind: target.kind,
+    tier: target.tier,
+    gx: target.gx,
+    gz: target.gz,
+    ...(target.edge !== undefined ? { edge: target.edge } : {}),
+  });
+}
+
+/** doc 06 — owner-only demolish (the server enforces ownership). */
+export function doDemolish(id: number): void {
+  sendMsg({ t: "demolish", id });
+}
+
+/** doc 06 — toggle a door/gate. Not client-predicted: the ~1 RTT latency on
+ * a door swing is acceptable (doc 06:174). */
+export function doDoor(id: number): void {
+  sendMsg({ t: "door", id });
+}
+
 /** Send a proximity-chat line; a no-op when the socket is closed (sendMsg).
  * The input enforces CHAT_MAX_LENGTH already — the slice is paste-proofing. */
 export function sendChat(text: string): void {
@@ -365,6 +391,33 @@ function handleMessage(data: unknown): void {
     case "notice":
       ui.pushNotice(msg.msg);
       return;
+    // doc 06 — structure sync. The wire records are applied to the shared
+    // index VERBATIM (no client-side derivation of floorY or ids), so both
+    // sides run identical mutations on identical records — the prediction
+    // parity guarantee. sFull batches arrive right after welcome (the index
+    // is freshly empty from createWorld); deltas are global.
+    case "sFull": {
+      const idx = clientWorld.world?.structures;
+      if (!idx) return;
+      for (const piece of msg.pieces) idx.add(piece);
+      clientWorld.structuresVersion++;
+      return;
+    }
+    case "sAdd": {
+      clientWorld.world?.structures.add(msg.piece);
+      clientWorld.structuresVersion++;
+      return;
+    }
+    case "sRemove": {
+      clientWorld.world?.structures.remove(msg.id);
+      clientWorld.structuresVersion++;
+      return;
+    }
+    case "sState": {
+      if (msg.open !== undefined) clientWorld.world?.structures.setOpen(msg.id, msg.open);
+      clientWorld.structuresVersion++;
+      return;
+    }
     case "pong":
       ui.setPingMs(Date.now() - msg.ts);
       return;
@@ -447,6 +500,10 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   clientWorld.felledTrees.clear();
   for (const idx of msg.felled ?? []) clientWorld.felledTrees.add(idx);
   clientWorld.felledVersion++;
+  // doc 06 — the fresh world's structure index is empty; the sFull batches
+  // that follow this welcome on the same socket fill it. Version bump so the
+  // renderer drops any stale meshes from a previous session.
+  clientWorld.structuresVersion++;
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;

@@ -16,6 +16,13 @@
 
 import type { BodyKind, WireBody } from "@worldspring/shared/protocol";
 import type { PhysicsConfig } from "@worldspring/shared/config";
+import type { StructurePiece } from "@worldspring/shared/structures";
+
+/** doc 06 — derives a piece's collision AABBs (shared `pieceAabbs`). INJECTED
+ * by state.ts at construction, like the engine namespace, so this module keeps
+ * zero non-leaf value imports and stays strip-types importable by the replay
+ * harness. Null (harness fakes) ⇒ attach builds no structure colliders. */
+export type PieceGeometryFn = (piece: StructurePiece) => Aabb[];
 
 // Minimal structural types for the injected Rapier namespace — `import type`
 // only (erased at runtime; the harness runs this file via strip-types).
@@ -34,6 +41,11 @@ export interface PhysicsStaticsSource {
   buildings: ReadonlyArray<{ walls: ReadonlyArray<Aabb>; roof: Aabb }>;
   militaryWalls: ReadonlyArray<Aabb>;
   trees: ReadonlyArray<{ x: number; z: number; r: number; height: number }>;
+  /** doc 06 — player structures. OPTIONAL so the replay harness's tiny fake
+   * World needs no change; the real World always carries it. Restored pieces
+   * are already in this index when attachEngine runs (loadWorld is
+   * synchronous, the Rapier attach is async), so attach builds them all. */
+  structures?: { pieces: ReadonlyMap<number, StructurePiece> };
 }
 interface Aabb {
   minX: number;
@@ -102,16 +114,24 @@ export class PhysicsSystem {
   /** Static tree colliders by index in statics.trees, so a felled tree's
    * collider can be REMOVED at runtime (doc 13 M2). Empty until attach. */
   private treeColliders = new Map<number, RapierCollider>();
+  /** doc 06 — static colliders per structure piece id (the fellTree handle
+   * pattern in reverse): runtime placements add, demolish removes, door
+   * toggles swap. Empty until attach; pre-attach mutations are no-ops because
+   * attachEngine reads the structure index itself. */
+  private structColliders = new Map<number, RapierCollider[]>();
   /** Felled tree indices — excluded from the static build at attach (restored
    * worlds) and removed live after it (fresh fells). Grows monotonically. */
   private felledTrees = new Set<number>();
   private statics: PhysicsStaticsSource;
   private cfg: PhysicsConfig;
   private gameTime = 0;
+  /** doc 06 — injected shared pieceAabbs (see PieceGeometryFn). */
+  private readonly pieceGeometry: PieceGeometryFn | null;
 
-  constructor(statics: PhysicsStaticsSource, cfg: PhysicsConfig) {
+  constructor(statics: PhysicsStaticsSource, cfg: PhysicsConfig, pieceGeometry: PieceGeometryFn | null = null) {
     this.statics = statics;
     this.cfg = cfg;
+    this.pieceGeometry = pieceGeometry;
   }
 
   /** Hydrate persisted bodies (before OR after attach — both safe). */
@@ -176,9 +196,67 @@ export class PhysicsSystem {
       );
     });
 
+    // doc 06 — player structures: everything already in the shared index
+    // (restored pieces included — loadWorld ran synchronously before this
+    // async attach). Open doors/gates derive zero AABBs, so they build no
+    // colliders, matching the kinematic collision swap.
+    if (this.statics.structures && this.pieceGeometry) {
+      for (const piece of this.statics.structures.pieces.values()) {
+        this.addStructure(piece.id, this.pieceGeometry(piece));
+      }
+    }
+
     const buffered = this.pending;
     this.pending = [];
     for (const p of buffered) this.materialize(p);
+  }
+
+  /**
+   * doc 06 — static colliders for a placed piece (runtime add). Pre-attach
+   * this is a deliberate no-op: attachEngine iterates the structure index, so
+   * a piece placed before the wasm resolves is built then. Idempotent per id
+   * (a duplicate add for a live id is dropped).
+   */
+  addStructure(id: number, aabbs: Aabb[]): void {
+    if (!this.engine || !this.world || !this.cfg.enabled) return;
+    if (this.structColliders.has(id)) return;
+    const engine = this.engine;
+    const world = this.world;
+    const handles: RapierCollider[] = [];
+    for (const a of aabbs) {
+      const hx = (a.maxX - a.minX) / 2;
+      const hy = (a.y1 - a.y0) / 2;
+      const hz = (a.maxZ - a.minZ) / 2;
+      if (hx <= 0 || hy <= 0 || hz <= 0) continue;
+      handles.push(
+        world.createCollider(
+          engine.ColliderDesc.cuboid(hx, hy, hz).setTranslation(a.minX + hx, a.y0 + hy, a.minZ + hz),
+        ),
+      );
+    }
+    this.structColliders.set(id, handles);
+  }
+
+  /** doc 06 — remove a demolished piece's colliders (fellTree precedent).
+   * Pre-attach no-op: the piece is already gone from the index attach reads. */
+  removeStructure(id: number): void {
+    const handles = this.structColliders.get(id);
+    if (!handles) return;
+    this.structColliders.delete(id);
+    if (!this.world) return;
+    for (const h of handles) this.world.removeCollider(h, true);
+  }
+
+  /**
+   * doc 06 — door/gate collision swap: replace the piece's colliders with the
+   * boxes derived from its CURRENT open state (open ⇒ zero boxes ⇒ zero
+   * colliders). Without this a trunk rolls into an open doorway and stops on
+   * an invisible physics box — a visible desync vs the interpolated bodies.
+   */
+  setStructureOpen(id: number, aabbs: Aabb[]): void {
+    if (!this.engine) return;
+    this.removeStructure(id);
+    this.addStructure(id, aabbs);
   }
 
   get ready(): boolean {

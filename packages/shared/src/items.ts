@@ -36,7 +36,10 @@ export type ItemType =
   | "map"
   // Red realm gateway (placeable): opens a linked portal pair you can step
   // through to reach (and return from) the red realm.
-  | "portal_kit";
+  | "portal_kit"
+  // doc 06: base building. Additive (no bump needed for the ItemType itself —
+  // the UNKNOWN_DEF rule); the doc's wire messages take the proto bump.
+  | "hammer";
 
 export type ItemKind =
   | "food"
@@ -296,6 +299,10 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   // cross; step back through the twin to return. (kind "placeable" routes through
   // useItem's placeable branch, which dispatches on type.)
   portal_kit: { type: "portal_kit", name: "Red Ender Portal", kind: "placeable", stack: 4, color: "#e0245e", power: 0 },
+
+  // doc 06: base building — equipping it enters build mode (client) and gates
+  // server-side placement. kind:"tool" → useItem no-op, like the flashlight.
+  hammer: { type: "hammer", name: "Hammer", kind: "tool", stack: 1, color: "#8a7550", power: 0 },
 };
 
 // --- Crafting (doc 05 M2) ---
@@ -457,6 +464,7 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "canteen_empty", weight: 8, min: 1, max: 1 },
     { type: "rope", weight: 4, min: 1, max: 1 },
     { type: "portal_kit", weight: 5, min: 1, max: 1 },
+    { type: "hammer", weight: 7, min: 1, max: 1 },
   ],
   inland: [
     { type: "beans", weight: 16, min: 1, max: 2 },
@@ -472,6 +480,7 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "rope", weight: 5, min: 1, max: 1 },
     { type: "canteen_empty", weight: 6, min: 1, max: 1 },
     { type: "portal_kit", weight: 6, min: 1, max: 1 },
+    { type: "hammer", weight: 7, min: 1, max: 1 },
   ],
   military: [
     { type: "rifle", weight: 9, min: 1, max: 1 },

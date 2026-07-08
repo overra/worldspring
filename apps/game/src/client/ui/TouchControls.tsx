@@ -20,10 +20,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
-import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
+import { buildState, clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
-import { doAttack, doPickup } from "@/client/net/connection";
+import { doAttack, doDoor, doPickup, doPlace } from "@/client/net/connection";
 import "./ui.css";
 
 const STICK_RADIUS_PX = 60; // base circle is 120px in ui.css
@@ -139,6 +139,14 @@ export function TouchControls(): ReactElement | null {
       switch (btn.dataset.tc) {
         case "attack":
           if (gameplayBlocked()) return;
+          // doc 06 — build mode captures the tap exactly like desktop LMB
+          // (InputController.onMouseDown): a green ghost places, a red one
+          // does nothing, and the tap NEVER falls through to an attack — the
+          // hammer is a tool, not a weapon.
+          if (buildState.active) {
+            if (buildState.valid && buildState.target !== null) doPlace(buildState.target);
+            return;
+          }
           // Attack always goes to the server (an empty-mag pull triggers the
           // auto-reload) but the local swing only animates when a shot can
           // actually happen — no phantom fire on a dry mag or mid-reload.
@@ -152,7 +160,15 @@ export function TouchControls(): ReactElement | null {
         case "interact": {
           if (gameplayBlocked()) return;
           const lootId = clientWorld.promptLootId;
-          if (lootId !== null) doPickup(lootId);
+          if (lootId !== null) {
+            doPickup(lootId);
+            return;
+          }
+          // doc 06 — no loot in range: the tap toggles a nearby door/gate,
+          // mirroring InputController's E handler (the prompt already reads
+          // "Open door" — without this the button was a no-op on doors).
+          const doorId = clientWorld.promptDoorId;
+          if (doorId !== null) doDoor(doorId);
           return;
         }
         case "bag":

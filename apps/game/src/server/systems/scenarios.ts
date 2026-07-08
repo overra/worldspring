@@ -7,6 +7,7 @@
 // ONLY when env.TESTBED is on, so prod never reaches it.
 
 import { BUILTIN_SCENARIO, parseScenario, type Scenario } from "@worldspring/shared/scenario";
+import buildingJson from "../../../scenarios/building.json";
 import combatJson from "../../../scenarios/combat.json";
 import craftingJson from "../../../scenarios/crafting.json";
 import physicsJson from "../../../scenarios/physics.json";
@@ -24,6 +25,7 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = Object.freeze({
   physics: parseScenario(physicsJson),
   trees: parseScenario(treesJson),
   wear: parseScenario(wearJson),
+  building: parseScenario(buildingJson),
 });
 
 /** Every shipped set name — the M4 panel's set-switcher reads this. */

@@ -16,6 +16,7 @@ import { Terrain } from "./render/world/Terrain";
 import { WaterPlane } from "./render/world/WaterPlane";
 import { Buildings } from "./render/world/Buildings";
 import { BuildingTrim } from "./render/world/BuildingTrim";
+import { Structures } from "./render/world/Structures";
 import { Containers } from "./render/world/Containers";
 import { Trees } from "./render/world/Trees";
 import { Scatter } from "./render/world/Scatter";
@@ -32,6 +33,7 @@ import { Airdrops } from "./render/entities/Airdrops";
 import { Campfires } from "./render/entities/Campfires";
 import { Portals } from "./render/entities/Portals";
 import { PhysicsBodies } from "./render/entities/PhysicsBodies";
+import { BuildPreview } from "./render/entities/BuildPreview";
 import { EffectsLayer } from "./render/entities/EffectsLayer";
 
 export function GameCanvas(): React.ReactElement {
@@ -75,6 +77,11 @@ export function GameCanvas(): React.ReactElement {
           <Buildings />
           <BuildingTrim />
           <Containers />
+          {/* doc 06 — player structures + the hammer ghost. Overworld-only
+              like worldgen buildings; collision (shared World) exists in both
+              realms, matching that precedent. */}
+          <Structures />
+          <BuildPreview />
           <Trees />
           <Scatter />
           <Grass />

@@ -4,14 +4,42 @@
 
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
+import { BUILD_RANGE, PLAYER_EYE_HEIGHT } from "@worldspring/shared/constants";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
-import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
+import { lookDir } from "@worldspring/shared/math";
+import { PLACEABLE_KINDS } from "@worldspring/shared/structures";
+import { buildState, clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
-import { doAttack, doDrop, doEquip, doPickup, doUse } from "@/client/net/connection";
+import {
+  doAttack,
+  doDemolish,
+  doDoor,
+  doDrop,
+  doEquip,
+  doPickup,
+  doPlace,
+  doUse,
+} from "@/client/net/connection";
 
 const MOUSE_SENSITIVITY = 0.0024; // rad per px at sensitivity 1
 const PITCH_LIMIT = 1.45; // rad, per contract
+
+/** doc 06 — hold X this long aiming at your own piece to demolish it. */
+const DEMOLISH_HOLD_MS = 600;
+
+/** doc 06 — the structure piece under the crosshair, or null. */
+function aimedPieceId(): number | null {
+  const world = clientWorld.world;
+  if (!world) return null;
+  const me = clientWorld.me;
+  const hit = world.structures.raycastPiece(
+    { x: me.x, y: me.y + PLAYER_EYE_HEIGHT, z: me.z },
+    lookDir(inputState.yaw, inputState.pitch),
+    BUILD_RANGE + 2,
+  );
+  return hit === null ? null : hit.id;
+}
 
 function clearMovementKeys(): void {
   inputState.forward = false;
@@ -26,6 +54,18 @@ export function InputController(): null {
 
   useEffect(() => {
     const canvas = gl.domElement;
+
+    // doc 06 — hold-X demolish: keydown arms a timer against the aimed piece;
+    // keyup (or aiming away by fire time) cancels. Ownership is enforced
+    // server-side (ownerHash never reaches the client) — a non-owner gets the
+    // rejection notice.
+    let demolishTimer: ReturnType<typeof setTimeout> | null = null;
+    let demolishTargetId: number | null = null;
+    const cancelDemolish = (): void => {
+      if (demolishTimer !== null) clearTimeout(demolishTimer);
+      demolishTimer = null;
+      demolishTargetId = null;
+    };
 
     const onKeyDown = (e: KeyboardEvent): void => {
       const ui = useUIStore.getState();
@@ -108,7 +148,39 @@ export function InputController(): null {
           return;
         case "KeyE": {
           const lootId = clientWorld.promptLootId;
-          if (lootId !== null) doPickup(lootId);
+          if (lootId !== null) {
+            doPickup(lootId);
+            return;
+          }
+          // doc 06 — no loot in range: E toggles a nearby door/gate.
+          const doorId = clientWorld.promptDoorId;
+          if (doorId !== null) doDoor(doorId);
+          return;
+        }
+        case "KeyQ":
+          // doc 06 — cycle the build piece kind while in build mode.
+          if (buildState.active) {
+            buildState.kindIndex = (buildState.kindIndex + 1) % PLACEABLE_KINDS.length;
+          }
+          return;
+        case "KeyT":
+          // doc 06 — toggle wood/scrap tier while in build mode.
+          if (buildState.active) buildState.tier = buildState.tier === 0 ? 1 : 0;
+          return;
+        case "KeyX": {
+          // doc 06 — arm the hold-to-demolish timer on the aimed piece.
+          if (!buildState.active || demolishTimer !== null) return;
+          const id = aimedPieceId();
+          if (id === null) return;
+          demolishTargetId = id;
+          demolishTimer = setTimeout(() => {
+            demolishTimer = null;
+            // Still aiming at the same piece after the hold — commit.
+            if (demolishTargetId !== null && aimedPieceId() === demolishTargetId) {
+              doDemolish(demolishTargetId);
+            }
+            demolishTargetId = null;
+          }, DEMOLISH_HOLD_MS);
           return;
         }
         case "KeyF":
@@ -154,6 +226,10 @@ export function InputController(): null {
 
     const onKeyUp = (e: KeyboardEvent): void => {
       // Always process releases, even mid-death or with inventory open.
+      if (e.code === "KeyX") {
+        cancelDemolish();
+        return;
+      }
       switch (e.code) {
         case "KeyW":
           inputState.forward = false;
@@ -180,6 +256,13 @@ export function InputController(): null {
       if (!inputState.pointerLocked) return;
       const ui = useUIStore.getState();
       if (ui.invOpen || ui.chatOpen || ui.phase !== "playing") return;
+      // doc 06 — build mode captures the click: a green ghost places, a red
+      // one does nothing (the HUD already shows why). Never falls through to
+      // an attack — the hammer is a tool, not a weapon.
+      if (buildState.active) {
+        if (buildState.valid && buildState.target !== null) doPlace(buildState.target);
+        return;
+      }
       // The attack message always goes out (an empty-mag pull is what triggers
       // the server auto-reload), but the optimistic swing animation only plays
       // when a shot is actually possible — no phantom "shots" on a dry mag or
@@ -302,6 +385,7 @@ export function InputController(): null {
       canvas.removeEventListener("click", onCanvasClick);
       window.removeEventListener("blur", onBlur);
       unsubscribe();
+      cancelDemolish();
       clearMovementKeys();
       inputState.pointerLocked = false;
     };

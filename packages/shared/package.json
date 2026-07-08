@@ -20,6 +20,7 @@
     "./scenario": "./src/scenario.ts",
     "./serverInfo": "./src/serverInfo.ts",
     "./signedCookie": "./src/signedCookie.ts",
+    "./structures": "./src/structures.ts",
     "./text": "./src/text.ts",
     "./version": "./src/version.ts",
     "./world": "./src/world.ts"

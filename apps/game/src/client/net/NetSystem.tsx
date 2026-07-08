@@ -4,6 +4,7 @@
 
 import { useFrame } from "@react-three/fiber";
 import {
+  BUILD_CELL,
   INPUT_SEND_MS,
   MAX_CMDS_PER_FRAME,
   MAX_INPUT_DT,
@@ -11,6 +12,7 @@ import {
 } from "@worldspring/shared/constants";
 import { clamp, dist2D } from "@worldspring/shared/math";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
+import { pieceCenter } from "@worldspring/shared/structures";
 import type { InputCmd } from "@worldspring/shared/protocol";
 import { clientWorld, inputState } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
@@ -38,6 +40,7 @@ export function NetSystem(): null {
       // pickup prompt. Consume the jump edge so it can't fire on respawn.
       inputState.jump = false;
       clientWorld.promptLootId = null;
+      clientWorld.promptDoorId = null;
       ui.setPrompt(null);
       return;
     }
@@ -139,6 +142,38 @@ function updatePrompt(ui: UIState): void {
       bestLabel = "Supply Crate";
     }
   }
+  // doc 06 — door/gate toggle prompt, only when no pickup prompt won (E
+  // prioritizes loot). Realm-gated like BuildPreview: structures render (and
+  // handleDoor accepts) in the overworld only, so a red-realm scan would
+  // prompt "Open door" for something invisible whose toggle the server
+  // rejects. O(pieces) scan of the shared index at frame rate is fine at the
+  // 3000-piece world cap — the kind check plus the integer-grid distance
+  // precheck below skip non-candidates without allocating.
+  let doorId: number | null = null;
+  const world = clientWorld.world;
+  if (bestId === null && world !== null && ui.realm === "overworld") {
+    let doorDist = PICKUP_RANGE + 0.6; // gates are 3m wide — a little slack
+    for (const piece of world.structures.pieces.values()) {
+      if (piece.kind !== "door" && piece.kind !== "gate") continue;
+      // pieceCenter lies within [g*BUILD_CELL, g*BUILD_CELL + BUILD_CELL] on
+      // each axis — a cheap reject before the tuple-allocating center call.
+      const reach = doorDist + BUILD_CELL;
+      if (
+        Math.abs(piece.gx * BUILD_CELL - me.x) > reach ||
+        Math.abs(piece.gz * BUILD_CELL - me.z) > reach
+      ) {
+        continue;
+      }
+      const [cx, cz] = pieceCenter(piece);
+      const d = dist2D(me.x, me.z, cx, cz);
+      if (d <= doorDist) {
+        doorDist = d;
+        doorId = piece.id;
+        bestLabel = `${piece.open === true ? "Close" : "Open"} ${piece.kind}`;
+      }
+    }
+  }
   clientWorld.promptLootId = bestId;
-  ui.setPrompt(bestId === null ? null : bestLabel);
+  clientWorld.promptDoorId = doorId;
+  ui.setPrompt(bestId === null && doorId === null ? null : bestLabel);
 }

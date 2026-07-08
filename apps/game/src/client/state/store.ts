@@ -6,6 +6,7 @@ import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
 import { ITEM_DEFS } from "@worldspring/shared/items";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, Realm, Vitals, WornState, YouState } from "@worldspring/shared/protocol";
+import type { PieceKind, PieceTier } from "@worldspring/shared/structures";
 
 // "reconnecting": the in-game socket dropped (e.g. the server DO instance was
 // replaced under load, or a deploy/network blip) and we're auto-reconnecting
@@ -29,6 +30,14 @@ export interface ChatLine {
 
 /** Rolling chat log cap — oldest lines drop past this. */
 const CHAT_LOG_MAX = 50;
+
+/** doc 06 — build-mode HUD mirror: the selected piece/tier and why the ghost
+ * is red (null status = placeable). Written by BuildPreview only on change. */
+export interface BuildInfo {
+  kind: PieceKind;
+  tier: PieceTier;
+  status: string | null;
+}
 
 export interface UIState {
   phase: GamePhase;
@@ -67,6 +76,8 @@ export interface UIState {
    * Low-rate (only changes on a portal crossing), so it lives here in the
    * React-subscribable store rather than the per-frame runtime. */
   realm: Realm;
+  /** doc 06 — build-mode HUD state; null while the hammer is not equipped. */
+  buildInfo: BuildInfo | null;
 
   setPhase(phase: GamePhase): void;
   setError(error: string | null): void;
@@ -93,6 +104,8 @@ export interface UIState {
   /** Set the current realm (net layer, on welcome/snap). No-ops when unchanged
    * so it never triggers a needless re-render of the world components. */
   setRealm(realm: Realm): void;
+  /** doc 06 — build HUD mirror; the writer (BuildPreview) guards on change. */
+  setBuildInfo(info: BuildInfo | null): void;
 }
 
 let noticeId = 0;
@@ -120,6 +133,7 @@ export const useUIStore = create<UIState>((set) => ({
   chatOpen: false,
   chatLog: [],
   realm: "overworld",
+  buildInfo: null,
 
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error }),
@@ -162,6 +176,7 @@ export const useUIStore = create<UIState>((set) => ({
       ],
     })),
   setRealm: (realm) => set((s) => (s.realm === realm ? s : { realm })),
+  setBuildInfo: (buildInfo) => set({ buildInfo }),
 }));
 
 /**

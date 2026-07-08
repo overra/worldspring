@@ -32,7 +32,23 @@ import type {
   Vitals,
   WornState,
 } from "@worldspring/shared/protocol";
+import type { PieceKind, StructurePiece } from "@worldspring/shared/structures";
 import type { PersistedBody } from "./physics/PhysicsSystem";
+
+/** doc 06 — valid persisted piece kinds. A literal mirror of structures.ts
+ * `PieceKind` (the full 7-kind union), duplicated because this module must
+ * stay value-import-free of non-leaf shared modules for the node strip-types
+ * persistence tests (the recoverableFingerprint string-only precedent).
+ * structures.mjs asserts it matches PIECE_DEFS' keys. */
+const PIECE_KINDS: ReadonlySet<string> = new Set([
+  "foundation",
+  "wall",
+  "doorway",
+  "window",
+  "door",
+  "gate",
+  "crate",
+]);
 import type {
   Airdrop,
   Campfire,
@@ -393,6 +409,18 @@ interface WorldSnapshot {
    * ADDITIVE like bodies: older snapshots normalize to [], older code ignores
    * the key — no SCHEMA_VERSION bump. */
   felled: number[];
+  /** doc 06 — player structures: the shared StructurePiece plus the server's
+   * ownership meta, one entry per piece. ADDITIVE (the bodies/felled posture):
+   * older snapshots normalize to [], a rollback drops the key ("no
+   * structures") — no SCHEMA_VERSION bump. ~100 B/piece ⇒ ≈300 KB at the
+   * 3000-piece world cap, far under the 2 MB row cap; row count unchanged. */
+  structures: PersistedStructure[];
+}
+
+/** A persisted piece: the wire/shared record + server-only ownership. */
+export interface PersistedStructure extends StructurePiece {
+  ownerHash: string;
+  placedAtMs: number;
 }
 
 /**
@@ -403,6 +431,26 @@ interface WorldSnapshot {
  * Airdrop crates ARE kept: their timestamps are game-time, which is in the
  * snapshot, so landsAt/expiresAt stay coherent across a restart.
  */
+/** doc 06 — compose persisted pieces from the shared index (collision truth)
+ * + the server-only meta map (ownership). A piece whose meta somehow vanished
+ * persists with an empty owner rather than being dropped. The `?.` chain
+ * tolerates the untyped .mjs harness fixtures that predate structures (the
+ * wornWire precedent) — production GameStates always carry both. */
+function serializeStructures(game: GameState): PersistedStructure[] {
+  const out: PersistedStructure[] = [];
+  const pieces = game.world?.structures?.pieces;
+  if (!pieces) return out;
+  for (const piece of pieces.values()) {
+    const meta = game.structureMeta?.get(piece.id);
+    out.push({
+      ...piece,
+      ownerHash: meta?.ownerHash ?? "",
+      placedAtMs: meta?.placedAtMs ?? 0,
+    });
+  }
+  return out;
+}
+
 export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: GameState): void {
   const snapshot: WorldSnapshot = {
     loot: [...game.loot.values()],
@@ -419,6 +467,7 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     airdropNextAt: game.airdropNextAt,
     bodies: game.physics.serialize(),
     felled: [...game.felledTrees],
+    structures: serializeStructures(game),
   };
   storage.transactionSync(() => {
     // O(1) rows written: delete the prior single snapshot row, insert the new
@@ -462,7 +511,7 @@ function hasNumericId(v: unknown): v is { id: number } {
 function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled"] as const) {
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled", "structures"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
@@ -527,6 +576,46 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   if (bodies.length > 0) {
     game.physics.restore(bodies);
     for (const b of bodies) maxId = Math.max(maxId, b.id);
+  }
+
+  // doc 06 — structures: rebuild the shared index + server meta map. Per-
+  // entry guards mirror hasNumericId (a single garbage entry is skipped, the
+  // rest of the base survives). NO physics call here: loadWorld runs
+  // synchronously in ensureGame BEFORE the async Rapier attach resolves, and
+  // attachEngine builds static colliders for every piece already in the index.
+  // The world/meta guards tolerate pre-structures harness fixtures (wornWire
+  // precedent); production GameStates always carry both.
+  for (const entry of game.world?.structures && game.structureMeta ? snapshot.structures : []) {
+    if (!hasNumericId(entry)) continue;
+    const raw = entry as Partial<PersistedStructure> & { id: number };
+    if (typeof raw.kind !== "string" || !PIECE_KINDS.has(raw.kind)) continue;
+    if (!Number.isInteger(raw.gx) || !Number.isInteger(raw.gz)) continue;
+    if (!Number.isFinite(raw.floorY)) continue;
+    // Edge-kind pieces (wall/doorway/window/door/gate) MUST carry a canonical
+    // edge — restoring one without it would mint an invisible, collisionless
+    // phantom (pieceAabbs returns [], no edge occupancy) that still counts
+    // toward every cap and can never be aimed at to demolish. Skip the entry
+    // instead (the placement invariant). Cell pieces (foundation/crate) must
+    // NOT carry one — a stray edge would shift pieceCenter 1.5m; strip it.
+    const isEdgeKind = raw.kind !== "foundation" && raw.kind !== "crate";
+    if (isEdgeKind && raw.edge !== 0 && raw.edge !== 2) continue;
+    const piece: StructurePiece = {
+      id: raw.id,
+      kind: raw.kind as PieceKind,
+      tier: raw.tier === 1 ? 1 : 0,
+      gx: raw.gx as number,
+      gz: raw.gz as number,
+      ...(isEdgeKind ? { edge: raw.edge as 0 | 2 } : {}),
+      floorY: raw.floorY as number,
+      hp: Number.isFinite(raw.hp) ? (raw.hp as number) : 0,
+      ...(raw.kind === "door" || raw.kind === "gate" ? { open: raw.open === true } : {}),
+    };
+    game.world.structures.add(piece);
+    game.structureMeta.set(piece.id, {
+      ownerHash: typeof raw.ownerHash === "string" ? raw.ownerHash : "",
+      placedAtMs: Number.isFinite(raw.placedAtMs) ? (raw.placedAtMs as number) : 0,
+    });
+    maxId = Math.max(maxId, piece.id);
   }
 
   // doc 13 M2 — felled trees: rebuild the set AND tell the physics system
