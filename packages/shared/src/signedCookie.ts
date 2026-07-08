@@ -91,11 +91,19 @@ export async function verifyCookiePayload(secret: string, value: string): Promis
   }
 }
 
-/** Open-redirect guard for `/login?next=…` — same-origin absolute paths only.
- * Anything else (schemes, scheme-relative `//host`, backslash tricks, header
- * injection bytes) drops to `/`. Doc 01 doesn't state it; it's required. */
+/** Longest `next` we'll carry in the state cookie. Anything bigger risks
+ * pushing the Set-Cookie past the ~4 KB browser per-cookie limit, which
+ * browsers DROP SILENTLY — the victim would finish the OAuth round-trip only
+ * to hit "no state cookie" at the callback. No real path here is this long. */
+const NEXT_PATH_MAX = 512;
+
+/** Open-redirect guard for `/login?next=…` — same-origin absolute paths only,
+ * length-capped. Anything else (schemes, scheme-relative `//host`, backslash
+ * tricks, header injection bytes, oversized paths) drops to `/`. Doc 01
+ * doesn't state it; it's required. */
 export function sanitizeNextPath(next: unknown): string {
   if (typeof next !== "string" || next === "") return "/";
+  if (next.length > NEXT_PATH_MAX) return "/";
   if (!next.startsWith("/")) return "/";
   if (next.startsWith("//")) return "/";
   if (next.includes("\\")) return "/";

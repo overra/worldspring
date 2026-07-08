@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./authSession": "./src/authSession.ts",
     "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
     "./directory": "./src/directory.ts",

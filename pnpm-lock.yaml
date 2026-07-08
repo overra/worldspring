@@ -100,6 +100,9 @@ importers:
       '@astrojs/cloudflare':
         specifier: ^13.7.0
         version: 13.7.0(@types/node@24.13.2)(astro@6.4.6(@types/node@24.13.2)(lightningcss@1.32.0)(rollup@4.61.1)(yaml@2.9.0))(lightningcss@1.32.0)(wrangler@4.99.0)(yaml@2.9.0)
+      '@astrojs/sitemap':
+        specifier: ^3.7.2
+        version: 3.7.3
       '@astrojs/starlight':
         specifier: ^0.40.0
         version: 0.40.0(astro@6.4.6(@types/node@24.13.2)(lightningcss@1.32.0)(rollup@4.61.1)(yaml@2.9.0))(typescript@5.9.3)

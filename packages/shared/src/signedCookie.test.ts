@@ -117,4 +117,9 @@ describe("sanitizeNextPath", () => {
     expect(sanitizeNextPath("/\\evil.example")).toBe("/");
     expect(sanitizeNextPath("/ok\r\nSet-Cookie: x=1")).toBe("/");
   });
+
+  it("caps length so the state cookie stays under the ~4 KB browser limit", () => {
+    expect(sanitizeNextPath(`/${"a".repeat(511)}`)).toBe(`/${"a".repeat(511)}`);
+    expect(sanitizeNextPath(`/${"a".repeat(512)}`)).toBe("/");
+  });
 });

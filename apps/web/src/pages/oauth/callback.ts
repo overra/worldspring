@@ -9,7 +9,7 @@
 // line, error message, or response body (doc 01 §6). There is no refresh
 // token — the client is registered without that grant (doc 01 decision 1).
 import type { APIRoute } from "astro";
-import { constantTimeEqual } from "@worldspring/shared/signedCookie";
+import { constantTimeEqual, sanitizeNextPath } from "@worldspring/shared/signedCookie";
 import {
   authEnv,
   CF_ACCOUNTS_URL,
@@ -121,5 +121,7 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
     path: "/",
     maxAge: SESSION_MAX_AGE_S,
   });
-  return redirect(state.next, 302);
+  // readState already re-sanitizes `next`; this second pass makes the
+  // redirect sink safe on its own, independent of the codec's invariants.
+  return redirect(sanitizeNextPath(state.next), 302);
 };
