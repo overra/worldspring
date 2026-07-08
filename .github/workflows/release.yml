@@ -73,13 +73,20 @@ jobs:
 
       # Previous release's meta.json (if any) → wipesWorld comparison. Absent
       # bucket/objects (first release) is fine — build-artifact defaults false.
+      # NB: `wrangler r2 object get` writes the --file even when the object is
+      # MISSING (error/empty body) — v0.1.0's first run failed on that. Every
+      # fetched file is JSON-validated and deleted if garbage, so only a real
+      # previous meta ever reaches --prev-meta.
       - name: Fetch previous release meta
         run: |
           set +e
+          json_ok() { node -e "JSON.parse(require('fs').readFileSync('$1','utf8'))" 2>/dev/null; }
           npx wrangler@4.99.0 r2 object get "$R2_BUCKET/releases/latest.json" --file prev-latest.json --remote 2>/dev/null
+          json_ok prev-latest.json || rm -f prev-latest.json
           if [ -f prev-latest.json ]; then
             PREV=$(node -p "JSON.parse(require('fs').readFileSync('prev-latest.json','utf8')).version")
             npx wrangler@4.99.0 r2 object get "$R2_BUCKET/releases/v$PREV/meta.json" --file prev-meta.json --remote 2>/dev/null
+            json_ok prev-meta.json || rm -f prev-meta.json
           fi
           exit 0
 
