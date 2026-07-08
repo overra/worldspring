@@ -64,6 +64,9 @@ function pageUrl(n: number): string {
     <title>Servers — Worldspring</title>
     <style>
       body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 68rem; padding: 0 1rem; }
+      /* The 7-column table can exceed a phone's width; scroll it inside its own
+         container so the page body never scrolls horizontally (mobile). */
+      .table-wrap { overflow-x: auto; }
       table { border-collapse: collapse; width: 100%; }
       th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; vertical-align: top; }
       a.name { font-weight: 600; text-decoration: none; }
@@ -88,11 +91,19 @@ function pageUrl(n: number): string {
     <main>
       <h1>Community servers</h1>
       <p>
-        {result.total} live. <a href="/servers/register">Register your server</a>.
+        {/* Unfiltered live count is the honest headline; the filtered subset is
+            called out separately so "N live" never reads as "only N exist". */}
+        {list.length} live{result.total !== list.length ? ` · ${result.total} matching this filter` : ""}.
+        {" "}<a href="/servers/register">Register your server</a>.
       </p>
 
       {/* Filters are a plain GET form — every submit produces a cacheable URL,
-          no JS required. Changing a filter resets to page 1 (no page field). */}
+          no JS required. Changing a filter resets to page 1 (no page field).
+          Deferred (doc 02 §8, tracked here): "has space", "up to date", "show
+          idle" toggle, and name search are not yet wired — only preset + sort are.
+          Name search especially must NOT go straight into the cache key: unbounded
+          query strings would re-open the §11 cache-busting hole, so it needs a
+          bounded/uncached path when it lands. */}
       <form class="filters" method="get" action="/servers">
         <label>
           Preset
@@ -125,6 +136,7 @@ function pageUrl(n: number): string {
             No servers match this filter. <a href="/servers">Clear filters</a>.
           </p>
         ) : (
+          <div class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -183,6 +195,7 @@ function pageUrl(n: number): string {
               ))}
             </tbody>
           </table>
+          </div>
         )
       }
 

@@ -1,10 +1,15 @@
 ---
-// Marketing landing. Was prerendered; M4 (doc 01) flips it to SSR so the nav
-// can show "Sign in"/"Account" ONLY when the OAuth secrets are set — before
-// issue #66 configures them, the rendered HTML is byte-identical in intent
-// (no auth links), so deploying M4 is a visual no-op. An explicit file route
-// at / still wins over Starlight's generated root.
+// Marketing landing + directory preview (doc 02 §4/§8, M5). SSR: the nav shows
+// "Sign in"/"Account" ONLY when the OAuth secrets are set (doc 01), and the page
+// also previews the directory — the official server as a pinned card plus the top
+// 10 community servers — so `/` is a real entry point into the browse experience,
+// not just nav links. Before issue #66 configures OAuth the auth links stay hidden
+// (byte-identical intent), so deploying this is a visual no-op on that axis.
+// An explicit file route at / still wins over Starlight's generated root.
 import { authEnv, oauthConfigured, readSession, SESSION_COOKIE } from "../lib/auth";
+import { env } from "cloudflare:workers";
+import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
+import { loadRankedList } from "../lib/listing";
 
 export const prerender = false;
 
@@ -15,6 +20,25 @@ const session =
   configured && e.SESSION_HMAC_KEY
     ? await readSession(e.SESSION_HMAC_KEY, Astro.cookies.get(SESSION_COOKIE)?.value)
     : null;
+
+// Directory preview (doc 02 §4). Direct D1 read, same pattern as /servers; it
+// degrades to an empty preview on failure (local dev without a migrated D1, or a
+// prod outage) rather than 500-ing the landing page. NOT publicly cached here
+// because the nav is per-visitor once OAuth lands.
+// TODO(doc 02 §11): share the caches.default list payload via an internal helper
+// instead of a per-request D1 read once that helper exists.
+const db = (env as unknown as { DB: D1Database }).DB;
+const now = Date.now();
+let list: Awaited<ReturnType<typeof loadRankedList>> = [];
+try {
+  list = await loadRankedList(db, now, PROTOCOL_VERSION);
+} catch (err) {
+  console.error("[index] directory preview load failed — hiding preview:", err);
+}
+// loadRankedList already pins official first; render it as a standalone card and
+// keep the table to community rows so the official server never shows twice.
+const official = list.find((s) => s.official) ?? null;
+const top = list.filter((s) => !s.official).slice(0, 10);
 ---
 
 <!doctype html>
@@ -23,6 +47,27 @@ const session =
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} — host your own survival world</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+      h2 { margin-top: 2.25rem; }
+      a.name { font-weight: 600; text-decoration: none; }
+      a.name:hover { text-decoration: underline; }
+      .dot { display: inline-block; width: 0.55em; height: 0.55em; border-radius: 50%; margin-right: 0.4em; }
+      .dot.active { background: #3c3; }
+      .dot.idle { background: #999; }
+      .badge { font-size: 0.75em; border: 1px solid #8886; border-radius: 4px; padding: 0 0.35em; margin-left: 0.4em; white-space: nowrap; }
+      .badge.gold { border-color: #c9a227; color: #c9a227; }
+      .official-card { border-left: 4px solid #c9a227; padding: 0.5rem 0 0.5rem 0.9rem; margin: 1.75rem 0; }
+      .official-card .head { display: flex; align-items: center; flex-wrap: wrap; }
+      .motd { color: #888; font-size: 0.9em; margin: 0.35rem 0; }
+      .meta { font-size: 0.9em; margin: 0.35rem 0; }
+      .host { font-weight: 600; word-break: break-all; }
+      .join { display: inline-block; margin-top: 0.5rem; font-weight: 600; text-decoration: none; }
+      .table-wrap { overflow-x: auto; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; vertical-align: top; }
+      .region { color: #666; }
+    </style>
   </head>
   <body>
     <main>
@@ -36,6 +81,73 @@ const session =
         {configured && session && <> · <a href="/account">Account</a></>}
         {configured && !session && <> · <a href="/login">Sign in</a></>}
       </p>
+
+      {
+        official && (
+          <section class="official-card">
+            <div class="head">
+              <span
+                class={`dot ${official.activeNow ? "active" : "idle"}`}
+                title={official.activeNow ? "active now" : "idle — wakes on join"}
+              />
+              <a class="name" href={`/servers/${official.id}`}>{official.name}</a>
+              <span class="badge gold">Official</span>
+            </div>
+            {official.motd && <p class="motd">{official.motd}</p>}
+            <p class="meta">
+              <span class="host">{official.host}</span> · {official.players}/{official.maxPlayers} players
+              {official.hasUptime && <> · {Math.round(official.uptimeRatio20d * 100)}% uptime (20d)</>}
+            </p>
+            {/* First-party → straight out with ?ref, new tab (doc 02 §9); no interstitial. */}
+            <a
+              class="join"
+              href={`${official.joinUrl}/?ref=worldspring-directory`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >Join {official.host} &rarr;</a>
+          </section>
+        )
+      }
+
+      {
+        top.length > 0 && (
+          <section>
+            <h2>Top community servers</h2>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Players</th>
+                    <th>Region</th>
+                    <th>Uptime (20d)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {top.map((s) => (
+                    <tr>
+                      <td>
+                        <span
+                          class={`dot ${s.activeNow ? "active" : "idle"}`}
+                          title={s.activeNow ? "active now" : "idle — wakes on join"}
+                        />
+                        <a class="name" href={`/servers/${s.id}`}>{s.name}</a>
+                        {s.outdated && (
+                          <span class="badge" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>
+                        )}
+                      </td>
+                      <td>{s.players}/{s.maxPlayers}</td>
+                      <td class="region">{s.region ?? "—"}</td>
+                      <td>{s.hasUptime ? `${Math.round(s.uptimeRatio20d * 100)}%` : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p><a href="/servers">Browse all servers &rarr;</a></p>
+          </section>
+        )
+      }
     </main>
   </body>
 </html>

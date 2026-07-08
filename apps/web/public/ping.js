@@ -98,7 +98,11 @@
       });
       memo = String(Math.round(performance.now() - start));
     } catch {
-      memo = "x"; // down / DNS / TLS / CORS / timeout — all render "—"
+      // down / DNS / TLS / CORS / timeout — all render "—". The browser ALSO logs
+      // its own network/CORS error per failed cross-origin GET; try/catch cannot
+      // suppress that (inherent to client-measured ping). It stays bounded: viewport-
+      // only, ≤PING_CONCURRENCY in flight, once per server per session.
+      memo = "x";
     } finally {
       clearTimeout(timer);
     }

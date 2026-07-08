@@ -7,7 +7,7 @@ import {
   canonicalListCacheUrl,
   DEFAULT_PAGE_SIZE,
   isOutdated,
-  MAX_PAGE_SIZE,
+  LIST_MAX_ROWS,
   parseBrowseParams,
   regionOf,
   shapeServerDetail,
@@ -44,17 +44,25 @@ describe("parseBrowseParams — strict, bounded, never throws (doc 02 §8)", () 
     expect(parseBrowseParams(q("preset=")).preset).toBeNull();
   });
 
-  it("clamps page and pageSize; junk falls back to defaults", () => {
+  const MAX_PAGE = Math.ceil(LIST_MAX_ROWS / DEFAULT_PAGE_SIZE);
+
+  it("clamps page to [1, MAX_PAGE]; junk falls back to page 1", () => {
     expect(parseBrowseParams(q("page=3")).page).toBe(3);
     expect(parseBrowseParams(q("page=0")).page).toBe(1); // min 1
     expect(parseBrowseParams(q("page=-5")).page).toBe(1);
     expect(parseBrowseParams(q("page=abc")).page).toBe(1);
     expect(parseBrowseParams(q("page=2.5")).page).toBe(1); // non-integer → default
-    expect(parseBrowseParams(q("page=99999999999")).page).toBe(1_000_000); // absurd-page clamp
+    // Absurd pages fold to the small MAX_PAGE ceiling (bounded cache-key space, §11),
+    // NOT an unbounded value — this is what stops `?page=<huge>` cache-busting D1.
+    expect(parseBrowseParams(q("page=99999999999")).page).toBe(MAX_PAGE);
+    expect(parseBrowseParams(q(`page=${MAX_PAGE + 5}`)).page).toBe(MAX_PAGE);
+  });
 
-    expect(parseBrowseParams(q("pageSize=10")).pageSize).toBe(10);
-    expect(parseBrowseParams(q("pageSize=99999")).pageSize).toBe(MAX_PAGE_SIZE);
-    expect(parseBrowseParams(q("pageSize=0")).pageSize).toBe(1); // min 1
+  it("fixes pageSize regardless of the query param (cache-key cardinality, §11)", () => {
+    expect(parseBrowseParams(q("")).pageSize).toBe(DEFAULT_PAGE_SIZE);
+    expect(parseBrowseParams(q("pageSize=10")).pageSize).toBe(DEFAULT_PAGE_SIZE);
+    expect(parseBrowseParams(q("pageSize=99999")).pageSize).toBe(DEFAULT_PAGE_SIZE);
+    expect(parseBrowseParams(q("pageSize=1")).pageSize).toBe(DEFAULT_PAGE_SIZE);
     expect(parseBrowseParams(q("pageSize=abc")).pageSize).toBe(DEFAULT_PAGE_SIZE);
   });
 });
@@ -87,6 +95,19 @@ describe("canonicalListCacheUrl — cache key includes query params (doc 02 §11
     const empty = canonicalListCacheUrl(base);
     expect(bogus).toBe(empty);
     expect(empty).toBe(`${base}?sort=score&page=1&pageSize=${DEFAULT_PAGE_SIZE}`);
+  });
+
+  it("folds out-of-range pages and any pageSize into a BOUNDED key space (§11)", () => {
+    const maxPage = Math.ceil(LIST_MAX_ROWS / DEFAULT_PAGE_SIZE);
+    // Every page past the real max collapses to the SAME key (not a fresh miss each) —
+    // a client walking `?page=1e6` can't mint unbounded distinct cache entries.
+    const atMax = canonicalListCacheUrl(`${base}?page=${maxPage}`);
+    expect(canonicalListCacheUrl(`${base}?page=${maxPage + 1}`)).toBe(atMax);
+    expect(canonicalListCacheUrl(`${base}?page=999999`)).toBe(atMax);
+    // A caller-varied pageSize never fragments the cache — it isn't a real param.
+    const none = canonicalListCacheUrl(base);
+    expect(canonicalListCacheUrl(`${base}?pageSize=1`)).toBe(none);
+    expect(canonicalListCacheUrl(`${base}?pageSize=100`)).toBe(none);
   });
 });
 

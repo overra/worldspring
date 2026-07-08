@@ -6,8 +6,9 @@
 //
 // The whole point of routing filters/sorts/pagination through query params is
 // that every filtered view is a CACHEABLE URL (doc 02 §11 acceptance): the
-// parse is strict and bounded (whitelist sort/preset, clamp page/pageSize) so a
-// hostile or malformed query can never error or unbound anything, and
+// parse is strict and bounded (whitelist sort/preset, clamp page to a small
+// ceiling, fix pageSize) so a hostile or malformed query can never error,
+// unbound anything, OR mint unbounded distinct cache keys, and
 // canonicalListCacheUrl derives a stable per-query cache key.
 
 import { score } from "./directory.ts";
@@ -33,16 +34,27 @@ export const BROWSE_PRESETS = [
 ] as const;
 export type BrowsePreset = (typeof BROWSE_PRESETS)[number];
 
-export const DEFAULT_PAGE_SIZE = 50; // doc 02 §11: 50 rows/page
-export const MAX_PAGE_SIZE = 100; // hard bound so ?pageSize=1e9 can't unbound a page
-const MAX_PAGE = 1_000_000; // absurd-page guard; a too-high page just renders empty
+export const DEFAULT_PAGE_SIZE = 50; // doc 02 §11: 50 rows/page — the ONLY page size
+// doc 02 §4/§11 hard list cap (mirrored by loadRankedList's `SELECT … LIMIT`). Exported
+// so the web loader shares this single source of truth instead of re-declaring 500.
+export const LIST_MAX_ROWS = 500;
+// The browse surface serves at most LIST_MAX_ROWS rows at a FIXED DEFAULT_PAGE_SIZE, so
+// there are only ever this many real pages. Clamping `page` to this small ceiling (not an
+// absurd 1e6) is what keeps the per-query cache-key space BOUNDED: a hostile client walking
+// `?page=1,2,3,…` mints at most MAX_PAGE distinct keys per filter, so the 30 s edge cache
+// actually shields D1 instead of being trivially busted into a cold full-list read on every
+// request (defeating §11's ~2-D1-reads/30s/colo cost model). pageSize is NOT a public param
+// for the same reason — a caller-varied `?pageSize` would re-multiply the key space and
+// re-open the identical cache-busting hole.
+const MAX_PAGE = Math.ceil(LIST_MAX_ROWS / DEFAULT_PAGE_SIZE); // = 10
 
 export interface BrowseParams {
   /** null = show all presets. */
   preset: BrowsePreset | null;
   sort: BrowseSort;
-  /** 1-based, ≥1. applyBrowse re-clamps to the real pageCount once total known. */
+  /** 1-based, clamped to [1, MAX_PAGE]. applyBrowse re-clamps to the real pageCount. */
   page: number;
+  /** Fixed at DEFAULT_PAGE_SIZE — not caller-variable (cache-key cardinality, §11). */
   pageSize: number;
 }
 
@@ -66,8 +78,11 @@ function intParam(raw: string | null, dflt: number, min: number, max: number): n
 /**
  * Strict, bounded, never-throwing parse of the browse query string (doc 02 §8).
  * Unknown/malformed `sort` and `preset` fall back to defaults (score / no
- * filter); `page`/`pageSize` are clamped. This is the whole cacheability
- * contract: the same logical query always parses to the same BrowseParams.
+ * filter); `page` is clamped to [1, MAX_PAGE] and `pageSize` is FIXED. This is
+ * the whole cacheability contract: the same logical query always parses to the
+ * same BrowseParams AND the parsed space is bounded (sorts × presets × MAX_PAGE),
+ * so the per-query cache-key space is bounded too — the cache can't be walked into
+ * a cold D1 read per request (doc 02 §11).
  */
 export function parseBrowseParams(params: URLSearchParams): BrowseParams {
   const sortRaw = params.get("sort");
@@ -76,7 +91,9 @@ export function parseBrowseParams(params: URLSearchParams): BrowseParams {
     preset: isBrowsePreset(presetRaw) ? presetRaw : null,
     sort: isBrowseSort(sortRaw) ? sortRaw : "score",
     page: intParam(params.get("page"), 1, 1, MAX_PAGE),
-    pageSize: intParam(params.get("pageSize"), DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE),
+    // FIXED, never read from the query: a caller-varied `?pageSize` would multiply
+    // the cache-key cardinality and let `?pageSize=N` cache-bust the list into D1 (§11).
+    pageSize: DEFAULT_PAGE_SIZE,
   };
 }
 

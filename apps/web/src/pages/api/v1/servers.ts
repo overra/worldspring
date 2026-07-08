@@ -28,8 +28,11 @@ export const prerender = false;
 
 const REGISTER_LIMIT_PER_HOUR = 5; // doc 02 §4
 const BODY_MAX_BYTES = 4 * 1024; // doc 02 §4 general cap
-// doc 02 §11: 30 s edge TTL + 120 s stale-while-revalidate. max-age doubles as
-// the caches.default freshness window (the Cache API honors Cache-Control).
+// doc 02 §11: 30 s edge TTL. `max-age` doubles as the caches.default freshness
+// window (the Cache API honors Cache-Control). `stale-while-revalidate=120` is
+// ADVISORY-ONLY here: caches.default performs NO background revalidation, so once
+// max-age lapses a hit is a plain MISS that rebuilds from D1 — the SWR token only
+// informs browsers / downstream shared caches, none of which this Worker revalidates.
 const LIST_CACHE_CONTROL = "public, max-age=30, stale-while-revalidate=120";
 
 /**
@@ -164,6 +167,11 @@ export const GET: APIRoute = async ({ request, locals }) => {
 
   const response = jsonResponse(
     {
+      // Response-BUILD time (identical for every cache hit within the TTL — the M5
+      // acceptance assertion). NOTE: this is NOT a data-freshness watermark and
+      // cannot detect a dead cron/prober — it is always ~now even if probes stopped
+      // hours ago. The §Threatens cron-staleness monitor needs a real data watermark
+      // (e.g. MAX(last_probe_at) over live rows), deferred to launch wiring (M8).
       generatedAt: now,
       total: paged.total,
       page: paged.page,

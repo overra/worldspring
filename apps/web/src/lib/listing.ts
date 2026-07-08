@@ -6,6 +6,7 @@
 // API and the HTML.
 
 import {
+  LIST_MAX_ROWS,
   shapeListedServer,
   shapeServerDetail,
   type ListedServer,
@@ -17,7 +18,8 @@ import {
 export type { ListedServer, ServerDetailView } from "@worldspring/shared/browse";
 
 const UPTIME_WINDOW_MS = 20 * 86400_000; // doc 02 §8: 20-day probe window
-const LIST_MAX_ROWS = 500; // doc 02 §4/§11 hard cap (asserted loudly below)
+// LIST_MAX_ROWS (doc 02 §4/§11 hard cap, asserted loudly below) is imported from
+// @worldspring/shared/browse so the SELECT cap and the page-clamp ceiling stay in lockstep.
 
 /**
  * Load every `live` server, shaped + scored and pre-sorted official-first /

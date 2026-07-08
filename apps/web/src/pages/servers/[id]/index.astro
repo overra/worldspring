@@ -123,8 +123,12 @@ function stripColor(ratio: number | null): string {
 
         <dt>Region</dt>
         <dd>
-          {s.region ?? "unknown"}{s.colo && s.region !== s.colo ? ` (${s.colo})` : ""} ·
-          {" "}<span class="ping" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">measuring ping…</span>
+          {/* Compare case-insensitively: regionOf upper-cases an unmapped colo, so a
+              stored lower/mixed-case code must not render twice as "ZZZ (zzz)". */}
+          {s.region ?? "unknown"}{s.colo && s.region?.toUpperCase() !== s.colo.toUpperCase() ? ` (${s.colo})` : ""} ·
+          {/* Default "—" (matches the list page): if JS is off / ping.js fails, this
+              degrades honestly instead of a stuck "measuring…" that never resolves. */}
+          {" "}<span class="ping" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">—</span>
         </dd>
 
         <dt>Uptime (20d)</dt>
