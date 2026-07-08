@@ -15,6 +15,7 @@
     "models:export": "node scripts/export-models.mjs",
     "models:icons": "node scripts/render-icons.mjs",
     "loadtest": "node --experimental-strip-types scripts/loadtest.mjs",
+    "build-loadtest": "node --experimental-strip-types scripts/build-loadtest.mjs",
     "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:testbed && pnpm test:physics && pnpm test:vehicles && pnpm test:heartbeat && pnpm test:reload && pnpm test:wear && pnpm test:structures && pnpm test:terrain",
     "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",
     "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs",
