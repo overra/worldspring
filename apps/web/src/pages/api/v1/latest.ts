@@ -2,18 +2,18 @@
 // `GET /api/v1/latest` → `{ version, protocol }` of the current release (build-
 // time constants), used by clients/servers for an "update available" hint.
 //
-// The real values come from doc 03's GAME_VERSION + PROTOCOL_VERSION (not built
-// yet) — placeholders until then. Proves the v13 `cloudflare:workers` env API
-// (Astro.locals.runtime was removed) by reading D1 for a registered count, kept
-// as a non-contractual extra field.
+// Values are the build-time constants (doc 02 §3 "latest release is NOT a
+// table"): releasing the game = redeploy apps/web too. Reads D1 for a
+// registered count, kept as a non-contractual extra field.
 import type { APIRoute } from "astro";
 import { env } from "cloudflare:workers";
+import { GAME_VERSION } from "@worldspring/shared/version";
+import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 
 export const prerender = false;
 
-// TODO(doc 03): import GAME_VERSION + PROTOCOL_VERSION from @worldspring/shared.
-const VERSION = "0.0.0-scaffold";
-const PROTOCOL = 0;
+const VERSION = GAME_VERSION;
+const PROTOCOL = PROTOCOL_VERSION;
 
 export const GET: APIRoute = async () => {
   let servers = 0;

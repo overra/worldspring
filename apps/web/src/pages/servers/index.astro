@@ -1,33 +1,153 @@
 ---
-// SSR directory page (runs on the Worker). The full ranked listing, filters,
-// and per-server pages land with doc 02; this scaffold proves a per-route SSR
-// page builds, reads D1 via the v13 `cloudflare:workers` env API, and that the
-// @worldspring/shared package resolves inside Astro's SSR build (vite.ssr.noExternal).
+// SSR directory browse (doc 02 §8; full filters/sorts land with M5). Renders
+// the REAL ranked list from D1: live servers scored by rank.ts, official row
+// pinned. All listing text is untrusted operator content — Astro {expr}
+// interpolation auto-escapes, and join links only ever carry the
+// registration-pinned, normalized https origin (never heartbeat/probe
+// joinUrl values — doc 03 §7).
 export const prerender = false;
 import { env } from "cloudflare:workers";
-import { MAX_PLAYERS } from "@worldspring/shared/constants";
+import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
+import { score } from "../../lib/rank";
 
-let count = 0;
-try {
-  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM servers").first<{
-    n: number;
-  }>();
-  count = Number(row?.n ?? 0);
-} catch {
-  // local dev without a migrated D1 — show 0
+interface Row {
+  id: string;
+  url: string;
+  name: string;
+  motd: string;
+  preset: string | null;
+  version: string | null;
+  protocol: number | null;
+  players: number;
+  players_max: number;
+  colo: string | null;
+  source: string;
+  created_at: number;
+  last_heartbeat_at: number | null;
 }
+
+const db = (env as unknown as { DB: D1Database }).DB;
+const now = Date.now();
+let rows: Row[] = [];
+const uptimeBy = new Map<string, number>();
+try {
+  const [serversRes, uptimeRes] = await db.batch([
+    db
+      .prepare(
+        `SELECT id, url, name, motd, preset, version, protocol, players, players_max,
+                colo, source, created_at, last_heartbeat_at
+         FROM servers WHERE status = 'live' LIMIT 500`,
+      )
+      .bind(),
+    db
+      .prepare(
+        "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? GROUP BY server_id",
+      )
+      .bind(now - 20 * 86400_000),
+  ]);
+  rows = serversRes.results as unknown as Row[];
+  for (const r of uptimeRes.results as Array<{ server_id: string; ratio: number }>) {
+    uptimeBy.set(r.server_id, Number(r.ratio ?? 0));
+  }
+} catch {
+  // local dev without a migrated D1 — empty state below
+}
+
+const listed = rows
+  .map((r) => {
+    const uptimeRatio20d = uptimeBy.get(r.id) ?? 0;
+    const players = Math.min(r.players, r.players_max); // display clamp (doc 02 §7)
+    return {
+      ...r,
+      players,
+      uptimeRatio20d,
+      official: r.source === "official",
+      activeNow: r.last_heartbeat_at !== null && now - r.last_heartbeat_at < 5 * 60_000,
+      outdated: r.protocol !== null && r.protocol < PROTOCOL_VERSION,
+      score: score(
+        {
+          players,
+          players_max: r.players_max,
+          protocol: r.protocol,
+          created_at: r.created_at,
+          uptimeRatio20d,
+        },
+        PROTOCOL_VERSION,
+        now,
+      ),
+    };
+  })
+  .sort((a, b) => (a.official !== b.official ? (a.official ? -1 : 1) : b.score - a.score));
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Servers — Worldspring</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 64rem; padding: 0 1rem; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; }
+      .motd { color: #888; font-size: 0.85em; }
+      .badge { font-size: 0.75em; border: 1px solid #8886; border-radius: 4px; padding: 0 0.35em; margin-left: 0.4em; }
+      .dot { display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%; margin-right: 0.4em; }
+      .dot.active { background: #3c3; }
+      .dot.idle { background: #999; }
+      .empty { color: #888; margin-top: 2rem; }
+    </style>
   </head>
   <body>
     <main>
       <h1>Community servers</h1>
-      <p>{count} registered. Player counts are capped at {MAX_PLAYERS}.</p>
+      <p>
+        {listed.length} live. <a href="/servers/register">Register your server</a>.
+      </p>
+      {
+        listed.length === 0 ? (
+          <p class="empty">
+            No live servers yet. Run your own copy of Worldspring and{" "}
+            <a href="/servers/register">list it here</a>.
+          </p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Players</th>
+                <th>Preset</th>
+                <th>Version</th>
+                <th>Uptime (20d)</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {listed.map((s) => (
+                <tr>
+                  <td>
+                    <span class={`dot ${s.activeNow ? "active" : "idle"}`} title={s.activeNow ? "active now" : "idle — wakes on join"} />
+                    {s.name}
+                    {s.official && <span class="badge">Official</span>}
+                    {s.outdated && <span class="badge">outdated</span>}
+                    {s.motd && <div class="motd">{s.motd}</div>}
+                  </td>
+                  <td>
+                    {s.players}/{s.players_max}
+                  </td>
+                  <td>{s.preset ?? "custom"}</td>
+                  <td>{s.version ?? "—"}</td>
+                  <td>{Math.round(s.uptimeRatio20d * 100)}%</td>
+                  <td>
+                    {/* s.url is the registration-pinned normalized https origin */}
+                    <a href={s.url} rel="noopener noreferrer">Join</a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
     </main>
   </body>
 </html>
