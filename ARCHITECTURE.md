@@ -219,9 +219,19 @@ in sync when adding a preset: the union, `QUALITY_CONFIGS`, and `EscapeMenu`'s
   respawn on `respawn` request after the client shows the death screen.
 - Items: `use` food/drink/heal consumes 1 (server clamps vitals); `use`
   campfire_kit places fire `CAMPFIRE_PLACE_DIST` in front; `attack` resolves
-  fists/melee (`inMeleeCone`) or pistol (consumes `ammo_9mm` from inventory,
-  `rayVerticalCylinder` vs zombies/players, `world.raycastStatics` occlusion,
-  closest hit wins, `shot`/`hit` events). doc 11: `{t:"use"}` no longer resolves
+  fists/melee (`inMeleeCone`) or ranged (`rayVerticalCylinder` vs
+  zombies/players, `world.raycastStatics` occlusion, closest hit wins,
+  `shot`/`hit` events). doc 11 M3: ranged fire is MAGAZINE-gated — each
+  trigger pull consumes one round from the weapon's loaded mag
+  (`ItemStack.mag`, absent ⇒ full `ranged.magSize`; persists with
+  `CharacterState.inventory`, travels with the gun through drop/corpse/pickup);
+  an empty mag fires nothing and auto-starts the reload channel when reserve
+  ammo exists. Reload is a `{kind:"reload"}` channel triggered by `{t:"use"}`
+  on the equipped ranged weapon (client `R` key — no new ClientMsg); its
+  completion moves `min(magSize − current, reserve)` rounds from inventory
+  ammo into the mag; it survives movement but cancels on damage/slot-swap/
+  death. This `attack`/`use` semantics change bumped `PROTOCOL_VERSION` to 7.
+  doc 11: `{t:"use"}` no longer resolves
   instantly — it now STARTS a server-driven channeled (timed) action that ticks
   in game-time and applies its effect on completion, interrupting with no effect
   on move/damage/slot-swap/death (cook also on leaving fire range). Cancel is

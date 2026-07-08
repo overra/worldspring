@@ -180,6 +180,10 @@ export interface LootEntity {
   spawnId: number | null;
   /** Seconds until despawn for player-dropped items; null = no expiry. */
   ttl: number | null;
+  /** Loaded rounds of a DROPPED ranged weapon (doc 11 M3): carried through
+   * drop → pickup so a fired-empty gun can't be dropped-and-recovered full
+   * (ItemStack.mag reads absent as full). Absent on world-spawned loot. */
+  mag?: number;
 }
 
 /** A scavengeable body. Persists until ttl even after being picked clean. */

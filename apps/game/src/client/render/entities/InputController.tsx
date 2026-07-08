@@ -4,8 +4,9 @@
 
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
+import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
-import { useUIStore } from "@/client/state/store";
+import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
 import { doAttack, doDrop, doEquip, doPickup, doUse } from "@/client/net/connection";
 
@@ -123,6 +124,19 @@ export function InputController(): null {
           // filtered above).
           doUse(ui.selectedSlot);
           return;
+        case "KeyR": {
+          // Reload the equipped ranged weapon (doc 11 M3). The wire verb is the
+          // existing {t:"use", slot} — startUse routes use-on-a-ranged-weapon to
+          // the reload channel — so gate on "ranged selected" client-side: an
+          // ungated R on, say, beans would EAT them. Edge-triggered only
+          // (e.repeat filtered above); the server validates mag/ammo and the
+          // cast bar rides you.action like every channel.
+          const held = ui.inventory[ui.selectedSlot];
+          if (held && (ITEM_DEFS[held.type] ?? UNKNOWN_DEF).kind === "ranged") {
+            doUse(ui.selectedSlot);
+          }
+          return;
+        }
         case "KeyG":
           doDrop(ui.selectedSlot);
           return;
@@ -166,7 +180,11 @@ export function InputController(): null {
       if (!inputState.pointerLocked) return;
       const ui = useUIStore.getState();
       if (ui.invOpen || ui.chatOpen || ui.phase !== "playing") return;
-      triggerLocalAttackAnim();
+      // The attack message always goes out (an empty-mag pull is what triggers
+      // the server auto-reload), but the optimistic swing animation only plays
+      // when a shot is actually possible — no phantom "shots" on a dry mag or
+      // mid-reload (doc 11 M3: the trigger is dead during the cast).
+      if (attackAnimAllowed()) triggerLocalAttackAnim();
       doAttack();
     };
 

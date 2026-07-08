@@ -59,8 +59,19 @@ export interface RangedConfig {
   pellets: number;
   /** Random cone half-angle per pellet, radians (0 = perfectly straight). */
   spreadRad: number;
-  /** Ammo item consumed per trigger pull (one round regardless of pellets). */
+  /** Ammo item the reload channel refills the magazine from (doc 11 M3).
+   * Firing consumes from the LOADED MAG only (`ItemStack.mag`), one round per
+   * trigger pull regardless of pellets. */
   ammo: ItemType;
+  /**
+   * Rounds the magazine holds (doc 11 M3 — combat-owned balance, placeholder
+   * pending the M5 tuning pass). The per-weapon rounds counter lives on the
+   * weapon's `ItemStack.mag` (absent ⇒ full).
+   */
+  magSize: number;
+  /** Reload channel duration, game-seconds (doc 11 M3 — combat-owned balance;
+   * per-weapon by the weapons-as-data rule, NOT a `*_CHANNEL_S` constant). */
+  reloadS: number;
   /** Identifies the shot sound/tracer on the wire. */
   sound: "pistol" | "rifle" | "shotgun";
 }
@@ -141,7 +152,8 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     stack: 1,
     color: "#3a3a3f",
     power: 30,
-    ranged: { range: 90, cooldownS: 0.35, pellets: 1, spreadRad: 0, ammo: "ammo_9mm", sound: "pistol" },
+    // magSize/reloadS: doc 11 M3 placeholders flagged for the combat tuning pass (M5).
+    ranged: { range: 90, cooldownS: 0.35, pellets: 1, spreadRad: 0, ammo: "ammo_9mm", magSize: 12, reloadS: 1.5, sound: "pistol" },
   },
   rifle: {
     type: "rifle",
@@ -150,7 +162,7 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     stack: 1,
     color: "#4a4030",
     power: 65,
-    ranged: { range: 180, cooldownS: 1.15, pellets: 1, spreadRad: 0, ammo: "ammo_762", sound: "rifle" },
+    ranged: { range: 180, cooldownS: 1.15, pellets: 1, spreadRad: 0, ammo: "ammo_762", magSize: 5, reloadS: 2.5, sound: "rifle" },
   },
   shotgun: {
     type: "shotgun",
@@ -159,7 +171,7 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     stack: 1,
     color: "#3d3328",
     power: 13,
-    ranged: { range: 28, cooldownS: 1.3, pellets: 6, spreadRad: 0.085, ammo: "shells", sound: "shotgun" },
+    ranged: { range: 28, cooldownS: 1.3, pellets: 6, spreadRad: 0.085, ammo: "shells", magSize: 6, reloadS: 2.8, sound: "shotgun" },
   },
   ammo_9mm: { type: "ammo_9mm", name: "9mm Rounds", kind: "ammo", stack: 30, color: "#c9a227", power: 0 },
   ammo_762: { type: "ammo_762", name: "7.62 Rounds", kind: "ammo", stack: 20, color: "#a8842c", power: 0 },
@@ -394,6 +406,16 @@ export const AIRDROP_TABLE: LootTableEntry[] = [
 export interface ItemStack {
   type: ItemType;
   count: number;
+  /**
+   * Rounds currently loaded in a ranged weapon's magazine (doc 11 M3, Open Q5
+   * resolved: the counter rides the stack so it travels with the gun through
+   * drop / pickup / slot moves and persists with `CharacterState.inventory`
+   * for free). ABSENT ⇒ full (`ranged.magSize`): old saves and freshly
+   * spawned/looted weapons read as full, and pre-M3 code ignoring the key is
+   * rollback-safe. Never set on non-ranged stacks. Additive-optional on the
+   * `inv` wire message (the fog/felled no-bump posture).
+   */
+  mag?: number;
 }
 
 /** Small pickings found on zombie corpses (rolled at ZOMBIE_LOOT_CHANCE). */

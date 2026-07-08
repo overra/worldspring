@@ -147,6 +147,44 @@ function Hotbar(): ReactElement {
           </button>
         );
       })}
+      <AmmoReadout />
+    </div>
+  );
+}
+
+// --- ammo readout (above the hotbar, doc 11 M3) ---
+
+// Loaded-mag / reserve for the EQUIPPED ranged weapon, read straight from the
+// inv-message mirror in the store: `stack.mag` rides each inventory stack
+// (absent ⇒ full mag), reserve is the summed matching ammo. Renders nothing
+// unless a ranged weapon is selected. Rendered INSIDE .hud-hotbar so the CSS
+// can anchor it to the bar's top edge — it then tracks every responsive
+// relocation of the hotbar without mirroring media queries. The "[R] reload"
+// hint doubles as the empty-mag prompt (the server also auto-reloads on an
+// empty trigger pull); it hides while the reload cast is already running
+// (the M2 cast bar owns that feedback) and on touch via CSS (no R key there).
+function AmmoReadout(): ReactElement | null {
+  const inventory = useUIStore((s) => s.inventory);
+  const selectedSlot = useUIStore((s) => s.selectedSlot);
+  const channelAction = useUIStore((s) => s.channelAction);
+  const stack = inventory[selectedSlot] ?? null;
+  if (!stack) return null;
+  const def = ITEM_DEFS[stack.type] ?? UNKNOWN_DEF;
+  if (def.kind !== "ranged" || !def.ranged) return null;
+  const mag = Math.max(0, Math.min(def.ranged.magSize, stack.mag ?? def.ranged.magSize));
+  const reserve = countOf(inventory, def.ranged.ammo);
+  const empty = mag === 0;
+  const reloading = channelAction?.kind === "reload";
+  return (
+    <div className={empty ? "hud-ammo hud-ammo--empty" : "hud-ammo"}>
+      <span className="hud-ammo-mag">{mag}</span>
+      <span className="hud-ammo-sep">/</span>
+      <span className="hud-ammo-reserve">{reserve}</span>
+      {empty && reserve > 0 && !reloading && (
+        <span className="hud-ammo-hint">
+          <span className="hud-prompt-key">[R]</span> reload
+        </span>
+      )}
     </div>
   );
 }
@@ -257,6 +295,9 @@ interface InventoryRowProps {
 }
 
 function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
+  // Hook before the early return (rules of hooks): the RELOAD button below is
+  // only offered on the equipped slot.
+  const selectedSlot = useUIStore((s) => s.selectedSlot);
   if (stack === null) {
     return (
       <div className="inv-row">
@@ -287,6 +328,16 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
         {USABLE_KINDS.has(def.kind) && (
           <button className="inv-btn" onClick={() => doUse(slot)}>
             USE
+          </button>
+        )}
+        {def.kind === "ranged" && slot === selectedSlot && (
+          // Manual reload without a keyboard (touch parity with the R key):
+          // {t:"use"} on the EQUIPPED ranged weapon is the reload verb. Gated
+          // on the slot being equipped because startChannel's reload
+          // precondition binds the cast to selectedSlot — USE on an unequipped
+          // gun would silently no-op server-side.
+          <button className="inv-btn" onClick={() => doUse(slot)}>
+            RELOAD
           </button>
         )}
         <button className="inv-btn" onClick={() => doDrop(slot)}>

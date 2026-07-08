@@ -320,6 +320,48 @@
   white-space: nowrap;
 }
 
+/* --- ammo readout for the equipped ranged weapon (doc 11 M3) --- */
+
+.hud-ammo {
+  position: absolute;
+  /* Rendered INSIDE .hud-hotbar and anchored to its top edge, so it follows
+   * every media-query relocation/rescale of the bar (980px lift, coarse-pointer
+   * portrait/landscape moves, 40px slots) for free — no offsets to mirror. */
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  /* The hotbar opts into pointer-events; the readout is cosmetic. */
+  pointer-events: none;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 10px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  font-family: var(--ui-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.hud-ammo-mag {
+  font-size: 15px;
+}
+
+.hud-ammo--empty .hud-ammo-mag {
+  color: var(--ui-danger);
+}
+
+.hud-ammo-sep,
+.hud-ammo-reserve {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.hud-ammo-hint {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
 /* --- cast bar for the channeled (timed) action (doc 11 M2) --- */
 
 .hud-channel {
@@ -785,6 +827,13 @@
   }
 
   .inv-hint {
+    display: none;
+  }
+
+  /* "[R] reload" is a keyboard prompt — meaningless on touch (same rule as
+     .menu-controls / .inv-hint). Touch reloads via the inv-panel RELOAD
+     button or the server auto-reload on an empty trigger pull. */
+  .hud-ammo-hint {
     display: none;
   }
 }

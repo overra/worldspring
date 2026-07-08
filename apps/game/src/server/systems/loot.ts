@@ -171,7 +171,9 @@ export function spawnPlayerCorpse(state: GameState, player: ServerPlayer): void 
   const contents: ItemStack[] = [];
   if (state.config.pvp.fullLoot) {
     for (const stack of player.inventory) {
-      if (stack) contents.push({ type: stack.type, count: stack.count });
+      // Spread keeps a gun's loaded-mag counter on the body (doc 11 M3) — a
+      // fired-empty weapon must not be scavenged back full.
+      if (stack) contents.push({ ...stack });
     }
     player.inventory = Array.from({ length: INVENTORY_SLOTS }, () => null);
   }

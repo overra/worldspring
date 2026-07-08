@@ -41,6 +41,7 @@ import { stepPlayer } from "@worldspring/shared/movement";
 import type { ChannelKind, InputCmd, PlayerCore, Realm } from "@worldspring/shared/protocol";
 import type { CharacterState } from "../persistence";
 import { startLootRespawn } from "./loot";
+import { canStartReload, completeReload, rangedOf } from "./magazine";
 import { sendTo, type GameState, type PlayerStats, type Portal, type ServerPlayer } from "./state";
 
 /** Contract gap: queue cap is specified as "~60 cmds" with no shared constant. */
@@ -617,6 +618,12 @@ function channelForUse(
   // Water vessels (boil/fill/drink) + the fishing rod stay instant for M1.
   if (def.water !== undefined) return null;
   if (stack.type === "fishing_rod") return null;
+  // doc 11 M3: use-on-a-ranged-weapon IS the reload verb — reuses the existing
+  // {t:"use"} message per doc 11 §4 ("no new top-level reload verb"); duration
+  // is per-weapon (weapons-as-data), startChannel enforces the precondition.
+  if (def.kind === "ranged" && def.ranged) {
+    return { kind: "reload", durationS: def.ranged.reloadS };
+  }
   switch (def.kind) {
     case "food":
     case "drink":
@@ -625,8 +632,21 @@ function channelForUse(
     case "placeable":
       return { kind: "use", durationS: PLACEABLE_CHANNEL_S };
     default:
-      return null; // tools / weapons / ammo: instant (no-op) path
+      return null; // tools / melee / ammo: instant (no-op) path
   }
+}
+
+/**
+ * Open the reload channel on the EQUIPPED weapon (doc 11 M3). The combat-side
+ * entry: fireRanged auto-calls this on an empty-mag trigger pull; the client's
+ * R key arrives as {t:"use", slot: selectedSlot} and lands here via startUse.
+ * startChannel's reload precondition validates (ranged equipped, mag not full,
+ * reserve ammo present) — this wrapper only resolves the per-weapon duration.
+ */
+export function startReload(state: GameState, player: ServerPlayer): void {
+  const ranged = rangedOf(player.inventory[player.selectedSlot] ?? null);
+  if (!ranged) return;
+  startChannel(state, player, "reload", player.selectedSlot, 0, ranged.reloadS);
 }
 
 /**
@@ -691,6 +711,16 @@ export function startChannel(
         return;
       }
     }
+    // Reload precondition (doc 11 M3): the EQUIPPED slot holds a ranged weapon
+    // with a non-full mag and the inventory holds reserve ammo. Silent no-op
+    // otherwise — a notice here would spam on every empty-mag trigger pull
+    // (fireRanged auto-routes those pulls to startReload); the HUD's rounds
+    // readout is the feedback. NOTHING is consumed at start (doc 11 §1) — the
+    // refill happens only in completeChannel.
+    if (kind === "reload") {
+      if (slot !== player.selectedSlot) return; // cast binds to the equipped gun
+      if (canStartReload(player.inventory, slot) === null) return;
+    }
   }
   player.action = { kind, slot, arg, totalS: durationS, remainingS: durationS };
 }
@@ -730,9 +760,13 @@ export function tickActiveActions(state: GameState, dt: number): void {
       player.action = null;
       continue;
     }
-    // 2. Movement (default for cook/use). movedThisTick is this tick's value
-    //    because we run right after applyQueuedInputs.
-    if (player.movedThisTick) {
+    // 2. Movement (default for cook/use) — PER-KIND, not global: reload
+    //    survives movement (doc 11 Open Q4, resolved by combat at M3 — cancel-
+    //    on-move would make ranged combat miserable; §Threatens called this
+    //    out). Reload still cancels on damage/slot-swap/death below.
+    //    movedThisTick is this tick's value because we run right after
+    //    applyQueuedInputs.
+    if (player.movedThisTick && action.kind !== "reload") {
       player.action = null;
       continue;
     }
@@ -785,8 +819,15 @@ function completeChannel(
       // cast even without an interrupt) and applies + consumes.
       useItem(state, player, slot);
       return;
+    case "reload":
+      // doc 11 M3 (combat's refill): move min(magSize - current, reserve)
+      // rounds from the inventory ammo stacks into the weapon's mag.
+      // completeReload re-validates from scratch (slot contents may have
+      // changed mid-cast) and reports whether anything actually moved.
+      if (completeReload(player.inventory, slot)) sendInventory(state, player);
+      return;
     default:
-      // reload / craft / fish: owned by combat / doc 05 / doc 07 (M3+).
+      // craft / fish: owned by doc 05 / doc 07 (later milestones).
       return;
   }
 }
@@ -930,6 +971,18 @@ export function pickupLoot(state: GameState, player: ServerPlayer, lootId: numbe
   const entity = state.loot.get(lootId);
   if (entity) {
     if (distSq2D(player.core.x, player.core.z, entity.x, entity.z) > rangeSq) return;
+    // A dropped gun carries its loaded-mag counter (doc 11 M3): place it whole
+    // into an empty slot so `mag` survives — addToInventory's type+count merge
+    // would erase it and the absent-⇒-full rule would refill it for free.
+    if (entity.mag !== undefined) {
+      const empty = player.inventory.findIndex((slot) => slot === null);
+      if (empty === -1) return; // nothing fit
+      player.inventory[empty] = { type: entity.type, count: entity.count, mag: entity.mag };
+      state.loot.delete(entity.id);
+      if (entity.spawnId !== null) startLootRespawn(state, entity.spawnId);
+      sendInventory(state, player);
+      return;
+    }
     const leftover = addToInventory(player.inventory, entity.type, entity.count);
     if (leftover === entity.count) return; // nothing fit
     entity.count = leftover;
@@ -947,9 +1000,9 @@ export function pickupLoot(state: GameState, player: ServerPlayer, lootId: numbe
     let tookAny = false;
     const remaining: ItemStack[] = [];
     for (const stack of corpse.contents) {
-      const leftover = addToInventory(player.inventory, stack.type, stack.count);
+      const leftover = takeStack(player.inventory, stack);
       if (leftover < stack.count) tookAny = true;
-      if (leftover > 0) remaining.push({ type: stack.type, count: leftover });
+      if (leftover > 0) remaining.push({ ...stack, count: leftover });
     }
     corpse.contents = remaining;
     if (tookAny) sendInventory(state, player);
@@ -965,13 +1018,27 @@ export function pickupLoot(state: GameState, player: ServerPlayer, lootId: numbe
   let tookAny = false;
   const remaining: ItemStack[] = [];
   for (const stack of drop.contents) {
-    const leftover = addToInventory(player.inventory, stack.type, stack.count);
+    const leftover = takeStack(player.inventory, stack);
     if (leftover < stack.count) tookAny = true;
-    if (leftover > 0) remaining.push({ type: stack.type, count: leftover });
+    if (leftover > 0) remaining.push({ ...stack, count: leftover });
   }
   drop.contents = remaining;
   if (remaining.length === 0) state.drops.delete(drop.id);
   if (tookAny) sendInventory(state, player);
+}
+
+/**
+ * Transfer one container stack into the inventory, returning the leftover
+ * count. Mag-carrying stacks (a dead player's gun — doc 11 M3) transfer WHOLE
+ * into an empty slot so the loaded-rounds counter survives; everything else
+ * goes through addToInventory's normal top-up-then-fill.
+ */
+function takeStack(inv: (ItemStack | null)[], stack: ItemStack): number {
+  if (stack.mag === undefined) return addToInventory(inv, stack.type, stack.count);
+  const empty = inv.findIndex((slot) => slot === null);
+  if (empty === -1) return stack.count; // nothing fit
+  inv[empty] = { ...stack };
+  return 0;
 }
 
 /** Drop the whole stack in a slot as a loot entity at the player's feet. */
@@ -980,6 +1047,9 @@ export function dropSlot(state: GameState, player: ServerPlayer, slot: number): 
   if (slot < 0 || slot >= INVENTORY_SLOTS) return;
   const stack = player.inventory[slot];
   if (!stack) return;
+  // Dropping the gun mid-reload cancels the cast (the doc 11 §3 slot-swap rule
+  // generalized to the mutation point: the cast's source stack is gone).
+  if (player.action !== null && player.action.slot === slot) player.action = null;
   player.inventory[slot] = null;
   const { x, z } = player.core;
   const id = state.nextEntityId++;
@@ -992,6 +1062,8 @@ export function dropSlot(state: GameState, player: ServerPlayer, slot: number): 
     z,
     spawnId: null,
     ttl: DROPPED_LOOT_TTL_S,
+    // Loaded-mag counter travels with a dropped gun (doc 11 M3, Open Q5).
+    ...(stack.mag !== undefined ? { mag: stack.mag } : {}),
   });
   sendInventory(state, player);
 }
