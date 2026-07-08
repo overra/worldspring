@@ -30,3 +30,6 @@ dist/
 
 # Meshy generation scratch output
 meshy_output/
+
+# doc 13 M0 physics spike build output (regenerate: see scripts/physics-spike/README.md)
+apps/game/scripts/physics-spike/worker/web/browser.js

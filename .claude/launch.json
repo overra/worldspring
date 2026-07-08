@@ -21,6 +21,17 @@
         "--strictPort"
       ],
       "port": 4173
+    },
+    {
+      "name": "physics-spike",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "wrangler",
+        "dev",
+        "-c",
+        "apps/game/scripts/physics-spike/worker/wrangler.jsonc"
+      ],
+      "port": 8917
     }
   ]
 }
