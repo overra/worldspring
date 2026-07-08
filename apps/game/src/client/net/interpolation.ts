@@ -186,6 +186,10 @@ function interpolateBodies(a: BufferedSnap, b: BufferedSnap, t: number): void {
       view = { id: bb.id, kind: bb.kind, x: bb.x, y: bb.y, z: bb.z, q: [...bb.q] as [number, number, number, number], asleep: bb.asleep === true };
       views.set(bb.id, view);
     }
+    // Half-extents are constant per body (trunk size — doc 13 M2), but the
+    // FIRST snapshot a body appears in can predate the client hearing them
+    // (interest-edge join order), so refresh cheaply every pass.
+    if (bb.dims) view.dims = bb.dims;
     view.asleep = bb.asleep === true;
     if (view.asleep) {
       // Settled bodies pin to the authoritative pose — no churn.

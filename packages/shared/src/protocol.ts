@@ -200,8 +200,9 @@ export interface WirePortal {
 }
 
 /** Kinds of server-auth dynamic physics body (doc 13). Wire-enum GROWTH is
- * additive-safe (clients render unknown kinds as the fallback crate mesh). */
-export type BodyKind = "crate";
+ * additive-safe (clients render unknown kinds as the fallback crate mesh).
+ * "trunk" (doc 13 M2) is a felled tree — additive growth, no version bump. */
+export type BodyKind = "crate" | "trunk";
 
 /**
  * A dynamic physics body pose (doc 13 M1). Server-authoritative — clients
@@ -219,6 +220,12 @@ export interface WireBody {
   z: number;
   /** Quaternion [x, y, z, w], round2-quantized. */
   q: [number, number, number, number];
+  /** Collider half-extents [hx, hy, hz], round2'd — sent only for kinds whose
+   * size varies per instance (trunks: tree heights differ). Absent for crates
+   * (fixed size). ADDITIVE optional field (doc 03's shape clause does not fire
+   * for optional growth — the explored/fog precedent), so no version bump;
+   * clients without it render the fallback crate mesh. */
+  dims?: [number, number, number];
   asleep?: true;
 }
 
@@ -334,6 +341,13 @@ export type ServerMsg =
        * runs map.reveal === "explored". Additive optional (older clients ignore
        * it), so no PROTOCOL_VERSION bump. */
       explored?: string;
+      /** doc 13 M2 — indices (into the seed-derived world.trees) of every tree
+       * felled so far, so a joining client hides them from the static forest.
+       * Omitted when none are felled. Additive optional (the explored-field
+       * precedent) → no PROTOCOL_VERSION bump; an older client renders felled
+       * trees standing, a render-only divergence with no sim impact (felled
+       * trees stay kinematic-solid for movement on BOTH ends — see doc 13 M2). */
+      felled?: number[];
     }
   | {
       t: "snap";
@@ -361,6 +375,10 @@ export type ServerMsg =
       /** doc 12 — cell indices newly explored this tick (fog servers only).
        * Omitted when empty. Additive optional → no PROTOCOL_VERSION bump. */
       fog?: number[];
+      /** doc 13 M2 — tree indices felled THIS tick (a global one-shot delta,
+       * same posture as `fog`; the full set rides in welcome). Omitted when
+       * empty. Additive optional → no PROTOCOL_VERSION bump. */
+      felled?: number[];
     }
   | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */

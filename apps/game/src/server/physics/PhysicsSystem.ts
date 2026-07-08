@@ -23,6 +23,7 @@ import { WORLD_SIZE } from "@worldspring/shared/constants";
 type RapierNamespace = (typeof import("@dimforge/rapier3d-compat"))["default"];
 type RapierWorld = import("@dimforge/rapier3d-compat").World;
 type RapierBody = import("@dimforge/rapier3d-compat").RigidBody;
+type RapierCollider = import("@dimforge/rapier3d-compat").Collider;
 
 /** What the terrain/statics collider build needs from the game World — a
  * structural subset so the replay harness can pass a tiny fake. */
@@ -53,6 +54,11 @@ export interface PersistedBody {
   q: [number, number, number, number];
   lv: [number, number, number];
   av: [number, number, number];
+  /** Collider half-extents for per-instance-sized kinds (trunks, doc 13 M2).
+   * ADDITIVE optional: absent (all pre-M2 rows, and every crate) falls back
+   * to the fixed crate cube — crates keep serializing WITHOUT the key so the
+   * replay-harness hash is untouched. */
+  dims?: [number, number, number];
   asleep: boolean;
 }
 
@@ -76,6 +82,8 @@ interface BodyRec {
   id: number;
   kind: BodyKind;
   body: RapierBody;
+  /** Half-extents for per-instance-sized kinds (mirrored to the wire). */
+  dims?: [number, number, number];
   /** game.time when the body last entered sleep, or null while awake. */
   sleptAt: number | null;
   createdAt: number;
@@ -87,6 +95,12 @@ export class PhysicsSystem {
   private bodies = new Map<number, BodyRec>();
   /** Restored/persisted + pre-attach spawns, drained into the engine on attach. */
   private pending: PersistedBody[] = [];
+  /** Static tree colliders by index in statics.trees, so a felled tree's
+   * collider can be REMOVED at runtime (doc 13 M2). Empty until attach. */
+  private treeColliders = new Map<number, RapierCollider>();
+  /** Felled tree indices — excluded from the static build at attach (restored
+   * worlds) and removed live after it (fresh fells). Grows monotonically. */
+  private felledTrees = new Set<number>();
   private statics: PhysicsStaticsSource;
   private cfg: PhysicsConfig;
   private gameTime = 0;
@@ -143,12 +157,19 @@ export class PhysicsSystem {
       addAabb(b.roof);
     }
     for (const w of this.statics.militaryWalls) addAabb(w);
-    for (const t of this.statics.trees) {
+    // Trees keep their collider HANDLE per index (doc 13 M2): felling removes
+    // exactly one collider at runtime. Already-felled indices (restored from
+    // the world snapshot via fellTree before attach) are never built at all.
+    this.statics.trees.forEach((t, index) => {
+      if (this.felledTrees.has(index)) return;
       const y0 = this.statics.heightAt(t.x, t.z);
-      world.createCollider(
-        engine.ColliderDesc.cuboid(t.r, t.height / 2, t.r).setTranslation(t.x, y0 + t.height / 2, t.z),
+      this.treeColliders.set(
+        index,
+        world.createCollider(
+          engine.ColliderDesc.cuboid(t.r, t.height / 2, t.r).setTranslation(t.x, y0 + t.height / 2, t.z),
+        ),
       );
-    }
+    });
 
     const buffered = this.pending;
     this.pending = [];
@@ -160,12 +181,22 @@ export class PhysicsSystem {
   }
 
   /** Spawn a new dynamic body. Returns its id, or null when disabled. The
-   * caller supplies the id (game.nextEntityId — shared entity id space). */
-  spawnBody(id: number, kind: BodyKind, x: number, y: number, z: number): number | null {
+   * caller supplies the id (game.nextEntityId — shared entity id space).
+   * `dims` = collider half-extents for per-instance-sized kinds (trunks);
+   * omitted for the fixed-size crate. */
+  spawnBody(
+    id: number,
+    kind: BodyKind,
+    x: number,
+    y: number,
+    z: number,
+    dims?: [number, number, number],
+  ): number | null {
     if (!this.cfg.enabled) return null;
     const rec: PersistedBody = {
       id, kind, x, y, z, q: [0, 0, 0, 1], lv: [0, 0, 0], av: [0, 0, 0], asleep: false,
     };
+    if (dims) rec.dims = dims;
     if (!this.engine) {
       this.pending.push(rec);
       return id;
@@ -176,6 +207,54 @@ export class PhysicsSystem {
 
   applyImpulse(id: number, ix: number, iy: number, iz: number): void {
     this.bodies.get(id)?.body.applyImpulse({ x: ix, y: iy, z: iz }, true);
+  }
+
+  /** Impulse at a world-space point — off-center application yields the torque
+   * that TOPPLES a freshly-felled trunk (doc 13 M2). No-op pre-attach: fell
+   * completion only spawns trunks once the room is live, and a buffered spawn
+   * simply falls straight down on attach — degraded, never wrong. */
+  applyImpulseAtPoint(
+    id: number,
+    ix: number, iy: number, iz: number,
+    px: number, py: number, pz: number,
+  ): void {
+    this.bodies.get(id)?.body.applyImpulseAtPoint({ x: ix, y: iy, z: iz }, { x: px, y: py, z: pz }, true);
+  }
+
+  /**
+   * Mark a tree (by index in statics.trees) as felled: its STATIC collider is
+   * removed from the physics world so the dynamic trunk (and future props)
+   * stop colliding where it stood (doc 13 M2). Pre-attach calls just record
+   * the index — attachEngine skips building those colliders — which is how a
+   * restored felled set from the world snapshot is honored. Idempotent. Note
+   * the KINEMATIC statics (movement.ts queryStatics) intentionally still
+   * contain the tree — player movement vs stumps is doc 05's concern.
+   */
+  fellTree(index: number): void {
+    this.felledTrees.add(index);
+    const collider = this.treeColliders.get(index);
+    if (collider && this.world) {
+      this.world.removeCollider(collider, true);
+      this.treeColliders.delete(index);
+    }
+  }
+
+  /**
+   * Remove and return every body of `kind` that has been ASLEEP for at least
+   * `ttlS` game-seconds, with its resting pose — the trunk despawn-to-loot
+   * sweep (doc 13 M2). Wake-ups reset the clock (sleptAt nulls on wake), so a
+   * trunk nudged by another body lives on until it re-settles.
+   */
+  expireSettled(kind: BodyKind, ttlS: number, gameTime: number): Array<{ id: number; x: number; y: number; z: number }> {
+    const out: Array<{ id: number; x: number; y: number; z: number }> = [];
+    for (const rec of this.bodies.values()) {
+      if (rec.kind !== kind) continue;
+      if (rec.sleptAt === null || gameTime - rec.sleptAt < ttlS) continue;
+      const t = rec.body.translation();
+      out.push({ id: rec.id, x: t.x, y: t.y, z: t.z });
+    }
+    for (const b of out) this.removeBody(b.id);
+    return out;
   }
 
   removeBody(id: number): void {
@@ -206,6 +285,7 @@ export class PhysicsSystem {
       for (const rec of this.bodies.values()) {
         const t = rec.body.translation(), r = rec.body.rotation();
         const w: WireBody = { id: rec.id, kind: rec.kind, x: t.x, y: t.y, z: t.z, q: [r.x, r.y, r.z, r.w] };
+        if (rec.dims) w.dims = rec.dims;
         if (rec.body.isSleeping()) w.asleep = true;
         yield w;
       }
@@ -214,6 +294,7 @@ export class PhysicsSystem {
     // Pre-attach: restored bodies render at their persisted poses.
     for (const p of this.pending) {
       const w: WireBody = { id: p.id, kind: p.kind, x: p.x, y: p.y, z: p.z, q: p.q };
+      if (p.dims) w.dims = p.dims;
       if (p.asleep) w.asleep = true;
       yield w;
     }
@@ -226,12 +307,16 @@ export class PhysicsSystem {
     for (const rec of this.bodies.values()) {
       const t = rec.body.translation(), r = rec.body.rotation();
       const lv = rec.body.linvel(), av = rec.body.angvel();
-      out.push({
+      const p: PersistedBody = {
         id: rec.id, kind: rec.kind,
         x: t.x, y: t.y, z: t.z, q: [r.x, r.y, r.z, r.w],
         lv: [lv.x, lv.y, lv.z], av: [av.x, av.y, av.z],
         asleep: rec.body.isSleeping(),
-      });
+      };
+      // Conditional so crate rows serialize byte-identically to M1 (the
+      // replay-harness hash covers exactly this JSON).
+      if (rec.dims) p.dims = rec.dims;
+      out.push(p);
     }
     return out;
   }
@@ -251,15 +336,21 @@ export class PhysicsSystem {
     // Restore asleep bodies asleep — no wake-storm on boot (doc 13 §4).
     if (p.asleep) desc.setCanSleep(true).sleeping = true;
     const body = this.world.createRigidBody(desc);
-    this.world.createCollider(
-      engine.ColliderDesc.cuboid(CRATE_HALF, CRATE_HALF, CRATE_HALF).setRestitution(0.3).setFriction(0.8),
-      body,
-    );
-    this.bodies.set(p.id, {
+    // Trunks: per-instance half-extents, high friction / low restitution so a
+    // felled tree slides and stops instead of bouncing (doc 13 M2). Crates
+    // (and any dims-less row) keep the M1 cube exactly.
+    const [hx, hy, hz] = p.dims ?? [CRATE_HALF, CRATE_HALF, CRATE_HALF];
+    const collider = engine.ColliderDesc.cuboid(hx, hy, hz);
+    if (p.kind === "trunk") collider.setRestitution(0.05).setFriction(0.9);
+    else collider.setRestitution(0.3).setFriction(0.8);
+    this.world.createCollider(collider, body);
+    const rec: BodyRec = {
       id: p.id, kind: p.kind, body,
       sleptAt: p.asleep ? this.gameTime : null,
       createdAt: this.gameTime,
-    });
+    };
+    if (p.dims) rec.dims = p.dims;
+    this.bodies.set(p.id, rec);
     this.enforceCap();
   }
 

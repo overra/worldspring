@@ -37,6 +37,7 @@ import {
   type Zombie,
 } from "./state";
 import { damagePlayer } from "./survival";
+import { tryChopTree } from "./trees";
 import { killDeer } from "./wildlife";
 import { killZombie } from "./zombies";
 
@@ -256,7 +257,13 @@ function meleeAttack(
     }
   }
 
-  if (!hitPos) return;
+  if (!hitPos) {
+    // Whiffed every living target: an axe swing may still land on a tree
+    // trunk (doc 13 M2 — chopping reuses the melee verb; living targets in
+    // front of a tree always win the swing). Trees are static, so no rewind.
+    tryChopTree(state, player);
+    return;
+  }
   // The impact flash lands at the REWOUND point (where the shooter saw the
   // target); damage/kill below applies to the CURRENT entity objects.
   queueEvent(

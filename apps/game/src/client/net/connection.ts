@@ -419,6 +419,12 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // so the grid's cell indices line up with the snapshot deltas below.
   clientWorld.explored =
     clientWorld.config.map.reveal === "explored" ? decodeExplored(WORLD_SIZE, msg.explored) : null;
+  // doc 13 M2 — the server's full felled-tree set (per-snap deltas fold in
+  // below). Rebuilt from scratch on every welcome: a reconnect must not keep
+  // stale indices from a previous world/session.
+  clientWorld.felledTrees.clear();
+  for (const idx of msg.felled ?? []) clientWorld.felledTrees.add(idx);
+  clientWorld.felledVersion++;
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;
@@ -467,6 +473,12 @@ function onSnap(msg: SnapMsg): void {
 
   // doc 12 — fold in any newly-explored cells the server revealed this tick.
   if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
+  // doc 13 M2 — trees felled this tick: fold into the set (idempotent — the
+  // server may re-send a delta after a tick error) and nudge the renderer.
+  if (msg.felled && msg.felled.length > 0) {
+    for (const idx of msg.felled) clientWorld.felledTrees.add(idx);
+    clientWorld.felledVersion++;
+  }
   // Realm + portals flow straight in: realm re-themes terrain/sky (store-driven
   // React re-render of the world components), portals feed the per-frame renderer.
   ui.setRealm(msg.you.realm);

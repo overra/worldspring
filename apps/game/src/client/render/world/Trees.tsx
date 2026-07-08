@@ -5,9 +5,15 @@
 // instance); matrices are written once per world — fully static, no sway.
 // Variant choice hashes the tree's index in world.trees, which is
 // seed-deterministic, so every client sees the same forest.
+//
+// doc 13 M2 — felled trees: the server ships felled indices (welcome.felled +
+// snap.felled deltas → clientWorld.felledTrees); this component zero-scales
+// those instances' matrices, keeping the buckets intact (no rebuild, no
+// draw-count change). The dynamic falling trunk renders via PhysicsBodies.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactElement } from "react";
+import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Tree } from "@worldspring/shared/world";
@@ -65,11 +71,18 @@ function extractVariant(scene: THREE.Group, name: string): VariantAssets | null 
 }
 
 const dummy = new THREE.Object3D();
+/** All-zero-scale matrix — collapses a felled tree's instance to nothing. */
+const ZERO_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
+
+/** Where a tree index landed in the instanced buckets — one entry per GLB
+ * primitive mesh — so a fell can zero exactly its matrices (doc 13 M2). */
+type InstanceSlots = Array<{ mesh: THREE.InstancedMesh; slot: number }>;
 
 function buildBucketMeshes(
   assets: VariantAssets,
   instances: TreeInstance[],
   tiltable: boolean,
+  byIndex: Map<number, InstanceSlots>,
 ): THREE.InstancedMesh[] {
   const meshes: THREE.InstancedMesh[] = [];
   assets.parts.forEach((part, partIndex) => {
@@ -89,6 +102,12 @@ function buildBucketMeshes(
       dummy.scale.setScalar(s);
       dummy.updateMatrix();
       mesh.setMatrixAt(slot, dummy.matrix);
+      let slots = byIndex.get(index);
+      if (!slots) {
+        slots = [];
+        byIndex.set(index, slots);
+      }
+      slots.push({ mesh, slot });
     });
     mesh.instanceMatrix.needsUpdate = true;
     meshes.push(mesh);
@@ -99,6 +118,8 @@ function buildBucketMeshes(
 interface Forest {
   root: THREE.Group;
   meshes: THREE.InstancedMesh[];
+  /** tree index in world.trees → its instanced-mesh slots (doc 13 M2). */
+  byIndex: Map<number, InstanceSlots>;
 }
 
 function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
@@ -123,18 +144,19 @@ function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
 
   const root = new THREE.Group();
   const meshes: THREE.InstancedMesh[] = [];
+  const byIndex = new Map<number, InstanceSlots>();
   for (const kind of ["conifer", "oak"] as const) {
     for (let v = 0; v < 2; v++) {
       const assets = variants[kind][v];
       const instances = buckets[kind][v];
       if (!assets || instances.length === 0) continue;
-      for (const mesh of buildBucketMeshes(assets, instances, kind === "oak")) {
+      for (const mesh of buildBucketMeshes(assets, instances, kind === "oak", byIndex)) {
         root.add(mesh);
         meshes.push(mesh);
       }
     }
   }
-  return { root, meshes };
+  return { root, meshes, byIndex };
 }
 
 export function Trees(): ReactElement | null {
@@ -154,6 +176,28 @@ export function Trees(): ReactElement | null {
       for (const mesh of forest.meshes) mesh.dispose();
     };
   }, [forest]);
+
+  // doc 13 M2 — hide felled trees. A fresh forest (new world / rejoin) starts
+  // unapplied so the welcome's full felled set stamps it on the next frame.
+  const appliedVersion = useRef(-1);
+  useEffect(() => {
+    appliedVersion.current = -1;
+  }, [forest]);
+
+  useFrame(() => {
+    if (!forest || appliedVersion.current === clientWorld.felledVersion) return;
+    appliedVersion.current = clientWorld.felledVersion;
+    // Re-stamps every felled index each change — idempotent and ≤ TREE_COUNT
+    // matrix writes, at chop rate (not frame rate).
+    for (const index of clientWorld.felledTrees) {
+      const slots = forest.byIndex.get(index);
+      if (!slots) continue;
+      for (const { mesh, slot } of slots) {
+        mesh.setMatrixAt(slot, ZERO_MATRIX);
+        mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+  });
 
   if (!forest) return null;
   return <primitive object={forest.root} />;
