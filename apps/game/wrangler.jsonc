@@ -3,6 +3,14 @@
   "name": "worldspring",
   "main": "src/server/worker.ts",
   "compatibility_date": "2026-06-01",
+  // play.worldspring.games is attached to the PROD worker ACCOUNT-SIDE (one-off
+  // `wrangler triggers deploy`, 2026-07-07) and persists across deploys. It is
+  // deliberately NOT a `routes` entry here: preview.yml deploys this same config
+  // as worldspring-pr-<N>, and a routes block would make every PR preview fight
+  // to claim the domain. workers_dev is pinned true because attaching a route
+  // with it unset DISABLES the workers.dev URL (learned the hard way — existing
+  // players' character tokens are origin-scoped to worldspring.adam-730.workers.dev).
+  "workers_dev": true,
   // Protect operator-set vars (GAME_CONFIG, doc 04 §4) from being silently
   // deleted on the next `wrangler deploy` — without this a dashboard- or
   // deploy-API-set GAME_CONFIG is clobbered, because this config carries none.
