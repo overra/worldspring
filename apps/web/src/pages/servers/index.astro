@@ -1,88 +1,59 @@
 ---
-// SSR directory browse (doc 02 §8; full filters/sorts land with M5). Renders
-// the REAL ranked list from D1: live servers scored by rank.ts, official row
-// pinned. All listing text is untrusted operator content — Astro {expr}
-// interpolation auto-escapes, and join links only ever carry the
-// registration-pinned, normalized https origin (never heartbeat/probe
-// joinUrl values — doc 03 §7).
+// SSR directory browse (doc 02 §8/§11, M5). Renders the REAL ranked list from
+// D1 (loadRankedList → applyBrowse), official row pinned. Filters, sort, and
+// pagination are driven PURELY by query params so every filtered view is a
+// cacheable URL (the M5 acceptance criterion) — nothing here is client state.
+// All listing text is untrusted operator content; Astro {expr} auto-escapes,
+// and join links only ever carry the registration-pinned normalized https
+// origin (never heartbeat/probe values — doc 03 §7).
 export const prerender = false;
 import { env } from "cloudflare:workers";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import { score } from "../../lib/rank";
-
-interface Row {
-  id: string;
-  url: string;
-  name: string;
-  motd: string;
-  preset: string | null;
-  version: string | null;
-  protocol: number | null;
-  players: number;
-  players_max: number;
-  colo: string | null;
-  source: string;
-  created_at: number;
-  last_heartbeat_at: number | null;
-}
+import {
+  applyBrowse,
+  BROWSE_PRESETS,
+  BROWSE_SORTS,
+  parseBrowseParams,
+  type BrowseSort,
+} from "@worldspring/shared/browse";
+import { loadRankedList } from "../../lib/listing";
 
 const db = (env as unknown as { DB: D1Database }).DB;
 const now = Date.now();
-let rows: Row[] = [];
-const uptimeBy = new Map<string, number>();
+
+const params = parseBrowseParams(Astro.url.searchParams);
+let list: Awaited<ReturnType<typeof loadRankedList>> = [];
 try {
-  const [serversRes, uptimeRes] = await db.batch([
-    db
-      .prepare(
-        `SELECT id, url, name, motd, preset, version, protocol, players, players_max,
-                colo, source, created_at, last_heartbeat_at
-         FROM servers WHERE status = 'live' LIMIT 500`,
-      )
-      .bind(),
-    db
-      .prepare(
-        // Excludes unauthenticated 'verify' rows — see /api/v1/servers GET.
-        "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? AND source != 'verify' GROUP BY server_id",
-      )
-      .bind(now - 20 * 86400_000),
-  ]);
-  rows = serversRes.results as unknown as Row[];
-  for (const r of uptimeRes.results as Array<{ server_id: string; ratio: number }>) {
-    uptimeBy.set(r.server_id, Number(r.ratio ?? 0));
-  }
+  list = await loadRankedList(db, now, PROTOCOL_VERSION);
 } catch (err) {
-  // Expected only in local dev without a migrated D1; log so a prod D1
-  // outage reads as a DB failure in the tail, not as a silently empty list.
+  // Expected only in local dev without a migrated D1; log so a prod D1 outage
+  // reads as a DB failure in the tail, not as a silently empty list.
   console.error("[servers] D1 lookup failed — rendering empty list:", err);
 }
+const result = applyBrowse(list, params);
 
-const listed = rows
-  .map((r) => {
-    const uptime = uptimeBy.get(r.id); // undefined = no non-verify probes yet
-    const uptimeRatio20d = uptime ?? 0;
-    const players = Math.min(r.players, r.players_max); // display clamp (doc 02 §7)
-    return {
-      ...r,
-      players,
-      uptimeRatio20d,
-      hasUptime: uptime !== undefined,
-      official: r.source === "official",
-      activeNow: r.last_heartbeat_at !== null && now - r.last_heartbeat_at < 5 * 60_000,
-      outdated: r.protocol !== null && r.protocol < PROTOCOL_VERSION,
-      score: score(
-        {
-          players,
-          players_max: r.players_max,
-          protocol: r.protocol,
-          created_at: r.created_at,
-          uptimeRatio20d,
-        },
-        PROTOCOL_VERSION,
-        now,
-      ),
-    };
-  })
-  .sort((a, b) => (a.official !== b.official ? (a.official ? -1 : 1) : b.score - a.score));
+// Doc 02 §11: HTML cached 60 s. Safe to cache publicly — the browse page has
+// no per-visitor content (ping is client-side JS, not baked into the HTML).
+Astro.response.headers.set("cache-control", "public, max-age=60");
+
+const SORT_LABELS: Record<BrowseSort, string> = {
+  score: "Recommended",
+  players: "Players",
+  uptime: "Uptime",
+  name: "Name",
+};
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** Build a /servers URL preserving the active filter + sort, varying page. */
+function pageUrl(n: number): string {
+  const p = new URLSearchParams();
+  if (params.preset) p.set("preset", params.preset);
+  if (params.sort !== "score") p.set("sort", params.sort);
+  if (n !== 1) p.set("page", String(n));
+  const qs = p.toString();
+  return qs ? `/servers?${qs}` : "/servers";
+}
 ---
 
 <!doctype html>
@@ -92,29 +63,66 @@ const listed = rows
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Servers — Worldspring</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 64rem; padding: 0 1rem; }
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 68rem; padding: 0 1rem; }
       table { border-collapse: collapse; width: 100%; }
-      th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; }
+      th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; vertical-align: top; }
+      a.name { font-weight: 600; text-decoration: none; }
+      a.name:hover { text-decoration: underline; }
       .motd { color: #888; font-size: 0.85em; }
-      .badge { font-size: 0.75em; border: 1px solid #8886; border-radius: 4px; padding: 0 0.35em; margin-left: 0.4em; }
+      .badge { font-size: 0.75em; border: 1px solid #8886; border-radius: 4px; padding: 0 0.35em; margin-left: 0.4em; white-space: nowrap; }
       .dot { display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%; margin-right: 0.4em; }
       .dot.active { background: #3c3; }
       .dot.idle { background: #999; }
+      .region { color: #666; }
+      .ping { color: #888; font-size: 0.85em; }
       .empty { color: #888; margin-top: 2rem; }
       .report { color: #888; font-size: 0.85em; }
+      .filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0; }
+      .filters label { display: flex; flex-direction: column; font-size: 0.85em; color: #666; gap: 0.2rem; }
+      .filters select, .filters button { font: inherit; padding: 0.3rem 0.5rem; }
+      .pager { display: flex; gap: 1rem; align-items: center; margin-top: 1.25rem; }
+      .pager .muted { color: #888; }
     </style>
   </head>
   <body>
     <main>
       <h1>Community servers</h1>
       <p>
-        {listed.length} live. <a href="/servers/register">Register your server</a>.
+        {result.total} live. <a href="/servers/register">Register your server</a>.
       </p>
+
+      {/* Filters are a plain GET form — every submit produces a cacheable URL,
+          no JS required. Changing a filter resets to page 1 (no page field). */}
+      <form class="filters" method="get" action="/servers">
+        <label>
+          Preset
+          <select name="preset">
+            <option value="" selected={params.preset === null}>All presets</option>
+            {BROWSE_PRESETS.map((p) => (
+              <option value={p} selected={params.preset === p}>{cap(p)}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Sort
+          <select name="sort">
+            {BROWSE_SORTS.map((s) => (
+              <option value={s} selected={params.sort === s}>{SORT_LABELS[s]}</option>
+            ))}
+          </select>
+        </label>
+        <button type="submit">Apply</button>
+      </form>
+
       {
-        listed.length === 0 ? (
+        list.length === 0 ? (
           <p class="empty">
             No live servers yet. Run your own copy of Worldspring and{" "}
             <a href="/servers/register">list it here</a>.
+          </p>
+        ) : result.rows.length === 0 ? (
+          <p class="empty">
+            No servers match this filter. <a href="/servers">Clear filters</a>.
           </p>
         ) : (
           <table>
@@ -124,46 +132,48 @@ const listed = rows
                 <th>Players</th>
                 <th>Preset</th>
                 <th>Version</th>
+                <th>Region / Ping</th>
                 <th>Uptime (20d)</th>
                 <th />
               </tr>
             </thead>
             <tbody>
-              {listed.map((s) => (
+              {result.rows.map((s) => (
                 <tr>
                   <td>
-                    <span class={`dot ${s.activeNow ? "active" : "idle"}`} title={s.activeNow ? "active now" : "idle — wakes on join"} />
-                    {s.name}
+                    <span
+                      class={`dot ${s.activeNow ? "active" : "idle"}`}
+                      title={s.activeNow ? "active now" : "idle — wakes on join"}
+                    />
+                    <a class="name" href={`/servers/${s.id}`}>{s.name}</a>
                     {s.official && <span class="badge">Official</span>}
-                    {s.outdated && <span class="badge">outdated</span>}
+                    {s.outdated && <span class="badge" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>}
                     {s.motd && <div class="motd">{s.motd}</div>}
                   </td>
-                  <td>
-                    {s.players}/{s.players_max}
-                  </td>
+                  <td>{s.players}/{s.maxPlayers}</td>
                   {/* `||` not `??`: the sanitizer can store "" (doc 02 §8's
-                      fallback covers empty as well as null) */}
+                      fallback covers empty as well as null). */}
                   <td>{s.preset || "custom"}</td>
                   <td>{s.version || "—"}</td>
-                  {/* No non-verify probes yet (brand-new listing) is "no
-                      data", never a false 0%. */}
+                  <td>
+                    <div class="region">{s.region ?? "—"}</div>
+                    {/* ping.js fills this per-session, viewport-only, ≤6 in
+                        flight; "—" when the server doesn't answer. */}
+                    <div class="ping" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">—</div>
+                  </td>
+                  {/* No non-verify probes yet (brand-new listing) is "no data",
+                      never a false 0%. */}
                   <td>{s.hasUptime ? `${Math.round(s.uptimeRatio20d * 100)}%` : "—"}</td>
                   <td>
-                    {/* Doc 02 §9: every Join routes through the /join/:id
-                        interstitial EXCEPT the official pinned row, which
-                        links straight out (first-party; ?ref + new tab —
-                        noopener is inert without target="_blank"). s.url is
-                        the registration-pinned normalized https origin. The
-                        inline island below rewrites community links straight
-                        out when the visitor opted out on the interstitial. */}
+                    {/* Doc 02 §9: every Join routes through /join/:id EXCEPT the
+                        official pinned row (first-party; ?ref + new tab). s.joinUrl
+                        is the registration-pinned normalized https origin. ping.js
+                        rewrites community links straight out for opted-out visitors. */}
                     {s.official ? (
-                      <a href={`${s.url}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">Join</a>
+                      <a href={`${s.joinUrl}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">Join</a>
                     ) : (
                       <>
-                        <a href={`/join/${s.id}`} data-server-id={s.id} data-join-url={s.url}>Join</a>
-                        {/* The report path must be reachable WITHOUT the
-                            interstitial (opted-out visitors never see it, and
-                            /policy promises "anyone can report a listing"). */}
+                        <a href={`/join/${s.id}`} data-server-id={s.id} data-join-url={s.joinUrl}>Join</a>
                         {" · "}
                         <a class="report" href={`/servers/${s.id}/report`}>Report</a>
                       </>
@@ -175,27 +185,28 @@ const listed = rows
           </table>
         )
       }
+
+      {
+        result.pageCount > 1 && (
+          <nav class="pager">
+            {result.page > 1 ? (
+              <a href={pageUrl(result.page - 1)} rel="prev">&larr; Prev</a>
+            ) : (
+              <span class="muted">&larr; Prev</span>
+            )}
+            <span class="muted">Page {result.page} of {result.pageCount}</span>
+            {result.page < result.pageCount ? (
+              <a href={pageUrl(result.page + 1)} rel="next">Next &rarr;</a>
+            ) : (
+              <span class="muted">Next &rarr;</span>
+            )}
+          </nav>
+        )
+      }
     </main>
 
-    <script>
-      // M6 don't-warn-again island (doc 02 §9). The doc assigns this to
-      // ping.js, which doesn't exist yet (M5 partial) — fold this in when it
-      // lands. A visitor who checked "don't warn me again" on the /join/:id
-      // interstitial gets that server's Join rewritten to link straight out.
-      // Only ?ref crosses; the opt-in ?name is an interstitial-only choice.
-      for (const a of document.querySelectorAll<HTMLAnchorElement>("a[data-join-url]")) {
-        const serverId = a.dataset.serverId;
-        const joinUrl = a.dataset.joinUrl;
-        if (!serverId || !joinUrl) continue;
-        try {
-          if (localStorage.getItem(`ws_join_skip:${serverId}`) === null) continue;
-        } catch {
-          continue; // blocked storage — keep the interstitial route
-        }
-        a.href = `${joinUrl}/?ref=worldspring-directory`;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-      }
-    </script>
+    {/* Progressive enhancement only (doc 02 §1): fills the Ping column and
+        rewrites opted-out Join links. The table is complete without it. */}
+    <script src="/ping.js" defer is:inline></script>
   </body>
 </html>

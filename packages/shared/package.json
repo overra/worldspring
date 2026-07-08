@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     "./authSession": "./src/authSession.ts",
+    "./browse": "./src/browse.ts",
     "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
     "./directory": "./src/directory.ts",
