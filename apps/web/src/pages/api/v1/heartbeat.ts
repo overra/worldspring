@@ -68,8 +68,12 @@ export const POST: APIRoute = async ({ request }) => {
   const body = parseHeartbeatBody(raw);
   if (!body) return jsonResponse({ error: "bad-body" }, 400);
 
-  // sentAt: reject >5 min old or non-monotonic vs the newest accepted beat.
+  // sentAt: reject >5 min old, >5 min in the FUTURE (a skewed clock's accepted
+  // far-future sentAt would wedge the monotonicity floor and 400 every honest
+  // beat forever — there is no reset path for last_heartbeat_sent_at), or
+  // non-monotonic vs the newest accepted beat.
   if (now - body.sentAt > HEARTBEAT_MAX_AGE_MS) return jsonResponse({ error: "stale" }, 400);
+  if (body.sentAt - now > HEARTBEAT_MAX_AGE_MS) return jsonResponse({ error: "future" }, 400);
   if (row.last_heartbeat_sent_at !== null && body.sentAt <= row.last_heartbeat_sent_at) {
     return jsonResponse({ error: "non-monotonic" }, 400);
   }
@@ -130,20 +134,28 @@ export const POST: APIRoute = async ({ request }) => {
   // — pending→live stays probe-gated (doc 02 §6, Luanti precedent; Open
   // decision #6). Run the connect-back immediately (awaited: beats are
   // fire-and-forget on the sender, latency is free) so a correctly-configured
-  // server goes live on its first beat instead of waiting for cron.
-  if (row.status === "pending") {
+  // server goes live on its first beat instead of waiting for cron. Same
+  // inline probe revives UNREACHABLE rows: an authenticated beat proves the
+  // server is back, and the probe re-checks the challenge (re-proving URL
+  // control) — without it a recovered server stays delisted for up to the
+  // prober's 60-min unreachable backoff.
+  if (row.status === "pending" || row.status === "unreachable") {
     const expected = [row.challenge_hash, row.challenge_hash_next].filter(
       (h): h is string => h !== null,
     );
     const probe = await probeServerInfo(row.url, { expectedChallenges: expected });
     await DB.prepare(
-      "INSERT INTO probes (server_id, at, ok, rtt_ms, players, error) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO probes (server_id, at, ok, rtt_ms, players, error, source) VALUES (?, ?, ?, ?, ?, ?, 'heartbeat')",
     )
       .bind(row.id, now, probe.ok ? 1 : 0, probe.rttMs, probe.info?.players ?? null, probe.error)
       .run();
     if (probe.ok) {
       await DB.prepare(
-        "UPDATE servers SET status = 'live', verified_at = ?, last_probe_at = ?, consecutive_failures = 0, updated_at = ? WHERE id = ? AND status = 'pending'",
+        `UPDATE servers SET
+           status = 'live', verified_at = COALESCE(verified_at, ?),
+           last_probe_at = ?, consecutive_failures = 0, unreachable_since = NULL,
+           updated_at = ?
+         WHERE id = ? AND status IN ('pending', 'unreachable')`,
       )
         .bind(now, now, now, row.id)
         .run();

@@ -75,7 +75,11 @@ CREATE TABLE probes (                       -- pruned to PROBE_HISTORY_DAYS = 20
   ok         INTEGER NOT NULL,
   rtt_ms     INTEGER,
   players    INTEGER,
-  error      TEXT                           -- 'timeout'|'bad-status'|'bad-shape'|'challenge-mismatch'
+  error      TEXT,                          -- 'timeout'|'bad-status'|'bad-shape'|'challenge-mismatch'
+  -- Who triggered it. uptimeRatio20d aggregates EXCLUDE 'verify' rows: that
+  -- route is unauthenticated, so counting them would let owners self-boost
+  -- the ratio (spam ok=1 while healthy) or rivals pile on ok=0 during a blip.
+  source     TEXT NOT NULL DEFAULT 'cron' CHECK (source IN ('cron','heartbeat','verify'))
 );
 CREATE INDEX idx_probes_server_at ON probes(server_id, at);
 

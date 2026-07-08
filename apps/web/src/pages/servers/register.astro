@@ -60,41 +60,63 @@ npx wrangler deploy</pre>
       const $ = (id: string) => document.getElementById(id)!;
       let verifyUrl = "";
 
+      // Both handlers disable their button while in flight (a double-click
+      // would double-submit — the loser's 409 painting an error next to a
+      // fresh token panel) and catch fetch rejections (each attempt burns one
+      // of the 5/h/IP register slots, so a silent unhandled rejection on a
+      // flaky connection invites blind retries).
       $("submit").addEventListener("click", async () => {
+        const btn = $("submit") as HTMLButtonElement;
         const errEl = $("register-error");
         errEl.classList.add("hidden");
-        const url = ($("url") as HTMLInputElement).value.trim();
-        const res = await fetch("/api/v1/servers", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ url }),
-        });
-        const body = (await res.json().catch(() => null)) as {
-          token?: string;
-          verifyUrl?: string;
-          error?: string;
-        } | null;
-        if (!res.ok || !body?.token || !body.verifyUrl) {
-          errEl.textContent = `Registration failed: ${body?.error ?? res.status}`;
+        btn.disabled = true;
+        try {
+          const url = ($("url") as HTMLInputElement).value.trim();
+          const res = await fetch("/api/v1/servers", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+          const body = (await res.json().catch(() => null)) as {
+            token?: string;
+            verifyUrl?: string;
+            error?: string;
+          } | null;
+          if (!res.ok || !body?.token || !body.verifyUrl) {
+            errEl.textContent = `Registration failed: ${body?.error ?? res.status}`;
+            errEl.classList.remove("hidden");
+            return;
+          }
+          verifyUrl = body.verifyUrl;
+          $("token").textContent = body.token;
+          $("step-token").classList.remove("hidden");
+        } catch {
+          errEl.textContent = "Registration failed: network error — check your connection and try again.";
           errEl.classList.remove("hidden");
-          return;
+        } finally {
+          btn.disabled = false;
         }
-        verifyUrl = body.verifyUrl;
-        $("token").textContent = body.token;
-        $("step-token").classList.remove("hidden");
       });
 
       $("verify").addEventListener("click", async () => {
+        const btn = $("verify") as HTMLButtonElement;
         const out = $("verify-result");
         out.textContent = "Probing…";
-        const res = await fetch(verifyUrl, { method: "POST" });
-        const body = (await res.json().catch(() => null)) as {
-          ok?: boolean;
-          error?: string;
-        } | null;
-        out.textContent = body?.ok
-          ? "Verified — your server is live in the directory."
-          : `Not verified yet (${body?.error ?? res.status}). Set the secret, redeploy, and try again.`;
+        btn.disabled = true;
+        try {
+          const res = await fetch(verifyUrl, { method: "POST" });
+          const body = (await res.json().catch(() => null)) as {
+            ok?: boolean;
+            error?: string;
+          } | null;
+          out.textContent = body?.ok
+            ? "Verified — your server is live in the directory."
+            : `Not verified yet (${body?.error ?? res.status}). Set the secret, redeploy, and try again.`;
+        } catch {
+          out.textContent = "Probe request failed (network error) — try again.";
+        } finally {
+          btn.disabled = false;
+        }
       });
     </script>
   </body>

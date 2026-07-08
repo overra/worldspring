@@ -50,9 +50,10 @@ let challengeInFlight: Promise<void> | null = null;
 
 /**
  * Synchronous accessor for buildServerInfo (which cannot await): returns the
- * cached challenge, kicking off the one-time digest on first call. The first
- * server-info response(s) after a cold start may carry null — the probe
- * schedule retries, and the M3 acceptance covers the settled state.
+ * cached challenge, kicking off the one-time digest on first call. Cold
+ * starts must NOT serve /api/server-info before the digest settles — the
+ * GameRoom constructor awaits warmDirectoryChallenge inside its
+ * blockConcurrencyWhile, so requests never observe the null window.
  */
 export function directoryChallengeFor(token: string | undefined): string | null {
   if (!token) return null;
@@ -70,6 +71,24 @@ export function directoryChallengeFor(token: string | undefined): string | null 
       });
   }
   return null;
+}
+
+/**
+ * Await the one-time challenge digest (call from the DO constructor's
+ * blockConcurrencyWhile) so a cold object's FIRST /api/server-info response
+ * never publishes `directoryChallenge: null`: the prober counts a mismatch
+ * toward consecutive_failures, and the worker micro-cache would pin the
+ * null-challenge body for its 15 s TTL — enough to deterministically fail
+ * every quiet-suspension probe (a 6 h-idle isolate is always cold) and walk a
+ * healthy idle server to 'unreachable'. Token-only deploys (DIRECTORY_URL
+ * unset → heartbeat sender inert) still need this: the register wizard only
+ * instructs operators to set DIRECTORY_TOKEN, and verification probes require
+ * the challenge regardless of heartbeats.
+ */
+export function warmDirectoryChallenge(token: string | undefined): Promise<void> {
+  if (!token) return Promise.resolve();
+  directoryChallengeFor(token); // kicks off the digest (no-op if cached)
+  return challengeInFlight ?? Promise.resolve();
 }
 
 export interface HeartbeatDeps {

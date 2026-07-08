@@ -40,6 +40,10 @@ const UNREACHABLE_PROBE_INTERVAL_MS = 60 * 60_000;
 const PENDING_TTL_MS = 7 * 86_400_000;
 const UNREACHABLE_TTL_MS = 30 * 86_400_000;
 const FAILURES_TO_UNREACHABLE = 3;
+/** Abandoned doc 01 §7 rotations expire: past this window the *_next hashes
+ * are cleared so a leaked/never-settled next token is not a standing
+ * credential (winner-settles only fires if the new token ever beats). */
+const ROTATION_WINDOW_MS = 24 * 3_600_000;
 
 interface DueRow {
   id: string;
@@ -75,16 +79,31 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
   const stmts: D1PreparedStatement[] = [];
 
   // Bounded due-set, oldest-probed first (round-robin backlog draining).
+  // Due-ness MUST live in the WHERE clause, mirroring isDue(): rows skipped by
+  // an in-memory filter never advance last_probe_at, so with >LIMIT fresh-beat
+  // live rows the window would fill with permanently-skipped rows and starve
+  // pending verification, unreachable rechecks, and every expiry — forever.
   const due = await env.DB.prepare(
     `SELECT id, url, status, challenge_hash, challenge_hash_next,
             consecutive_failures, created_at, last_probe_at,
             last_heartbeat_at, last_event, unreachable_since
      FROM servers
-     WHERE status IN ('pending', 'live', 'unreachable')
+     WHERE status = 'pending'
+        OR (status = 'unreachable' AND (last_probe_at <= ? OR unreachable_since <= ?))
+        OR (status = 'live' AND CASE
+              WHEN last_event = 'quiet' THEN last_probe_at <= ?
+              ELSE (last_heartbeat_at IS NULL OR last_heartbeat_at <= ?)
+            END)
      ORDER BY last_probe_at ASC
      LIMIT ?`,
   )
-    .bind(DUE_LIMIT)
+    .bind(
+      now - UNREACHABLE_PROBE_INTERVAL_MS,
+      now - UNREACHABLE_TTL_MS, // past-TTL rows must surface for the expiry DELETE
+      now - QUIET_PROBE_INTERVAL_MS,
+      now - FRESH_BEAT_MS,
+      DUE_LIMIT,
+    )
     .all<DueRow>();
 
   const targets: DueRow[] = [];
@@ -128,7 +147,7 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
     const probe = results[i];
     stmts.push(
       env.DB.prepare(
-        "INSERT INTO probes (server_id, at, ok, rtt_ms, players, error) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO probes (server_id, at, ok, rtt_ms, players, error, source) VALUES (?, ?, ?, ?, ?, ?, 'cron')",
       ).bind(row.id, now, probe.ok ? 1 : 0, probe.rttMs, probe.info?.players ?? null, probe.error),
     );
     if (probe.ok && probe.info) {
@@ -138,6 +157,11 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
       // pending→live on first passing probe; unreachable→live on any passing
       // probe. Probe values overwrite heartbeat values on conflict (doc 02
       // §7); probe bodies never move joinUrl (pinned at registration).
+      // A probe that OBSERVES status:"idle" engages the quiet suspension
+      // itself (last_event = 'quiet'): a lost/blocked quiet beat — or a server
+      // registered while idle that has never beat at all — must not leave the
+      // DO woken every 5 minutes forever. Any accepted beat still ends the
+      // suspension (intake overwrites last_event).
       const name = sanitizeListingText(info.name, SERVER_NAME_MAX) || new URL(row.url).hostname;
       stmts.push(
         env.DB.prepare(
@@ -145,6 +169,7 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
              status = 'live',
              verified_at = COALESCE(verified_at, ?),
              consecutive_failures = 0, unreachable_since = NULL,
+             last_event = CASE WHEN ? THEN 'quiet' ELSE last_event END,
              name = ?, motd = ?, preset = ?, version = ?, protocol = ?,
              players = ?, players_max = ?, uptime_s = ?,
              colo = COALESCE(?, colo),
@@ -152,6 +177,7 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
            WHERE id = ?`,
         ).bind(
           now,
+          info.status === "idle" ? 1 : 0,
           name,
           sanitizeListingText(info.motd, SERVER_MOTD_MAX),
           sanitizeListingText(String(info.rules.preset), 24),
@@ -189,6 +215,15 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
   // run of each hour; daily pruning on the 00:xx run.
   const at = new Date(controller.scheduledTime);
   if (at.getUTCMinutes() < 5) {
+    // Expire abandoned rotation windows (doc 01 §7): without this, a rotation
+    // whose deploy job died leaves TWO permanently-valid tokens.
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE servers SET
+           token_hash_next = NULL, challenge_hash_next = NULL, rotation_started_at = NULL
+         WHERE rotation_started_at IS NOT NULL AND rotation_started_at < ?`,
+      ).bind(now - ROTATION_WINDOW_MS),
+    );
     const hour = Math.floor(controller.scheduledTime / 3_600_000) - 1; // completed hour
     stmts.push(
       env.DB.prepare(

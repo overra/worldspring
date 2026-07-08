@@ -140,8 +140,10 @@ export const GET: APIRoute = async () => {
        FROM servers WHERE status = 'live' LIMIT ?`,
     ).bind(LIST_MAX_ROWS),
     DB.prepare(
-      // 20-day uptime ratio from probe history (doc 02 §8).
-      "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? GROUP BY server_id",
+      // 20-day uptime ratio from probe history (doc 02 §8). Excludes
+      // 'verify' rows: that route is unauthenticated, so counting them would
+      // let anyone farm the 0–8 uptime score term (see migration 0002).
+      "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? AND source != 'verify' GROUP BY server_id",
     ).bind(now - 20 * 86400_000),
   ]);
 

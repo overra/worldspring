@@ -181,6 +181,30 @@ describe("probeServerInfo", () => {
     }
   });
 
+  it("aborts a chunked body past 16 KB without buffering the stream", async () => {
+    // No content-length header (chunked): the cap must be enforced while
+    // STREAMING, not after a full res.text() buffer.
+    let pulls = 0;
+    const chunk = new Uint8Array(1024).fill(0x78); // 'x'
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls++;
+        if (pulls > 100_000) controller.close();
+        else controller.enqueue(chunk);
+      },
+    });
+    const res = await probeServerInfo("https://x.example.com", {
+      fetchFn: async () =>
+        new Response(stream, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("bad-shape");
+    expect(pulls).toBeLessThan(64); // stopped at the 16 KB cap, not stream end
+  });
+
   it("reports timeout on network failure and never throws", async () => {
     const res = await probeServerInfo("https://x.example.com", {
       fetchFn: async () => {

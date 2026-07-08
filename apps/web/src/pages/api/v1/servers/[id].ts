@@ -22,10 +22,10 @@ export const DELETE: APIRoute = async ({ request, params }) => {
   if (!parsed || parsed.serverId !== params.id) return emptyResponse(401);
 
   const row = await DB.prepare(
-    "SELECT token_hash, token_hash_next FROM servers WHERE id = ?",
+    "SELECT token_hash, token_hash_next, status FROM servers WHERE id = ?",
   )
     .bind(parsed.serverId)
-    .first<{ token_hash: string; token_hash_next: string | null }>();
+    .first<{ token_hash: string; token_hash_next: string | null; status: string }>();
   if (!row) return emptyResponse(401);
 
   const presented = await sha256Hex(parsed.secretHex);
@@ -33,6 +33,12 @@ export const DELETE: APIRoute = async ({ request, params }) => {
   if (presented !== row.token_hash && presented !== row.token_hash_next) {
     return emptyResponse(401);
   }
+
+  // Banned rows are frozen (mirrors heartbeat/verify): a hard delete would
+  // cascade away the reports evidence AND free the URL for immediate
+  // re-registration whenever moderation set status='banned' without a
+  // matching banned_hosts row.
+  if (row.status === "banned") return emptyResponse(410);
 
   // D1 runs with foreign_keys on: the CASCADEs in migration 0002 clear
   // probes/stats_hourly/reports.

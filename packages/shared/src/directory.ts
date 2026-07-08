@@ -177,6 +177,45 @@ export const PROBE_MAX_BYTES = 16 * 1024;
 
 export type ProbeError = "timeout" | "bad-status" | "bad-shape" | "challenge-mismatch";
 
+/**
+ * Read a response body as UTF-8 text, aborting the moment cumulative bytes
+ * exceed `maxBytes` (returns null and cancels the stream). This is the ONLY
+ * safe way to cap an untrusted body: content-length may be absent (chunked)
+ * or lie about the post-decompression size.
+ */
+async function readBodyCapped(res: Response, maxBytes: number): Promise<string | null> {
+  const body = res.body;
+  if (!body) return ""; // no body → JSON.parse("") fails → bad-shape upstream
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // Already closed.
+        }
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const buf = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buf.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(buf);
+}
+
 export interface ProbeResult {
   ok: boolean;
   rttMs: number;
@@ -248,13 +287,18 @@ export async function probeServerInfo(origin: string, opts: ProbeOptions = {}): 
     }
     return fail("bad-shape");
   }
-  let text: string;
+  // STREAMED read with the cap enforced per chunk — never `res.text()`, which
+  // buffers the whole body first: a hostile origin serving a chunked (or
+  // gzipped, content-length is pre-decompression) stream could otherwise pump
+  // tens of MB into memory inside the timeout window and OOM the isolate,
+  // killing an entire prober sweep (whose writeback is one final batch).
+  let text: string | null;
   try {
-    text = await res.text();
+    text = await readBodyCapped(res, PROBE_MAX_BYTES);
   } catch {
     return fail("timeout");
   }
-  if (text.length > PROBE_MAX_BYTES) return fail("bad-shape");
+  if (text === null) return fail("bad-shape");
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

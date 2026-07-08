@@ -43,9 +43,21 @@ export function getServerAuthRow(db: D1Database, id: string): Promise<ServerAuth
     .first<ServerAuthRow>();
 }
 
+let warnedMissingSalt = false;
+
 /** sha256(ip + daily-rotating salt) — the doc 02 §7 recipe: no raw IPs at
- * rest, and yesterday's hashes are useless for correlation today. */
+ * rest, and yesterday's hashes are useless for correlation today. An UNSET
+ * salt silently degrades that guarantee (sha256 over the IPv4 space with the
+ * known date string is minutes of work), so warn loudly once per isolate —
+ * dev is expected to run saltless, prod is not. */
 export function hashIp(request: Request, salt: string | undefined): Promise<string> {
+  if (salt === undefined && !warnedMissingSalt) {
+    warnedMissingSalt = true;
+    console.warn(
+      "[directory] REPORT_SALT is unset — stored ip hashes are brute-forceable. " +
+        "Fine in local dev; in prod run `wrangler secret put REPORT_SALT`.",
+    );
+  }
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const day = new Date().toISOString().slice(0, 10);
   return sha256Hex(`${salt ?? ""}:${day}:${ip}`);

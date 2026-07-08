@@ -41,7 +41,8 @@ try {
       .bind(),
     db
       .prepare(
-        "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? GROUP BY server_id",
+        // Excludes unauthenticated 'verify' rows — see /api/v1/servers GET.
+        "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? AND source != 'verify' GROUP BY server_id",
       )
       .bind(now - 20 * 86400_000),
   ]);
@@ -135,12 +136,17 @@ const listed = rows
                   <td>
                     {s.players}/{s.players_max}
                   </td>
-                  <td>{s.preset ?? "custom"}</td>
-                  <td>{s.version ?? "—"}</td>
+                  {/* `||` not `??`: the sanitizer can store "" (doc 02 §8's
+                      fallback covers empty as well as null) */}
+                  <td>{s.preset || "custom"}</td>
+                  <td>{s.version || "—"}</td>
                   <td>{Math.round(s.uptimeRatio20d * 100)}%</td>
                   <td>
-                    {/* s.url is the registration-pinned normalized https origin */}
-                    <a href={s.url} rel="noopener noreferrer">Join</a>
+                    {/* s.url is the registration-pinned normalized https origin;
+                        outbound form matches doc 02 §9 (?ref=..., new tab —
+                        noopener is inert without target="_blank"). The M6
+                        interstitial replaces this direct link. */}
+                    <a href={`${s.url}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">Join</a>
                   </td>
                 </tr>
               ))}

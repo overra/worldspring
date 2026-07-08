@@ -52,8 +52,11 @@ export const POST: APIRoute = async ({ request, params }) => {
   );
   const probe = await probeServerInfo(row.url, { expectedChallenges: expected });
 
+  // source='verify': EXCLUDED from uptimeRatio20d — this endpoint is
+  // unauthenticated, so its rows counting toward the ranked list's uptime
+  // term would let owners self-boost (spam ok=1) or rivals pile on ok=0.
   await DB.prepare(
-    "INSERT INTO probes (server_id, at, ok, rtt_ms, players, error) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO probes (server_id, at, ok, rtt_ms, players, error, source) VALUES (?, ?, ?, ?, ?, ?, 'verify')",
   )
     .bind(row.id, now, probe.ok ? 1 : 0, probe.rttMs, probe.info?.players ?? null, probe.error)
     .run();

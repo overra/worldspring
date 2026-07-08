@@ -111,7 +111,7 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
-import { DirectoryHeartbeat, directoryChallengeFor } from "./heartbeat";
+import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
@@ -243,6 +243,14 @@ export class GameRoom extends DurableObject<Env> {
       console.warn(`[config] ${w}`);
     }
     void ctx.blockConcurrencyWhile(async () => {
+      // Settle the directory-challenge digest BEFORE any request is delivered:
+      // a synchronous /api/server-info on a cold object would otherwise
+      // publish directoryChallenge: null (and the worker micro-cache would pin
+      // it for 15 s) — the prober reads that as challenge-mismatch and walks
+      // healthy idle servers to 'unreachable'. Token-only deploys (no
+      // DIRECTORY_URL) are covered too: probes need the challenge even with
+      // the heartbeat sender inert.
+      await warmDirectoryChallenge(env.DIRECTORY_TOKEN);
       // Capture a PITR bookmark BEFORE the wipe decision (or "unavailable" in
       // local dev), then run the fail-closed world-wipe check. initSchema returns
       // the world the DO must actually generate — the running config's world, or,
