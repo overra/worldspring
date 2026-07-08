@@ -170,6 +170,28 @@ shipped as additive-optional `welcome.explored` (full set) + `snap.fog` (per-tic
 delta) — both no-bump. Honest scope: the public seed means fog cannot hide static
 terrain, only persist a server-blessed explored set.
 
+### RENDER QUALITY & DEVICE TIERS (`src/client/state/settings.ts`, doc 08)
+
+Client-only; no sim/wire surface. `QualityPreset = "mobile" | "low" | "medium"
+| "high"`, each mapping to a `QualityConfig` (`maxDpr`, `postFx`, `shadows` +
+`shadowMapSize`, `grassDensity`) consumed by `GameCanvas` (dpr cap), `PostFX`
+(SMAA-only vs full chain — the composer always stays mounted; it is the
+scene's only renderer), `SkyAndLighting` (sun shadows, live-reallocated map)
+and `Grass` (blade density). `mobile` is the phone profile (dpr cap 1, no
+post/shadows, minimal grass) — deliberately distinct from `low`, the desktop
+fallback, so the two can diverge as knobs grow (doc 08 M5).
+
+First load runs `detectTier()`: coarse pointer → `mobile`; else the
+`WEBGL_debug_renderer_info` renderer string + dpr + cores + `deviceMemory` →
+`low | medium | high`, with unknown/masked/blocked landing on `medium`. The
+result persists as `tier` in the `ws_settings` blob and is never re-probed.
+Any Esc-menu quality pick sets `userOverrodeQuality` — a manual choice is
+sacred and detection never runs over it. `?tier=<preset>` forces a preset for
+one session (QA) without touching the persisted choice; the F3 overlay shows
+the active tier and its source (auto/manual/url). Three edit sites must stay
+in sync when adding a preset: the union, `QUALITY_CONFIGS`, and `EscapeMenu`'s
+`QUALITY_PRESETS` list.
+
 ### SERVER (`src/server/`)
 
 - `GameRoom.ts` → `export class GameRoom extends DurableObject` —
