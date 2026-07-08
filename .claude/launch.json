@@ -2,25 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev"
-      ],
-      "port": 5173
-    },
-    {
-      "name": "preview",
+      "name": "physics-spike",
       "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "vite",
-        "preview",
-        "--port",
-        "4173",
-        "--strictPort"
-      ],
-      "port": 4173
+      "runtimeArgs": ["wrangler", "dev", "-c", "apps/game/scripts/physics-spike/worker/wrangler.jsonc"],
+      "port": 8917
     }
   ]
 }

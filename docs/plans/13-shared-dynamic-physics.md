@@ -233,11 +233,63 @@ M1–M2 (world tiers — vehicles need somewhere to drive). Platform spine unaff
 6. **M5 — driving prediction** *(only if M4 playtests demand it)* — rollback for the
    driven vehicle only.
 
+## M0 findings (run 2026-07-08) — **GO**
+
+Harness: `apps/game/scripts/physics-spike/` (shared scenario, integer-derived
+inputs only; FNV-1a over Float32 pose bytes — bit-exact comparison).
+Rapier `@dimforge/rapier3d-compat` **0.19.3**, scenario v1, seed 1337,
+100 bodies × 1000 steps at dt=1/15 on a 64×64 heightfield.
+
+**Determinism: identical hash `d060ce23` on all seven runtime/arch combos:**
+
+| Runtime | Arch | Hash |
+| --- | --- | --- |
+| Node 24, macOS | arm64 | `d060ce23` |
+| Node 22, Linux (docker) | arm64 | `d060ce23` |
+| Node 24, Linux (docker) | arm64 | `d060ce23` |
+| Node 22, Linux (docker) | **x86_64** | `d060ce23` |
+| workerd local (`wrangler dev`) | arm64 | `d060ce23` |
+| Browser (Chromium, preview harness) | arm64 | `d060ce23` |
+| **workerd DEPLOYED (real Cloudflare)** | prod | `d060ce23` |
+
+**Cost: physics is in the tick's noise floor.** Node avg ms/step —
+25 bodies: 0.025–0.04, 50: 0.035–0.064, 100: 0.059–0.09, 200: 0.116–0.178
+(arm64 native → x86 emulated range). Deployed workerd wall-clock agrees
+(≤0.2 ms/step at 200 bodies; below network-jitter resolution at 25). At the
+proposed 64-body cap that is **< 0.3% of the 66.7 ms tick**. The M1 fallback
+(half-rate stepping) will not be needed.
+
+**Platform finding (load-bearing for M1):** workerd **disallows WebAssembly
+compilation from bytes** ("Wasm code generation disallowed by embedder"), so
+rapier3d-compat's inlined-base64 `init()` cannot run on Workers as-is.
+Instantiating a **precompiled module is allowed**, and wrangler imports
+`.wasm` files as CompiledWasm modules — the spike shims
+`WebAssembly.instantiate` to reroute compat's bytes to the package's own
+`.wasm` imported as a module (same binary). It works deployed. **M1 must ship
+a proper loader** (import the `.wasm` module + wire wasm-bindgen glue, or the
+non-compat package with custom init) instead of the global shim; the shim
+also wastes a ~2 MB base64 decode per isolate cold start.
+
+**Bundle delta:** ~2.2 MB unminified JS+wasm (wasm ≈ 1.9 MB) — fits Worker
+limits comfortably; gzip substantially smaller.
+
+**Caveat recorded:** every tested runtime is V8-based (Node/Chromium/workerd)
+— which is exactly the authoritative deployment surface (server = workerd;
+clients don't step physics in v1). Safari/Firefox (JSC/SpiderMonkey) WASM
+determinism is untested and only becomes relevant if M5 client prediction
+ever happens; re-test then.
+
+**GO line: determinism holds bit-exactly across seven combos including
+deployed production workerd; step cost is negligible at the design cap.
+Proceed to M1 with a module-import WASM loader.**
+
 ## Open questions
 
-1. **Rapier's published WASM: is it the `enhanced-determinism` build?** M0 settles it
-   empirically either way; if not, we build the flag'd WASM ourselves (Rust toolchain
-   in CI) or fail to NO-GO. *This is the single biggest unknown.*
+1. ~~**Rapier's published WASM: is it the `enhanced-determinism` build?**~~
+   **ANSWERED by M0 empirically**: whatever the build flags, 0.19.3's shipped
+   WASM is bit-deterministic across every V8 runtime and across arm64/x86_64
+   — including deployed Cloudflare hardware. (Pin the exact rapier version;
+   any upgrade re-runs the spike + re-baselines the replay-harness hash.)
 2. **Tick rate interplay**: step physics at tick rate or half rate? *Recommendation:
    measure in M0, decide in M1; interpolation hides either.*
 3. **Body cap default** (cost ceiling vs fun): 64? 128? *Recommendation: pick from

@@ -1,0 +1,13 @@
+{
+  // doc 13 M0 spike worker — throwaway, NOT part of any deploy pipeline.
+  // Local: npx wrangler dev -c apps/game/scripts/physics-spike/worker/wrangler.jsonc
+  // Scratch deploy for real-hardware timing, then delete:
+  //   npx wrangler deploy -c ... && npx wrangler delete -c ...
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "worldspring-physics-spike",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-06-01",
+  "assets": { "directory": "./web" },
+  "dev": { "port": 8917 },
+  "observability": { "enabled": false }
+}
