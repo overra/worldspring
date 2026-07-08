@@ -190,7 +190,9 @@ export function InputController(): null {
           // set-code pad (owner-only server-side; non-owners get the notice).
           // NOT F — F is the established use-item key and overloading it
           // collides with consuming items while facing a door (the same
-          // rationale that put demolish on X instead of E).
+          // rationale that put demolish on X instead of E). Gated like
+          // Enter/chat so L can't pop the pad over an open modal.
+          if (!canMove) return;
           const lockDoorId = clientWorld.promptDoorId;
           if (lockDoorId !== null) ui.setCodePad({ id: lockDoorId, mode: "set" });
           return;

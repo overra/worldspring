@@ -14,7 +14,7 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { BUILD_CELL, BUILD_WALL_THICKNESS } from "@worldspring/shared/constants";
-import { PIECE_DEFS, pieceAabbs, pieceCenter, type StructurePiece } from "@worldspring/shared/structures";
+import { PIECE_DEFS, crateAabb, pieceAabbs, pieceCenter, type StructurePiece } from "@worldspring/shared/structures";
 import type { Aabb } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
 
@@ -32,24 +32,6 @@ const BUCKET_COLORS: Record<BucketKey, string> = {
 const OPEN_DOOR_HEIGHT = 2.2;
 const OPEN_GATE_HEIGHT = 2.6;
 
-/** Crate render dims (doc 06 M6) — RENDER-ONLY: crates derive zero collision
- * boxes (open Q1 / campfire precedent), so the visual box is synthesized. */
-const CRATE_SIZE = 0.9;
-const CRATE_HEIGHT = 0.7;
-
-/** Render box for a crate at its free position (or cell center). */
-export function crateRenderBox(piece: StructurePiece): Aabb {
-  const [cx, cz] = pieceCenter(piece);
-  const h = CRATE_SIZE / 2;
-  return {
-    minX: cx - h,
-    maxX: cx + h,
-    minZ: cz - h,
-    maxZ: cz + h,
-    y0: piece.floorY,
-    y1: piece.floorY + CRATE_HEIGHT,
-  };
-}
 
 /** Damage tint multiplier from remaining hp (doc 06 M7): cracks at ≥50%
  * damage, heavy at ≥80% — instanced per-box via setColorAt. */
@@ -111,8 +93,9 @@ function buildMeshes(
     const key = bucketOf(piece);
     const tint = damageTint(piece);
     for (const box of pieceAabbs(piece)) buckets[key].push({ box, tint });
-    // Crates derive zero collision boxes — synthesize the render box.
-    if (piece.kind === "crate") buckets[key].push({ box: crateRenderBox(piece), tint });
+    // Crates derive zero collision boxes; render the shared crateAabb — the
+    // raycast-only attribution box, so what you see is what an axe hits.
+    if (piece.kind === "crate") buckets[key].push({ box: crateAabb(piece), tint });
     if ((piece.kind === "door" || piece.kind === "gate") && piece.open === true) {
       const panel = openPanelBox(piece);
       if (panel) buckets[key].push({ box: panel, tint });

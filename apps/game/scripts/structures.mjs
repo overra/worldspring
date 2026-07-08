@@ -107,6 +107,12 @@ console.log("protocol (doc 06 wire):");
   // review: a foundation with an attached edge would shift pieceCenter 1.5m
   // and shave every center-based server check — malformed on the wire.
   check(parseClientMsg(JSON.stringify({ t: "place", kind: "foundation", tier: 0, gx: 0, gz: 0, edge: 0 })) === null, "foundation with edge is malformed");
+  // review: |x| big enough to overflow the round2 (*100 → Infinity) must not
+  // leak Infinity through the parse layer's no-NaN/Infinity contract.
+  check(
+    parseClientMsg(JSON.stringify({ t: "place", kind: "crate", tier: 0, gx: 0, gz: 0, x: 1e307, z: 1 })) === null,
+    "crate x overflowing round2 to Infinity is malformed",
+  );
   const far = parseClientMsg(JSON.stringify({ t: "place", kind: "foundation", tier: 0, gx: 99999, gz: -99999 }));
   check(far?.t === "place" && far.gx === 534 && far.gz === -534, "gx/gz clamped to the max-tier bound");
   check(parseClientMsg(JSON.stringify({ t: "demolish", id: 7.2 }))?.id === 7, "demolish parses, id |0");
@@ -507,6 +513,66 @@ function makePlayer(state, id, tokenHash, x, z, inventory) {
   sys.handleDemolish(state, player, foundationId);
   check(!state.world.structures.pieces.has(foundationId), "bare foundation demolishes");
 
+  // review (adversarial): demolish-rights hardening. The old rule granted
+  // demolish over any edge piece bordering a foundation you own — but
+  // foundations place freely FLUSH against enemy walls (canPlace's overlap
+  // subtracts all structure boxes), so an attacker could drop an 8-wood slab
+  // behind any perimeter wall and delete it: an HP-free breach bypassing
+  // raid damage, tiers, locks and the offline shield.
+  {
+    const fy = computeFoundationFloorY(sysWorld, BGX, BGZ);
+    const victim = makePlayer(state, "vic", "hash-vic", px, pz, []);
+    const attacker = makePlayer(state, "atk", "hash-atk", px, pz, []);
+    const meta = (ownerHash, extra = {}) => ({
+      ownerHash, placedAtMs: 0, code: null, authorized: [], contents: null, ...extra,
+    });
+
+    // Victim's base: foundation + perimeter wall on its +X edge; the far
+    // cell is empty — true of EVERY perimeter edge by definition.
+    sysWorld.structures.add({ id: 9101, kind: "foundation", tier: 0, gx: BGX, gz: BGZ, floorY: fy, hp: 600 });
+    sysWorld.structures.add({ id: 9102, kind: "wall", tier: 0, gx: BGX, gz: BGZ, edge: 2, floorY: fy, hp: 400 });
+    state.structureMeta.set(9101, meta("hash-vic"));
+    state.structureMeta.set(9102, meta("hash-vic"));
+    // The attack: a slab flush against the wall (legal placement)…
+    sysWorld.structures.add({ id: 9103, kind: "foundation", tier: 0, gx: BGX + 1, gz: BGZ, floorY: fy, hp: 600 });
+    state.structureMeta.set(9103, meta("hash-atk"));
+    // …must grant NO demolish rights: a foreign co-anchor kills the claim.
+    sys.handleDemolish(state, attacker, 9102);
+    check(state.world.structures.pieces.has(9102), "adjacent-slab demolish exploit closed (foreign co-anchored wall refuses)");
+    // The wall's owner still demolishes it, co-anchor or not.
+    sys.handleDemolish(state, victim, 9102);
+    check(!state.world.structures.pieces.has(9102), "piece owner demolish unaffected by a foreign co-anchor");
+
+    // Foreign LOCKED door on YOUR doorway: the doorway owner clears it (the
+    // lockout-grief counterpart of the anchor rule).
+    sysWorld.structures.add({ id: 9104, kind: "doorway", tier: 0, gx: BGX, gz: BGZ, edge: 0, floorY: fy, hp: 400 });
+    sysWorld.structures.add({ id: 9105, kind: "door", tier: 0, gx: BGX, gz: BGZ, edge: 0, floorY: fy, hp: 250, open: false });
+    state.structureMeta.set(9104, meta("hash-vic"));
+    state.structureMeta.set(9105, meta("hash-atk", { code: "1234" }));
+    sys.handleDemolish(state, attacker, 9104);
+    check(state.world.structures.pieces.has(9104), "attacker gains no rights over the victim's doorway");
+    sys.handleDemolish(state, victim, 9105);
+    check(!state.world.structures.pieces.has(9105), "doorway owner demolishes a foreign locked door on their doorway");
+
+    // Foreign crate on YOUR slab: the foundation owner clears it (it spills —
+    // a griefer crate must not be a permanent cell blocker).
+    sysWorld.structures.add({ id: 9106, kind: "crate", tier: 0, gx: BGX, gz: BGZ, x: cx, z: cz, floorY: fy, hp: 200 });
+    state.structureMeta.set(9106, meta("hash-atk", {
+      contents: [{ type: "wood", count: 3 }, ...Array.from({ length: 11 }, () => null)],
+    }));
+    const lootBefore = state.loot.size;
+    sys.handleDemolish(state, victim, 9106);
+    check(!state.world.structures.pieces.has(9106), "foundation owner demolishes a foreign crate on their slab");
+    check(state.loot.size === lootBefore + 1, "the foreign crate's contents spill (not destroyed)");
+
+    for (const id of [9101, 9103, 9104]) {
+      sysWorld.structures.remove(id);
+      state.structureMeta.delete(id);
+    }
+    for (const l of [...state.loot.values()]) state.loot.delete(l.id);
+    check(state.world.structures.pieces.size === 0, "demolish-rights section cleaned up");
+  }
+
   // Per-player cap.
   {
     const capState = makeState({ pieceCapPerPlayer: 10 });
@@ -888,15 +954,92 @@ console.log("raiding (damage math + offline shield + destruction):");
     );
   }
 
+  // review (adversarial): the DAMAGE path honors the no-orphan rule (doc
+  // 06:207 — foundations "can't be demolished/DESTROYED while edge pieces
+  // anchor to them"). handleDemolish always rejected this; ~100 axe swings
+  // on the slab used to delete it anyway, stranding floating walls/crates
+  // forever and freeing the cell for a demolish-rights takeover.
+  {
+    const state = makeState();
+    makePlayer(state, "own", "hash-own", cx, wallZ - 1.5, []);
+    const meta = () => ({ ownerHash: "hash-own", placedAtMs: 0, code: null, authorized: [], contents: null });
+    sysWorld.structures.add({ id: 8010, kind: "foundation", tier: 0, gx: BGX, gz: BGZ, floorY: fy, hp: 4 });
+    sysWorld.structures.add({ id: 8011, kind: "wall", tier: 0, gx: BGX, gz: BGZ, edge: 0, floorY: fy, hp: 12 });
+    sysWorld.structures.add({ id: 8012, kind: "crate", tier: 0, gx: BGX, gz: BGZ, x: cx, z: BGZ * BUILD_CELL + 1, floorY: fy, hp: 6 });
+    state.structureMeta.set(8010, meta());
+    state.structureMeta.set(8011, meta());
+    state.structureMeta.set(8012, meta());
+    state.outbox.length = 0;
+    sys.damageStructure(state, 8010, 6, 0);
+    check(sysWorld.structures.pieces.get(8010)?.hp === 1, "anchored foundation CLAMPS at 1 hp on the damage path (no orphans)");
+    check(
+      state.outbox.some((o) => o.msg.t === "sState" && o.msg.id === 8010 && o.msg.hp === 1),
+      "the clamp still broadcasts sState.hp",
+    );
+    sys.damageStructure(state, 8010, 6, 0);
+    check(sysWorld.structures.pieces.has(8010), "repeat overkill keeps clamping");
+    // Clear the anchors the raider's way (destruction)…
+    sys.damageStructure(state, 8011, 12, 0);
+    sys.damageStructure(state, 8012, 6, 0);
+    check(
+      !sysWorld.structures.pieces.has(8011) && !sysWorld.structures.pieces.has(8012),
+      "anchored wall + crate still die to damage normally",
+    );
+    // …then the slab falls to the same swing that used to orphan them.
+    sys.damageStructure(state, 8010, 6, 0);
+    check(!sysWorld.structures.pieces.has(8010), "cleared foundation is destroyable");
+    for (const id of [8010, 8011, 8012]) state.structureMeta.delete(id);
+  }
+
+  // review: combat reaches CRATES end-to-end — the index carries a
+  // raycast-only body box (crateAabb), so melee attribution, damage and the
+  // destruction spill work; collision stays zero (queryWalls never returns
+  // the body box).
+  {
+    const state = makeState();
+    const attacker = makePlayer(state, "atk", "hash-atk", cx, wallZ - 1.5, [{ type: "axe", count: 1 }]);
+    attacker.core.yaw = Math.PI; // faces +Z
+    attacker.core.pitch = -0.7; // looks down at the crate ~1m ahead
+    const cfy = Math.round(attacker.core.y * 20) / 20; // quantized, chest-relative
+    sysWorld.structures.add({ id: 8020, kind: "crate", tier: 0, gx: BGX, gz: BGZ, x: cx, z: wallZ - 0.5, floorY: cfy, hp: 10 });
+    state.structureMeta.set(8020, {
+      ownerHash: "hash-atk", placedAtMs: 0, code: null, authorized: [],
+      contents: [{ type: "wood", count: 5 }, ...Array.from({ length: 11 }, () => null)],
+    });
+    check(sysWorld.structures.queryWalls(cx, wallZ - 0.5, 2).length === 0, "crate body box never enters queryWalls (still non-colliding)");
+    sys.performAttack(state, attacker, undefined);
+    check(
+      sysWorld.structures.pieces.get(8020)?.hp === 4,
+      `axe swing lands on the crate via raycast attribution (hp ${sysWorld.structures.pieces.get(8020)?.hp})`,
+    );
+    attacker.attackCooldown = 0;
+    sys.performAttack(state, attacker, undefined);
+    check(!sysWorld.structures.pieces.has(8020), "second swing destroys the crate");
+    check(
+      [...state.loot.values()].some((l) => l.type === "wood" && l.count === 5),
+      "combat destruction spills the crate contents",
+    );
+    state.structureMeta.delete(8020);
+    for (const l of [...state.loot.values()]) state.loot.delete(l.id);
+  }
+
   // ownerOnline direct: presence map is stamped by tickStructures.
   {
     const state = makeState();
     makePlayer(state, "own", "hash-own", cx, wallZ - 1.5, []);
     state.time = 50;
+    // review: the tryCode anti-mash map is pruned on the same sweep —
+    // identities are free to mint, so an unpruned map grows without bound.
+    state.codeTryAt.set("hash-stale", 1); // 49s old — can never gate again
+    state.codeTryAt.set("hash-fresh", 49.5); // inside the 1s cooldown window
     sys.tickStructures(state, () => Date.now());
     check(state.ownerPresence.get("hash-own") === 50, "tickStructures stamps presence each tick");
     check(sys.ownerOnline(state, "hash-own") === true, "connected owner reads online");
     check(sys.ownerOnline(state, "hash-nobody") === false, "unknown hash reads offline");
+    check(
+      !state.codeTryAt.has("hash-stale") && state.codeTryAt.has("hash-fresh"),
+      "codeTryAt entries older than the cooldown are pruned on the sweep",
+    );
   }
 }
 

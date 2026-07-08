@@ -247,30 +247,79 @@ function edgeBorderCells(gx: number, gz: number, edge: 0 | 2): Array<[number, nu
 }
 
 /**
- * Does the player own a foundation this edge piece anchors to? Anchoring has
- * no ownership requirement (canPlace is shared and ownership-blind), so
- * without this a 6-wood enemy wall on your foundation's open edge would block
- * your foundation demolish FOREVER (demolish is otherwise owner-only, and
- * structure damage + decay are follow-up slices). The anchor owner therefore
- * gets demolish rights over foreign attachments on their foundation.
+ * Anchor-owner demolish rights. canPlace is shared and ownership-blind, so
+ * foreign pieces can legally attach to YOUR structures — a 6-wood enemy wall
+ * on your foundation's open edge (or a foreign locked door on your doorway)
+ * would otherwise pin/lock your base forever. The anchor's owner therefore
+ * gets demolish rights over foreign attachments on their structure:
+ *  - crate: you own the foundation whose cell it stands in;
+ *  - door: you own the doorway it attaches to;
+ *  - edge piece: you own a bordering anchor foundation AND no bordering
+ *    foundation belongs to anyone else.
+ * The "no foreign co-anchor" clause is load-bearing (adversarial review):
+ * foundations place freely flush against enemy walls (the overlap check
+ * subtracts ALL structure boxes), so the old "owns EITHER bordering cell"
+ * rule let an attacker drop an 8-wood slab behind any enemy perimeter piece
+ * and demolish it instantly — an HP-free breach bypassing raid damage,
+ * tiers, locks and the offline shield entirely.
  */
-function ownsAnchorFoundation(game: GameState, player: ServerPlayer, piece: StructurePiece): boolean {
-  if (piece.edge === undefined) return false;
+function ownsAnchor(game: GameState, player: ServerPlayer, piece: StructurePiece): boolean {
   const index = game.world.structures;
+  const owns = (id: number): boolean =>
+    game.structureMeta.get(id)?.ownerHash === player.tokenHash;
+  if (piece.kind === "crate") {
+    const cell = index.cellPiece(piece.gx, piece.gz);
+    return cell !== null && cell.kind === "foundation" && owns(cell.id);
+  }
+  if (piece.edge === undefined) return false;
+  if (piece.kind === "door") {
+    const { wall } = index.edgePieces(piece.gx, piece.gz, piece.edge);
+    return wall !== null && wall.kind === "doorway" && owns(wall.id);
+  }
+  let ownsOne = false;
   for (const [cgx, cgz] of edgeBorderCells(piece.gx, piece.gz, piece.edge)) {
     const cell = index.cellPiece(cgx, cgz);
     if (!cell || cell.kind !== "foundation") continue;
-    if (game.structureMeta.get(cell.id)?.ownerHash === player.tokenHash) return true;
+    if (!owns(cell.id)) return false; // a foreign co-anchor kills the claim
+    ownsOne = true;
+  }
+  return ownsOne;
+}
+
+/**
+ * Would removing this foundation orphan an anchored edge piece or strand a
+ * crate on the vanished slab? Doc 06:207: foundations "can't be demolished/
+ * DESTROYED while edge pieces anchor to them" — this guard is shared by BOTH
+ * removal verbs (handleDemolish and damageStructure's hp<=0 branch;
+ * adversarial review: the damage path used to skip it, so ~100 axe swings on
+ * the slab left walls/doors/crates floating forever and the freed cell handed
+ * demolish rights over them to whoever rebuilt a foundation there).
+ */
+function foundationPinned(game: GameState, piece: StructurePiece): boolean {
+  if (piece.kind !== "foundation") return false;
+  const index = game.world.structures;
+  // A crate standing on the slab pins it too — no floating crates.
+  if (index.cratePiece(piece.gx, piece.gz)) return true;
+  for (const [egx, egz, edge] of cellEdges(piece.gx, piece.gz)) {
+    const { wall, door } = index.edgePieces(egx, egz, edge);
+    if (!wall && !door) continue;
+    // The far-side cell of this edge (relative to the dying cell): if it
+    // holds a foundation the edge piece stays anchored — not pinning.
+    const farGx = edge === 0 ? egx : egx === piece.gx ? egx + 1 : egx;
+    const farGz = edge === 0 ? (egz === piece.gz ? egz + 1 : egz) : egz;
+    const far = index.cellPiece(farGx, farGz);
+    if (far && far.kind === "foundation" && far.id !== piece.id) continue;
+    return true;
   }
   return false;
 }
 
 /**
  * Owner demolish (hold-X client-side) — "owner" is the piece's placer OR the
- * owner of a foundation the piece anchors to (see ownsAnchorFoundation). A
- * foundation whose edge pieces would be left UNANCHORED (no foundation on the
- * far side) is rejected — no orphan-wall bookkeeping (doc 06:207).
- * Demolishing a doorway cascades its attached door. No refund (doc open Q4).
+ * owner of the structure it attaches to (see ownsAnchor). A foundation whose
+ * edge pieces would be left UNANCHORED (no foundation on the far side) is
+ * rejected — no orphan-wall bookkeeping (doc 06:207). Demolishing a doorway
+ * cascades its attached door. No refund (doc open Q4).
  */
 export function handleDemolish(game: GameState, player: ServerPlayer, id: number): void {
   if (!actionAllowed(game, player)) return;
@@ -278,7 +327,7 @@ export function handleDemolish(game: GameState, player: ServerPlayer, id: number
   const piece = index.pieces.get(id);
   const meta = game.structureMeta.get(id);
   if (!piece || !meta) return;
-  if (meta.ownerHash !== player.tokenHash && !ownsAnchorFoundation(game, player, piece)) {
+  if (meta.ownerHash !== player.tokenHash && !ownsAnchor(game, player, piece)) {
     notice(game, player, "You can only demolish your own structures");
     return;
   }
@@ -288,25 +337,9 @@ export function handleDemolish(game: GameState, player: ServerPlayer, id: number
     return;
   }
 
-  if (piece.kind === "foundation") {
-    // A crate standing on the slab pins it too — no floating crates.
-    if (index.cratePiece(piece.gx, piece.gz)) {
-      notice(game, player, "Remove the attached pieces first");
-      return;
-    }
-    for (const [egx, egz, edge] of cellEdges(piece.gx, piece.gz)) {
-      const { wall, door } = index.edgePieces(egx, egz, edge);
-      const anchored = wall ?? door;
-      if (!anchored) continue;
-      // The far-side cell of this edge (relative to the demolished cell):
-      // if it holds a foundation the edge piece stays anchored — allow.
-      const farGx = edge === 0 ? egx : egx === piece.gx ? egx + 1 : egx;
-      const farGz = edge === 0 ? (egz === piece.gz ? egz + 1 : egz) : egz;
-      const far = index.cellPiece(farGx, farGz);
-      if (far && far.kind === "foundation" && far.id !== piece.id) continue;
-      notice(game, player, "Remove the attached pieces first");
-      return;
-    }
+  if (foundationPinned(game, piece)) {
+    notice(game, player, "Remove the attached pieces first");
+    return;
   }
 
   // Demolishing (like destroying) a crate spills its contents (doc 06 M6).
@@ -466,10 +499,15 @@ export function handleTryCode(
     return;
   }
 
-  // Per-identity anti-mash — UX only (Sybil-bypassable, doc 06 M5): a silent
-  // drop, so hammering Enter doesn't burn the shared door budget faster.
+  // Per-identity anti-mash — UX only (Sybil-bypassable, doc 06 M5). Never
+  // burns the shared door budget, and replies with a notice: a silent drop
+  // would make a fast correct retype (typo → retype under 1s, common on a
+  // numpad) read as a dead code pad.
   const lastTry = game.codeTryAt.get(player.tokenHash);
-  if (lastTry !== undefined && game.time - lastTry < DOOR_CODE_TRY_COOLDOWN_S) return;
+  if (lastTry !== undefined && game.time - lastTry < DOOR_CODE_TRY_COOLDOWN_S) {
+    notice(game, player, "The lock resists — try again in a moment");
+    return;
+  }
   game.codeTryAt.set(player.tokenHash, game.time);
 
   // Per-DOOR global backoff — the actual security control.
@@ -620,7 +658,10 @@ export function ownerOnline(game: GameState, ownerHash: string): boolean {
  * by config.building.offlineRaidMult while the owner is offline past the
  * grace (0 = invulnerable). Broadcasts `sState.hp` on EVERY hit (damage-tier
  * rendering); at hp <= 0 the piece is destroyed via removePiece (door cascade
- * + crate spill). Returns true when the hit landed on a live piece.
+ * + crate spill) — EXCEPT a pinned foundation (doc 06:207: can't be destroyed
+ * while edge pieces/crates anchor to it), which clamps at 1 hp until the
+ * attached pieces are cleared, mirroring handleDemolish's rejection. Returns
+ * true when the hit landed on a live piece.
  */
 export function damageStructure(
   game: GameState,
@@ -638,6 +679,13 @@ export function damageStructure(
 
   piece.hp -= dmg;
   if (piece.hp <= 0) {
+    if (foundationPinned(game, piece)) {
+      // The no-orphan rule holds on the damage path too: raiders clear the
+      // anchored walls/doors/crates first, then the slab.
+      piece.hp = 1;
+      broadcast(game, { t: "sState", id, hp: 1 });
+      return true;
+    }
     // Destruction spills crate contents (unlike decay).
     removePiece(game, id, true);
     return true;
@@ -665,6 +713,12 @@ export function tickStructures(
   // Bound the presence map: entries past the grace can never matter again.
   for (const [hash, t] of game.ownerPresence) {
     if (game.time - t > RAID_OFFLINE_GRACE_S) game.ownerPresence.delete(hash);
+  }
+  // Same discipline for the tryCode anti-mash stamps: identities are free to
+  // mint, so an unpruned per-tokenHash map is unbounded DO memory growth; an
+  // entry older than the cooldown can never gate again.
+  for (const [hash, t] of game.codeTryAt) {
+    if (game.time - t > DOOR_CODE_TRY_COOLDOWN_S) game.codeTryAt.delete(hash);
   }
   sweepDecay(game, lastSeenMs);
 }

@@ -9,11 +9,14 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, worldParamsOf } from "./config";
 import { BUILD_CELL } from "./constants";
 import {
+  CRATE_HEIGHT,
+  CRATE_SIZE,
   PIECE_DEFS,
   PLACEABLE_KINDS,
   TIER_DMG_MULT,
   canPlace,
   computeFoundationFloorY,
+  crateAabb,
   pieceAabbs,
   pieceCenter,
   quantizeFloorY,
@@ -69,6 +72,49 @@ describe("crate piece kind (doc 06 M6)", () => {
       hp: 200,
     };
     expect(pieceAabbs(crate)).toEqual([]);
+  });
+
+  it("is raycast-attributable via crateAabb but never collides (queryWalls)", () => {
+    // review: pieceAabbs [] made crates invisible to raycastPiece, so combat
+    // could never damage them — the doc's destruction-spill (06:214) was dead
+    // code and a foreign crate an indestructible cell blocker. The index now
+    // carries a RAYCAST-ONLY body box; movement/overlap stay box-free.
+    const x = BGX * BUILD_CELL + 1.5;
+    const z = BGZ * BUILD_CELL + 1.5;
+    const fy = 2;
+    const crate: StructurePiece = {
+      id: 9010,
+      kind: "crate",
+      tier: 0,
+      gx: BGX,
+      gz: BGZ,
+      x,
+      z,
+      floorY: fy,
+      hp: 200,
+    };
+    world.structures.add(crate);
+    try {
+      const box = crateAabb(crate);
+      expect(box.y1 - box.y0).toBeCloseTo(CRATE_HEIGHT, 10);
+      // A ray through the body mid-height attributes the crate…
+      const origin = { x: x - 3, y: fy + CRATE_HEIGHT / 2, z };
+      const hit = world.structures.raycastPiece(origin, { x: 1, y: 0, z: 0 }, 6);
+      expect(hit?.id).toBe(9010);
+      expect(hit?.t).toBeCloseTo(3 - CRATE_SIZE / 2, 5);
+      // …and world.raycastStatics folds the same box in (pellet capping).
+      expect(world.raycastStatics(origin, { x: 1, y: 0, z: 0 }, 6, false)).toBeCloseTo(
+        3 - CRATE_SIZE / 2,
+        5,
+      );
+      // But movement/overlap collision stays EMPTY: not in queryWalls…
+      expect(world.structures.queryWalls(x, z, 2)).toEqual([]);
+      // …and remove() clears the raycast box with the piece.
+      world.structures.remove(9010);
+      expect(world.structures.raycastPiece(origin, { x: 1, y: 0, z: 0 }, 6)).toBeNull();
+    } finally {
+      world.structures.remove(9010);
+    }
   });
 
   it("pieceCenter honors the free in-cell position", () => {

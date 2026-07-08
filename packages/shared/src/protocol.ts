@@ -642,6 +642,9 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
         if (!isFiniteNum(m.x) || !isFiniteNum(m.z)) return null;
         x = Math.round(m.x * 100) / 100;
         z = Math.round(m.z * 100) / 100;
+        // Re-check: |v| > ~1.79e306 overflows the *100 to Infinity, which
+        // would break the parse layer's no-NaN/Infinity contract.
+        if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
       }
       return { t: "place", kind: m.kind as PieceKind, tier: m.tier, gx, gz, edge, x, z };
     }

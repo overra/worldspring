@@ -226,7 +226,9 @@ export function pieceAabbs(piece: StructurePiece): Aabb[] {
   }
   // Crates are NON-COLLIDING (doc 06 open Q1's decided recommendation — the
   // campfire precedent): zero boxes keeps them out of the collision-sync
-  // surface and kills crate-stair exploits.
+  // surface and kills crate-stair exploits. The index adds a RAYCAST-ONLY
+  // body box (crateAabb) so combat attribution and the demolish aim can
+  // still hit them — see createStructureIndex.
   if (piece.kind === "crate") return [];
 
   const edge = piece.edge;
@@ -277,6 +279,35 @@ export function pieceAabbs(piece: StructurePiece): Aabb[] {
   }
 }
 
+/** Crate body dims — one source for the render box AND the raycast-only
+ * attribution box, so what you see is exactly what you hit. */
+export const CRATE_SIZE = 0.9;
+export const CRATE_HEIGHT = 0.7;
+
+/**
+ * A crate's body box at its free position (or cell center). Crates stay
+ * collision-free (pieceAabbs returns [] — doc 06 open Q1), but the index
+ * inserts this box RAYCAST-ONLY so melee/pellet attribution and the client's
+ * demolish aim can reach crates: the doc's destruction-spill (06:214, M6
+ * acceptance) would be dead code otherwise, and a foreign crate would be an
+ * indestructible cell blocker. Never returned by queryWalls — movement and
+ * the canPlace overlap check are unaffected.
+ */
+export function crateAabb(
+  piece: Pick<StructurePiece, "kind" | "gx" | "gz" | "x" | "z" | "floorY">,
+): Aabb {
+  const [cx, cz] = pieceCenter(piece);
+  const h = CRATE_SIZE / 2;
+  return {
+    minX: cx - h,
+    maxX: cx + h,
+    minZ: cz - h,
+    maxZ: cz + h,
+    y0: piece.floorY,
+    y1: piece.floorY + CRATE_HEIGHT,
+  };
+}
+
 // --- StructureIndex (doc 06 §The StructureIndex) ---
 
 export interface PieceRayHit {
@@ -292,11 +323,13 @@ export interface StructureIndex {
   remove(id: number): void;
   /** Door/gate toggles swap collision boxes in/out of the grid. */
   setOpen(id: number, open: boolean): void;
-  /** Walls near a point — merged into World.queryStatics results. */
+  /** Walls near a point — merged into World.queryStatics results. Excludes
+   * crate bodies (raycast-only boxes never collide). */
   queryWalls(x: number, z: number, r: number): Aabb[];
   /** Foundation top of the cell containing (x,z), or null. */
   floorAt(x: number, z: number): number | null;
-  /** Nearest piece hit WITH attribution. dir must be normalized. */
+  /** Nearest piece hit WITH attribution — includes crate bodies (crateAabb),
+   * so combat damage and the demolish aim reach crates. dir normalized. */
   raycastPiece(origin: Vec3, dir: Vec3, maxDist: number): PieceRayHit | null;
   /** Cell occupancy — FOUNDATIONS (a crate can share a foundation's cell,
    * so it tracks its own map; see cratePiece). canPlace support. */
@@ -334,10 +367,13 @@ function edgeKey(gx: number, gz: number, edge: 0 | 2): number {
   return cellKey(gx, gz) * 2 + (edge === 2 ? 1 : 0);
 }
 
-/** A grid entry: one collision box + the piece it belongs to. */
+/** A grid entry: one box + the piece it belongs to. `solid: false` marks a
+ * raycast-only box (crate bodies): raycastPiece attributes hits to it, but
+ * queryWalls never returns it — no movement/overlap collision. */
 interface BoxEntry {
   id: number;
   box: Aabb;
+  solid: boolean;
 }
 
 const WALL_CLASS: ReadonlySet<PieceKind> = new Set(["wall", "doorway", "window", "gate"]);
@@ -357,9 +393,27 @@ export function createStructureIndex(): StructureIndex {
 
   const gridOf = (v: number): number => Math.floor(v / GRID_CELL);
 
-  const insertBoxes = (id: number, boxes: Aabb[]): void => {
-    boxesById.set(id, boxes);
-    for (const box of boxes) {
+  /** All grid entries a piece derives: its collision boxes (solid) plus, for
+   * crates, the raycast-only body box (crateAabb). */
+  const entriesOf = (piece: StructurePiece): BoxEntry[] => {
+    const entries: BoxEntry[] = pieceAabbs(piece).map((box) => ({
+      id: piece.id,
+      box,
+      solid: true,
+    }));
+    if (piece.kind === "crate") {
+      entries.push({ id: piece.id, box: crateAabb(piece), solid: false });
+    }
+    return entries;
+  };
+
+  const insertBoxes = (id: number, entries: BoxEntry[]): void => {
+    boxesById.set(
+      id,
+      entries.map((e) => e.box),
+    );
+    for (const entry of entries) {
+      const { box } = entry;
       for (let ix = gridOf(box.minX); ix <= gridOf(box.maxX); ix++) {
         for (let iz = gridOf(box.minZ); iz <= gridOf(box.maxZ); iz++) {
           const key = gridKey(ix, iz);
@@ -368,7 +422,7 @@ export function createStructureIndex(): StructureIndex {
             cell = [];
             grid.set(key, cell);
           }
-          cell.push({ id, box });
+          cell.push(entry);
         }
       }
     }
@@ -417,7 +471,7 @@ export function createStructureIndex(): StructureIndex {
         if (piece.kind === "door") slot.door = piece.id;
         else if (WALL_CLASS.has(piece.kind)) slot.wall = piece.id;
       }
-      insertBoxes(piece.id, pieceAabbs(piece));
+      insertBoxes(piece.id, entriesOf(piece));
     },
 
     remove(id: number): void {
@@ -447,7 +501,7 @@ export function createStructureIndex(): StructureIndex {
       if (piece.open === open) return;
       removeBoxes(id);
       piece.open = open;
-      insertBoxes(id, pieceAabbs(piece));
+      insertBoxes(id, entriesOf(piece));
     },
 
     queryWalls(x: number, z: number, r: number): Aabb[] {
@@ -458,6 +512,7 @@ export function createStructureIndex(): StructureIndex {
           const cell = grid.get(gridKey(ix, iz));
           if (!cell) continue;
           for (const e of cell) {
+            if (!e.solid) continue; // crate bodies: raycast-only, never collide
             if (!seen.has(e.box)) {
               seen.add(e.box);
               out.push(e.box);

@@ -384,6 +384,12 @@ function fireRanged(
     z: player.core.z,
   };
 
+  // doc 06 M7 — structure damage accumulates per piece across the pull and
+  // lands as ONE damageStructure call after the pellet loop: one sState.hp
+  // broadcast per trigger pull instead of one per pellet (a shotgun blast
+  // would otherwise broadcast up to 6× redundant hp updates to every client).
+  const pieceDmg = new Map<number, number>();
+
   for (let pellet = 0; pellet < ranged.pellets; pellet++) {
     // Per-pellet random cone: offsets vanish exactly when spreadRad is 0.
     // Non-seeded randomness is fine server-side — pellets never need to
@@ -496,7 +502,8 @@ function fireRanged(
       staticT !== null &&
       pieceHit.t <= staticT + 0.01
     ) {
-      damageStructure(state, pieceHit.id, def.structDmg ?? FIST_STRUCT_DMG, 1);
+      const base = def.structDmg ?? FIST_STRUCT_DMG;
+      pieceDmg.set(pieceHit.id, (pieceDmg.get(pieceHit.id) ?? 0) + base);
     }
 
     // Kill credit lands at most once per victim per trigger pull: killZombie/
@@ -523,4 +530,8 @@ function fireRanged(
       player.stats.kills++;
     }
   }
+
+  // Apply the pull's accumulated structure damage (see pieceDmg above). Same
+  // total as per-pellet application — tier/shield multipliers are linear.
+  for (const [pieceId, base] of pieceDmg) damageStructure(state, pieceId, base, 1);
 }

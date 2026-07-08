@@ -21,6 +21,7 @@ import {
   PLACEABLE_KINDS,
   PLACE_REJECTION_TEXT,
   canPlace,
+  crateAabb,
   pieceAabbs,
   pieceCenter,
   quantizeFloorY,
@@ -29,7 +30,6 @@ import {
   type StructurePiece,
 } from "@worldspring/shared/structures";
 import { buildState, clientWorld, inputState } from "@/client/runtime";
-import { crateRenderBox } from "@/client/render/world/Structures";
 import { useUIStore } from "@/client/state/store";
 
 /** Aim distances: how far ahead the ghost snaps when looking level/down. */
@@ -201,7 +201,7 @@ export function BuildPreview(): ReactElement {
       ...(kind === "door" || kind === "gate" ? { open: false } : {}),
     };
     // Crates derive zero collision boxes — ghost the render box instead.
-    const boxes = kind === "crate" ? [crateRenderBox(candidate)] : pieceAabbs(candidate);
+    const boxes = kind === "crate" ? [crateAabb(candidate)] : pieceAabbs(candidate);
 
     const key = `${kind}|${tier}|${target.gx}|${target.gz}|${target.edge ?? "-"}|${target.x ?? "-"}|${target.z ?? "-"}|${floorY}`;
     if (builtKey.current !== key) {

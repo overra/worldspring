@@ -204,17 +204,22 @@ function updatePrompt(ui: UIState): void {
       }
       const [cx, cz] = pieceCenter(piece);
       const d = dist2D(me.x, me.z, cx, cz);
-      if (d > pieceDist) continue;
+      // Crates get the STRICT server range: reachableCrate rejects past
+      // PICKUP_RANGE with no notice, so a prompt in the slack band would
+      // advertise an E that silently does nothing. (The +0.6 close-range
+      // hysteresis in closeOutOfRangePanels stays — open strict, close slack.)
+      if (d > pieceDist || (!isDoor && d > PICKUP_RANGE)) continue;
       pieceDist = d;
       if (isDoor) {
         doorId = piece.id;
         crateId = null;
         // `locked` rides the wire record (M5); a door this session already
-        // unlocked prompts as a plain toggle.
+        // unlocked prompts as a plain toggle. The [L] hint shows in BOTH
+        // states — the owner rotates/removes a code exactly when one is set.
         const locked =
           (piece as WirePiece).locked === true && !clientWorld.unlockedDoors.has(piece.id);
         bestLabel = locked
-          ? `Unlock ${piece.kind}`
+          ? `Unlock ${piece.kind} · [L] code`
           : `${piece.open === true ? "Close" : "Open"} ${piece.kind} · [L] code`;
       } else {
         crateId = piece.id;

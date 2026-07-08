@@ -277,8 +277,16 @@ export function doSetCode(id: number, code: string): void {
   sendMsg({ t: "setCode", id, code });
 }
 
+/** doc 06 M5 — the door id of OUR last tryCode submit. sState `open` is a
+ * GLOBAL broadcast, so without this a third party opening the door while our
+ * try-pad happens to be up would poison unlockedDoors: the pad would never
+ * show again for that door this session while the server keeps rejecting the
+ * bare toggle. Only an open that follows our own submit earns the cache. */
+let pendingTryId: number | null = null;
+
 /** doc 06 M5 — try a 4-digit code on a locked door (the code-pad submit). */
 export function doTryCode(id: number, code: string): void {
+  pendingTryId = id;
   sendMsg({ t: "tryCode", id, code });
 }
 
@@ -457,12 +465,14 @@ function handleMessage(data: unknown): void {
       }
       // A lock set/changed revokes everyone — drop the UX cache entry.
       if (msg.locked === true) clientWorld.unlockedDoors.delete(msg.id);
-      // The door we were code-padding swung open (our tryCode was accepted,
-      // or an authorized toggle landed): remember it and drop the pad.
+      // The door we were code-padding swung open: drop the pad either way,
+      // but only cache the unlock when the open follows OUR submit — a
+      // third-party toggle must not hide the pad for the rest of the session.
       if (msg.open === true && ui.codePad?.id === msg.id && ui.codePad.mode === "try") {
-        clientWorld.unlockedDoors.add(msg.id);
+        if (pendingTryId === msg.id) clientWorld.unlockedDoors.add(msg.id);
         ui.setCodePad(null);
       }
+      if (msg.open === true && pendingTryId === msg.id) pendingTryId = null;
       clientWorld.structuresVersion++;
       return;
     }
@@ -512,6 +522,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // A welcome means we're connected (initial join or a successful reconnect) —
   // clear the reconnect backoff so the next drop starts a fresh attempt budget.
   reconnectAttempts = 0;
+  pendingTryId = null; // stale pre-reconnect submits must not earn the cache
 
   resetPrediction();
   resetInterpolation();
