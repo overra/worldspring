@@ -218,6 +218,12 @@ export const MAP_MINIMAP_DEFAULT = true;
 export const MAP_ACQUIRE_DEFAULT = "spawn" as const;
 export const MAP_REVEAL_DEFAULT = "full" as const;
 
+// --- Physics (doc 13) ---
+/** Server-auth dynamic-body cap per room (doc 13 §3): the DO's physics cost
+ *  ceiling. Over the cap, oldest-settled bodies evict first. LIVE-class dial
+ *  (config.physics.bodyCap); M0 measured <0.3% of tick at this value. */
+export const PHYSICS_BODY_CAP = 64;
+
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */
 export const SERVER_INFO_CACHE_TTL_S = 15;

@@ -6,6 +6,13 @@
 // rows-written dropped from O(entities) (the old wipe-and-reinsert) to O(1).
 // This guards the production save path — a regression here is silent data loss.
 import { saveWorld, loadWorld } from "../src/server/persistence.ts";
+import { PhysicsSystem } from "../src/server/physics/PhysicsSystem.ts";
+
+// Engineless PhysicsSystem (never attaches Rapier): serialize() passes the
+// restored/pending buffer through, exactly the pre-attach DO behavior — so
+// the round-trip covers doc 13 bodies without loading wasm here.
+const fakeStatics = { heightAt: () => 0, buildings: [], militaryWalls: [], trees: [] };
+const freshPhysics = () => new PhysicsSystem(fakeStatics, { enabled: true, bodyCap: 64 });
 
 function makeFakeSql() {
   let rows = []; // { kind, payload }
@@ -54,6 +61,7 @@ function freshGame() {
     weatherNextAt: 0,
     weatherRaining: false,
     airdropNextAt: 0,
+    physics: freshPhysics(),
   };
 }
 

@@ -42,7 +42,9 @@ import type { ItemStack, ItemType } from "./items";
 // mis-render a multi-tick channel). So 3 → 4.
 // red realm: YouState gains `realm` and snapshots gain a `portals` array — both
 // additive ServerMsg SHAPE changes (doc 03's shape clause), so 4 → 5.
-export const PROTOCOL_VERSION: number = 5;
+// doc 13 M1: snapshots gain a `bodies` array (server-authoritative physics) —
+// an additive ServerMsg SHAPE change (doc 03's shape clause), so 5 → 6.
+export const PROTOCOL_VERSION: number = 6;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -197,6 +199,29 @@ export interface WirePortal {
   to: Realm;
 }
 
+/** Kinds of server-auth dynamic physics body (doc 13). Wire-enum GROWTH is
+ * additive-safe (clients render unknown kinds as the fallback crate mesh). */
+export type BodyKind = "crate";
+
+/**
+ * A dynamic physics body pose (doc 13 M1). Server-authoritative — clients
+ * NEVER step physics, they interpolate these poses like remote players.
+ * Position round2'd like everything else; the quaternion is round2'd too
+ * (~1–2° angular resolution — fine for crates; bit-packing is a later
+ * optimization, doc 13 Open Q5). `asleep` flags settled bodies so the client
+ * can skip interpolation churn for them.
+ */
+export interface WireBody {
+  id: number;
+  kind: BodyKind;
+  x: number;
+  y: number;
+  z: number;
+  /** Quaternion [x, y, z, w], round2-quantized. */
+  q: [number, number, number, number];
+  asleep?: true;
+}
+
 /** An airdrop crate. Sent in EVERY snapshot regardless of distance — the
  * smoke column must be visible across the whole island. */
 export interface WireDrop {
@@ -323,6 +348,9 @@ export type ServerMsg =
       fires: WireFire[];
       /** Red portals in YOUR realm within interest range. */
       portals: WirePortal[];
+      /** Dynamic physics bodies within interest range (doc 13 — overworld
+       * only; empty for red-realm players). Server-auth, client-interpolated. */
+      bodies: WireBody[];
       /** All active airdrops, never interest-filtered (island-wide smoke). */
       drops: WireDrop[];
       animals: WireAnimal[];

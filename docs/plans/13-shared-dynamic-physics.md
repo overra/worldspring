@@ -295,6 +295,29 @@ ever happens; re-test then.
 deployed production workerd; step cost is negligible at the design cap.
 Proceed to M1 with a module-import WASM loader.**
 
+## M1 findings (built 2026-07-08)
+
+- **No `SCHEMA_VERSION` bump was needed** — `bodies` is an additive
+  `WorldSnapshot` array (older snapshots normalize to `[]`, older code ignores
+  the key), the same forward-compat posture as the weather fields and doc 12's
+  `explored`. §4's "schema bump" assumption was wrong in the happy direction:
+  **existing worlds survive the M1 deploy.**
+- **Sub-stepping is REQUIRED, not an optimization.** At the raw 1/15 s tick,
+  Rapier contacts tunnel (a falling crate passes through terrain and even a
+  1 m-thick cuboid floor — found by the replay harness's orientation probes,
+  which exist precisely to catch this class of failure). The engine steps at
+  dt/4 (≈16.7 ms) four times per tick — fixed count, deterministic, ~4× the M0
+  per-step cost (still <1% of the tick at the cap). §3's "half-rate fallback"
+  is dead: the rate can only go UP from the tick, never down.
+- M0's spike scenario stepped at raw 1/15 — its determinism/cost findings
+  stand (bit-identical is bit-identical), but its bodies were partly
+  tunneling; the replay harness now asserts SETTLING, which the spike never did.
+- The engine attaches ASYNC in the DO (wasm init); PhysicsSystem buffers
+  restored bodies + early spawns until attach, and persistence passes the
+  buffer through — a save before attach can never drop bodies.
+- Rapier heightfield data is column-major (x→columns); the harness's
+  slope-probes pin the orientation empirically.
+
 ## Open questions
 
 1. ~~**Rapier's published WASM: is it the `enhanced-determinism` build?**~~

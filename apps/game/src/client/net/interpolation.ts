@@ -7,7 +7,7 @@
 import { INTERP_DELAY_MS } from "@worldspring/shared/constants";
 import { angleLerp, clamp, lerp } from "@worldspring/shared/math";
 import { effectiveGameHour } from "@worldspring/shared/config";
-import type { ServerMsg, WireAnimal, WirePlayer, WireZombie } from "@worldspring/shared/protocol";
+import type { ServerMsg, WireAnimal, WireBody, WirePlayer, WireZombie } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 import type { AnimalView, RemotePlayerView, ZombieView } from "@/client/runtime";
 
@@ -23,6 +23,9 @@ interface BufferedSnap {
   playerById: Map<string, WirePlayer>;
   zombieById: Map<number, WireZombie>;
   animalById: Map<number, WireAnimal>;
+  /** doc 13 — dynamic bodies, interpolated like remote players. */
+  bodies: WireBody[];
+  bodyById: Map<number, WireBody>;
   weather: number;
 }
 
@@ -46,6 +49,8 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
   for (const z of snap.zombies) zombieById.set(z.id, z);
   const animalById = new Map<number, WireAnimal>();
   for (const a of snap.animals) animalById.set(a.id, a);
+  const bodyById = new Map<number, WireBody>();
+  for (const b of snap.bodies) bodyById.set(b.id, b);
 
   buffer.push({
     arrival: arrivalMs,
@@ -56,6 +61,8 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
     playerById,
     zombieById,
     animalById,
+    bodies: snap.bodies,
+    bodyById,
     weather: snap.weather,
   });
   if (buffer.length > MAX_BUFFERED_SNAPS) buffer.shift();
@@ -116,6 +123,7 @@ export function updateInterpolation(nowMs: number): void {
   interpolatePlayers(a, b, t);
   interpolateZombies(a, b, t);
   interpolateAnimals(a, b, t);
+  interpolateBodies(a, b, t);
   clientWorld.weather = lerp(a.weather, b.weather, t);
   // Game-time of the world state currently on screen — attaches to attack
   // messages so the server can rewind targets to what the shooter SAW.
@@ -139,6 +147,58 @@ function interpolateAnimals(a: BufferedSnap, b: BufferedSnap, t: number): void {
   }
   for (const id of views.keys()) {
     if (!b.animalById.has(id)) views.delete(id);
+  }
+}
+
+/** Normalized quaternion slerp (pure — no three.js in the net layer). Falls
+ * back to nlerp for near-parallel pairs; takes the short arc via dot-flip. */
+function slerpQuat(
+  a: [number, number, number, number],
+  b: [number, number, number, number],
+  t: number,
+): [number, number, number, number] {
+  let [bx, by, bz, bw] = b;
+  let dot = a[0] * bx + a[1] * by + a[2] * bz + a[3] * bw;
+  if (dot < 0) {
+    bx = -bx; by = -by; bz = -bz; bw = -bw; dot = -dot;
+  }
+  let s0: number, s1: number;
+  if (dot > 0.9995) {
+    s0 = 1 - t;
+    s1 = t;
+  } else {
+    const theta = Math.acos(Math.min(1, dot));
+    const sin = Math.sin(theta);
+    s0 = Math.sin((1 - t) * theta) / sin;
+    s1 = Math.sin(t * theta) / sin;
+  }
+  const x = s0 * a[0] + s1 * bx, y = s0 * a[1] + s1 * by, z = s0 * a[2] + s1 * bz, w = s0 * a[3] + s1 * bw;
+  const n = Math.hypot(x, y, z, w) || 1;
+  return [x / n, y / n, z / n, w / n];
+}
+
+function interpolateBodies(a: BufferedSnap, b: BufferedSnap, t: number): void {
+  const views = clientWorld.bodies;
+  for (const bb of b.bodies) {
+    const ba = a.bodyById.get(bb.id) ?? bb;
+    let view = views.get(bb.id);
+    if (view === undefined) {
+      view = { id: bb.id, kind: bb.kind, x: bb.x, y: bb.y, z: bb.z, q: [...bb.q] as [number, number, number, number], asleep: bb.asleep === true };
+      views.set(bb.id, view);
+    }
+    view.asleep = bb.asleep === true;
+    if (view.asleep) {
+      // Settled bodies pin to the authoritative pose — no churn.
+      view.x = bb.x; view.y = bb.y; view.z = bb.z; view.q = [...bb.q] as [number, number, number, number];
+      continue;
+    }
+    view.x = lerp(ba.x, bb.x, t);
+    view.y = lerp(ba.y, bb.y, t);
+    view.z = lerp(ba.z, bb.z, t);
+    view.q = slerpQuat(ba.q, bb.q, t);
+  }
+  for (const id of views.keys()) {
+    if (!b.bodyById.has(id)) views.delete(id);
   }
 }
 

@@ -13,6 +13,7 @@
 // switch between sets by rejoining.
 
 import { CAMPFIRE_BURN_S, MAX_CAMPFIRES } from "@worldspring/shared/constants";
+import { yawToDir } from "@worldspring/shared/math";
 import { ITEM_DEFS, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import type { Provision, Scenario, ScenarioFace, ScenarioZone } from "@worldspring/shared/scenario";
 import type { GameState, ServerPlayer } from "./state";
@@ -115,6 +116,23 @@ function applyProvision(state: GameState, player: ServerPlayer, p: Provision): v
       // systems that own them land (doc 05 fishing, etc.).
       if (p.which.includes("attack")) player.attackCooldown = 0;
       return;
+    case "spawnBody": {
+      // doc 13 M1 — drop `count` crates in a loose column a few meters ahead
+      // of the player, high enough to visibly fall and settle. spawnBody
+      // buffers if the engine hasn't attached yet and no-ops when disabled.
+      if (!state.config.physics.enabled) {
+        console.warn("[testbed] spawnBody ignored — config.physics.enabled is false");
+        return;
+      }
+      const [fx, fz] = yawToDir(player.core.yaw);
+      for (let i = 0; i < p.count; i++) {
+        const x = player.core.x + fx * 4 + (Math.random() - 0.5) * 1.5;
+        const z = player.core.z + fz * 4 + (Math.random() - 0.5) * 1.5;
+        const y = state.world.groundHeight(x, z) + 4 + i * 1.1;
+        state.physics.spawnBody(state.nextEntityId++, p.body, x, y, z);
+      }
+      return;
+    }
     default:
       // Reserved provision kinds (spawnZombie/spawnAnimal/setTime/setWeather/
       // config) are parsed by the schema but wired in M5 — inert here.

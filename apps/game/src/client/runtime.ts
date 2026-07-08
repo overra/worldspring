@@ -11,6 +11,7 @@ import { DEFAULT_CONFIG } from "@worldspring/shared/config";
 import type { ServerConfig } from "@worldspring/shared/config";
 import type {
   AnimalState,
+  BodyKind,
   GameEvent,
   PlayerCore,
   WireCorpse,
@@ -147,6 +148,17 @@ export interface AnimalView {
   state: AnimalState;
 }
 
+/** Interpolated dynamic physics body (doc 13) — pos lerped, quat slerped. */
+export interface BodyView {
+  id: number;
+  kind: BodyKind;
+  x: number;
+  y: number;
+  z: number;
+  q: [number, number, number, number];
+  asleep: boolean;
+}
+
 export interface ClientWorldState {
   /** True once the welcome message arrived and `world` is built. */
   ready: boolean;
@@ -167,6 +179,8 @@ export interface ClientWorldState {
   drops: WireDrop[];
   /** Interpolated wildlife, keyed by id. */
   animals: Map<number, AnimalView>;
+  /** Interpolated dynamic physics bodies (doc 13), keyed by id. */
+  bodies: Map<number, BodyView>;
   /** Rain intensity 0..1, lerped between snapshots. */
   weather: number;
   /** Game-time of the interpolated state being rendered (lag comp aim time). */
@@ -195,6 +209,7 @@ export const clientWorld: ClientWorldState = {
   timeOfDay: 9,
   players: new Map(),
   zombies: new Map(),
+  bodies: new Map(),
   loot: [],
   corpses: [],
   fires: [],
@@ -258,6 +273,7 @@ export function resetClientWorld(): void {
   clientWorld.myId = "";
   clientWorld.players.clear();
   clientWorld.zombies.clear();
+  clientWorld.bodies.clear();
   clientWorld.loot = [];
   clientWorld.corpses = [];
   clientWorld.fires = [];

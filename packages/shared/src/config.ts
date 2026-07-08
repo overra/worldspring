@@ -16,6 +16,7 @@ import {
   LOGOUT_LINGER_S,
   MAP_ACQUIRE_DEFAULT,
   MAP_MINIMAP_DEFAULT,
+  PHYSICS_BODY_CAP,
   MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   NIGHT_END_HOUR,
@@ -159,6 +160,19 @@ export interface MapConfig {
   reveal: MapReveal;
 }
 
+/**
+ * Server-auth dynamic physics dials (doc 13). BOTH LIVE-class — physics is
+ * server-authoritative and outside the client determinism contract (clients
+ * never step it), so neither field enters worldFingerprintOf or wipes.
+ * Lowering bodyCap on a live world evicts oldest-settled-first next tick.
+ */
+export interface PhysicsConfig {
+  /** false = the physics world is never built; spawnBody is a warn-noop. */
+  enabled: boolean;
+  /** Max dynamic bodies per room (the DO tick-cost ceiling, doc 13 §3). */
+  bodyCap: number;
+}
+
 export interface ServerConfig {
   /** Resolved preset id ("custom" when overrides touch any field). */
   preset: string;
@@ -172,6 +186,7 @@ export interface ServerConfig {
   building: BuildingConfig;
   session: SessionConfig;
   map: MapConfig;
+  physics: PhysicsConfig;
 }
 
 // =============================================================================
@@ -243,6 +258,10 @@ export const DEFAULT_CONFIG: ServerConfig = {
     minimap: MAP_MINIMAP_DEFAULT,
     acquire: MAP_ACQUIRE_DEFAULT,
     reveal: MAP_REVEAL_DEFAULT,
+  },
+  physics: {
+    enabled: true,
+    bodyCap: PHYSICS_BODY_CAP,
   },
 };
 
@@ -406,6 +425,9 @@ const RANGES = {
     maxPlayers: [2, MAX_PLAYERS],
     respawnDelayS: [0, 30],
     logoutLingerS: [0, 300],
+  },
+  physics: {
+    bodyCap: [0, 256],
   },
 } as const;
 
@@ -571,6 +593,7 @@ function clampInto(
   const rb = isObject(r.building) ? r.building : {};
   const rsess = isObject(r.session) ? r.session : {};
   const rmap = isObject(r.map) ? r.map : {};
+  const rphys = isObject(r.physics) ? r.physics : {};
 
   // --- fixedHour: null | number in [0,24] ---
   let fixedHour: number | null = base.time.fixedHour;
@@ -654,6 +677,12 @@ function clampInto(
       minimap: bool(rmap.minimap, base.map.minimap, "map.minimap", warnings),
       acquire: mapAcquire(rmap.acquire, base.map.acquire, warnings),
       reveal: mapReveal(rmap.reveal, base.map.reveal, warnings),
+    },
+    // LIVE-class (doc 13 §Migration): server-auth physics is outside the
+    // client determinism contract — never sets worldCoerced.
+    physics: {
+      enabled: bool(rphys.enabled, base.physics.enabled, "physics.enabled", warnings),
+      bodyCap: num(rphys.bodyCap, base.physics.bodyCap, RANGES.physics.bodyCap[0], RANGES.physics.bodyCap[1], "physics.bodyCap", warnings, true),
     },
   };
 

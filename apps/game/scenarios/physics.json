@@ -1,0 +1,16 @@
+{
+  "name": "physics",
+  "provision": [
+    { "kind": "position", "zone": "inland", "face": "inland" },
+    { "kind": "spawnBody", "body": "crate", "count": 8 },
+    { "kind": "loadout", "items": [{ "type": "axe", "count": 1 }] },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 }
+  ],
+  "checklist": [
+    "doc 13 M1 — eight crates tumble down just ahead of your spawn and settle on the slope.",
+    "Walk into the settled pile — crates are solid to each other and the terrain (you pass through them; player-vs-body coupling is a later milestone).",
+    "Open a second client: both see the SAME crate poses, live and settled.",
+    "Wait ~30s (a world save), then redeploy/restart the preview — the pile survives in place, still settled.",
+    "Crates near a building/tree rest against it, never inside it."
+  ]
+}
