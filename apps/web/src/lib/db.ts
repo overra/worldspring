@@ -71,7 +71,7 @@ export function hashIp(request: Request, salt: string | undefined): Promise<stri
 export async function attemptAndCheckLimit(
   db: D1Database,
   ipHash: string,
-  route: "register" | "verify",
+  route: "register" | "verify" | "admin",
   limit: number,
   now: number,
 ): Promise<boolean> {
@@ -106,6 +106,20 @@ export function emptyResponse(status: number, extra: Record<string, string> = {}
     status,
     headers: { "access-control-allow-origin": "*", ...extra },
   });
+}
+
+/** Read a form body (urlencoded/multipart) under a byte cap — the
+ * readJsonBody content-length gate applied to the SSR form pages, because
+ * request.formData() buffers and parses the WHOLE body before any field
+ * validation runs. Returns null on oversize or unparsable bodies. */
+export async function readFormBody(request: Request, maxBytes: number): Promise<FormData | null> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > maxBytes) return null;
+  try {
+    return await request.formData();
+  } catch {
+    return null;
+  }
 }
 
 /** Read a JSON body under a byte cap (doc 02 §4: 4 KB default; doc 03 §9:

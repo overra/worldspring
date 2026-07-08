@@ -4,6 +4,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // Relative imports may carry explicit .ts extensions — required wherever a
+    // module sits on an apps/game offline-harness chain (those run under
+    // `node --experimental-strip-types`, which does not resolve extensionless
+    // relative specifiers). Safe: every project here is noEmit (bundlers strip).
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,

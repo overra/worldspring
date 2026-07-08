@@ -50,18 +50,22 @@ try {
   for (const r of uptimeRes.results as Array<{ server_id: string; ratio: number }>) {
     uptimeBy.set(r.server_id, Number(r.ratio ?? 0));
   }
-} catch {
-  // local dev without a migrated D1 — empty state below
+} catch (err) {
+  // Expected only in local dev without a migrated D1; log so a prod D1
+  // outage reads as a DB failure in the tail, not as a silently empty list.
+  console.error("[servers] D1 lookup failed — rendering empty list:", err);
 }
 
 const listed = rows
   .map((r) => {
-    const uptimeRatio20d = uptimeBy.get(r.id) ?? 0;
+    const uptime = uptimeBy.get(r.id); // undefined = no non-verify probes yet
+    const uptimeRatio20d = uptime ?? 0;
     const players = Math.min(r.players, r.players_max); // display clamp (doc 02 §7)
     return {
       ...r,
       players,
       uptimeRatio20d,
+      hasUptime: uptime !== undefined,
       official: r.source === "official",
       activeNow: r.last_heartbeat_at !== null && now - r.last_heartbeat_at < 5 * 60_000,
       outdated: r.protocol !== null && r.protocol < PROTOCOL_VERSION,
@@ -97,6 +101,7 @@ const listed = rows
       .dot.active { background: #3c3; }
       .dot.idle { background: #999; }
       .empty { color: #888; margin-top: 2rem; }
+      .report { color: #888; font-size: 0.85em; }
     </style>
   </head>
   <body>
@@ -140,13 +145,29 @@ const listed = rows
                       fallback covers empty as well as null) */}
                   <td>{s.preset || "custom"}</td>
                   <td>{s.version || "—"}</td>
-                  <td>{Math.round(s.uptimeRatio20d * 100)}%</td>
+                  {/* No non-verify probes yet (brand-new listing) is "no
+                      data", never a false 0%. */}
+                  <td>{s.hasUptime ? `${Math.round(s.uptimeRatio20d * 100)}%` : "—"}</td>
                   <td>
-                    {/* s.url is the registration-pinned normalized https origin;
-                        outbound form matches doc 02 §9 (?ref=..., new tab —
-                        noopener is inert without target="_blank"). The M6
-                        interstitial replaces this direct link. */}
-                    <a href={`${s.url}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">Join</a>
+                    {/* Doc 02 §9: every Join routes through the /join/:id
+                        interstitial EXCEPT the official pinned row, which
+                        links straight out (first-party; ?ref + new tab —
+                        noopener is inert without target="_blank"). s.url is
+                        the registration-pinned normalized https origin. The
+                        inline island below rewrites community links straight
+                        out when the visitor opted out on the interstitial. */}
+                    {s.official ? (
+                      <a href={`${s.url}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">Join</a>
+                    ) : (
+                      <>
+                        <a href={`/join/${s.id}`} data-server-id={s.id} data-join-url={s.url}>Join</a>
+                        {/* The report path must be reachable WITHOUT the
+                            interstitial (opted-out visitors never see it, and
+                            /policy promises "anyone can report a listing"). */}
+                        {" · "}
+                        <a class="report" href={`/servers/${s.id}/report`}>Report</a>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -155,5 +176,26 @@ const listed = rows
         )
       }
     </main>
+
+    <script>
+      // M6 don't-warn-again island (doc 02 §9). The doc assigns this to
+      // ping.js, which doesn't exist yet (M5 partial) — fold this in when it
+      // lands. A visitor who checked "don't warn me again" on the /join/:id
+      // interstitial gets that server's Join rewritten to link straight out.
+      // Only ?ref crosses; the opt-in ?name is an interstitial-only choice.
+      for (const a of document.querySelectorAll<HTMLAnchorElement>("a[data-join-url]")) {
+        const serverId = a.dataset.serverId;
+        const joinUrl = a.dataset.joinUrl;
+        if (!serverId || !joinUrl) continue;
+        try {
+          if (localStorage.getItem(`ws_join_skip:${serverId}`) === null) continue;
+        } catch {
+          continue; // blocked storage — keep the interstitial route
+        }
+        a.href = `${joinUrl}/?ref=worldspring-directory`;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+      }
+    </script>
   </body>
 </html>

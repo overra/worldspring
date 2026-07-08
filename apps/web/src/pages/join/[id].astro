@@ -1,0 +1,226 @@
+---
+// /join/:id — the M6 join interstitial (doc 02 §9). Join = leave our site:
+// every /servers Join button routes through here (the official pinned row
+// links straight out — first-party). Shows the listing's live facts, the
+// literal destination host in large type, and the §7 vouch/no-vouch language
+// before the outbound hop.
+//
+// Cross-origin rules (binding, doc 02 §9 + M6 acceptance): the ONLY things
+// that may cross to the destination are `?ref=worldspring-directory` and the
+// OPT-IN `?name=` — never dc_token/ws_session/any credential. Identity is
+// per-origin by design; localStorage isolation enforces it and this page says
+// so. The optional name prefill reads the SITE origin's own localStorage
+// (`ws_name` — the doc's `dcd_name` is stale pre-rename vocabulary).
+export const prerender = false;
+import { env } from "cloudflare:workers";
+import { MAX_NAME_LENGTH } from "@worldspring/shared/constants";
+
+interface Row {
+  id: string;
+  url: string;
+  name: string;
+  created_at: number;
+  source: string;
+}
+
+const db = (env as unknown as { DB: D1Database }).DB;
+const now = Date.now();
+const id = Astro.params.id ?? "";
+
+let row: Row | null = null;
+/** null = no non-verify probes yet (brand-new listing) — render "no data",
+ * never a false 0% on the page whose whole job is honest facts. */
+let uptimeRatio20d: number | null = null;
+try {
+  // Only `live` listings get an interstitial (open decision #5): hidden,
+  // banned, pending, and unreachable rows aren't in the browse list, and a
+  // 404 here avoids an existence oracle for moderated rows on the HTML
+  // surfaces. (Deliberate asymmetry: the JSON report API accepts reports for
+  // ANY existing row so hidden/banned listings keep collecting evidence —
+  // lib/reports.ts. That surface does distinguish moderated-vs-deleted.)
+  row = await db
+    .prepare(
+      "SELECT id, url, name, created_at, source FROM servers WHERE id = ? AND status = 'live'",
+    )
+    .bind(id)
+    .first<Row>();
+  if (row) {
+    // Same 20-day window as /servers, excluding unauthenticated 'verify' rows
+    // (see /api/v1/servers GET). AVG over zero rows is NULL — kept as null.
+    const uptime = await db
+      .prepare(
+        "SELECT AVG(ok) AS ratio FROM probes WHERE server_id = ? AND at > ? AND source != 'verify'",
+      )
+      .bind(id, now - 20 * 86400_000)
+      .first<{ ratio: number | null }>();
+    uptimeRatio20d = uptime?.ratio ?? null;
+  }
+} catch (err) {
+  // Expected only in local dev without a migrated D1; log so a prod D1
+  // outage reads as a DB failure in the tail, not as silent 404s.
+  console.error("[join] D1 lookup failed — rendering 404:", err);
+}
+
+if (!row) {
+  return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
+}
+
+const host = new URL(row.url).hostname;
+const ageDays = Math.max(0, Math.floor((now - row.created_at) / 86400_000));
+const continueUrl = `${row.url}/?ref=worldspring-directory`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Joining {row.name} — Worldspring</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
+      .host { font-size: 1.6rem; font-weight: 700; word-break: break-all; background: #8881; border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.75rem 0; }
+      .facts { color: #666; }
+      .vouch { border-left: 3px solid #8886; padding: 0.25rem 0 0.25rem 0.9rem; margin: 1.25rem 0; }
+      .name-row { margin: 1rem 0; }
+      .name-row input[type="text"] { padding: 0.4rem 0.5rem; font-size: 1rem; }
+      .continue { display: inline-block; font-size: 1.1rem; font-weight: 600; padding: 0.6rem 1.4rem; border: 1px solid #8886; border-radius: 6px; text-decoration: none; }
+      .skip-row { margin-top: 1rem; color: #666; font-size: 0.9em; }
+      .footer { margin-top: 2rem; font-size: 0.9em; color: #888; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>You're leaving Worldspring</h1>
+      <p>
+        <strong>{row.name}</strong> is a community server. Joining takes you to:
+      </p>
+      <div class="host">{host}</div>
+      <p class="facts">
+        Listed for {ageDays} {ageDays === 1 ? "day" : "days"} ·
+        {uptimeRatio20d === null
+          ? "no uptime data yet"
+          : `${Math.round(uptimeRatio20d * 100)}% uptime over the last 20 days`}
+      </p>
+
+      {/* Doc 02 §7 vouch/no-vouch paragraph — M6 acceptance: verbatim-or-better. */}
+      <div class="vouch">
+        <p>
+          Listed servers are community-run copies of Worldspring at their own
+          web addresses. We verify that the owner controls the address and that
+          it answers as a Worldspring server.
+          <strong>We do not review or control the code it runs</strong> — it may
+          be modified, and its version of the game (including its login screen
+          and everything you type there) is served by that operator, not by us.
+        </p>
+        <p>
+          Your identity stays here: you'll have a separate character on each
+          server, and nothing you've saved on this site is shared with it.
+        </p>
+      </div>
+
+      {/* Hidden until the script that makes it functional reveals it — a
+          no-JS visitor must not see a dangling "()" and a dead checkbox. */}
+      <div class="name-row" id="name-row" hidden>
+        <label>
+          <input type="checkbox" id="send-name" />
+          Prefill my survivor name (<code id="name-preview"></code>) on that server
+        </label>
+        <input type="text" id="name-input" maxlength={MAX_NAME_LENGTH} placeholder="survivor name" hidden />
+      </div>
+
+      <a
+        class="continue"
+        id="continue"
+        href={continueUrl}
+        data-server-id={row.id}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        Continue to {host} &rarr;
+      </a>
+
+      <p class="skip-row">
+        <label>
+          <input type="checkbox" id="skip" />
+          Don't warn me again for this server
+        </label>
+      </p>
+
+      <p class="footer">
+        <a href="/servers">&larr; Back to servers</a> ·
+        <a href={`/servers/${row.id}/report`}>Report this server</a> ·
+        <a href="/policy">Listing policy</a>
+      </p>
+    </main>
+
+    <script>
+      // Opt-in name pass-through + don't-warn-again (doc 02 §9, open Q7).
+      // Everything here touches ONLY the site origin's storage; the outbound
+      // href carries at most ?ref and the opt-in ?name.
+      import { MAX_NAME_LENGTH } from "@worldspring/shared/constants";
+      const NAME_KEY = "ws_name";
+      const skipKeyOf = (serverId: string) => `ws_join_skip:${serverId}`;
+
+      const link = document.getElementById("continue") as HTMLAnchorElement;
+      const sendName = document.getElementById("send-name") as HTMLInputElement;
+      const nameInput = document.getElementById("name-input") as HTMLInputElement;
+      const namePreview = document.getElementById("name-preview")!;
+      const skip = document.getElementById("skip") as HTMLInputElement;
+      const baseHref = link.href;
+      // The server-rendered id, NOT location.pathname parsing: a trailing
+      // slash (/join/:id/ — Astro serves it) would make .pop() return "" and
+      // silently store the skip preference under the wrong key.
+      const serverId = link.dataset.serverId ?? "";
+
+      // JS is running — the prefill controls work now, so reveal them.
+      document.getElementById("name-row")!.hidden = false;
+
+      let saved = "";
+      try {
+        saved = localStorage.getItem(NAME_KEY) ?? "";
+      } catch {
+        // blocked storage — the checkbox still works with a typed name
+      }
+      nameInput.value = saved;
+      namePreview.textContent = saved || "none saved";
+
+      function syncHref(): void {
+        const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
+        link.href =
+          sendName.checked && name !== ""
+            ? `${baseHref}&name=${encodeURIComponent(name)}`
+            : baseHref;
+      }
+      sendName.addEventListener("change", () => {
+        nameInput.hidden = !sendName.checked;
+        syncHref();
+      });
+      nameInput.addEventListener("input", syncHref);
+
+      // Persist "don't warn me again" the moment it's toggled — a click
+      // listener on the link misses middle-click / context-menu "open in new
+      // tab" navigations. The checkbox itself is the preference statement.
+      skip.addEventListener("change", () => {
+        try {
+          if (skip.checked) localStorage.setItem(skipKeyOf(serverId), "1");
+          else localStorage.removeItem(skipKeyOf(serverId));
+        } catch {
+          // storage blocked — the join itself still proceeds
+        }
+      });
+
+      // Save the name on any activation of the link (auxclick = middle-click).
+      const saveName = () => {
+        try {
+          const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
+          if (sendName.checked && name !== "") localStorage.setItem(NAME_KEY, name);
+        } catch {
+          // storage blocked — the join itself still proceeds
+        }
+      };
+      link.addEventListener("click", saveName);
+      link.addEventListener("auxclick", saveName);
+    </script>
+  </body>
+</html>

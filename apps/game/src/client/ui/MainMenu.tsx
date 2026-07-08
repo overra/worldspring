@@ -30,6 +30,23 @@ function loadSavedName(): string {
   }
 }
 
+/** Directory join flow (doc 02 §9 M6): the interstitial's opt-in
+ * `?name=<urlencoded>` prefills the name input. The URL param wins over the
+ * saved name (an explicit per-join choice beats stale storage); the server
+ * re-runs sanitizeName at join regardless — this is convenience, not trust. */
+function initialName(): string {
+  try {
+    const fromQuery = new URLSearchParams(window.location.search).get("name");
+    if (fromQuery !== null) {
+      const trimmed = fromQuery.trim().slice(0, MAX_NAME_LENGTH);
+      if (trimmed.length > 0) return trimmed;
+    }
+  } catch {
+    // Malformed URL/blocked API — fall through to storage.
+  }
+  return loadSavedName();
+}
+
 function saveName(name: string): void {
   try {
     localStorage.setItem(NAME_STORAGE_KEY, name);
@@ -91,7 +108,7 @@ export function MainMenu(): ReactElement {
   const phase = useUIStore((s) => s.phase);
   const error = useUIStore((s) => s.error);
   const setPlayerName = useUIStore((s) => s.setPlayerName);
-  const [name, setName] = useState(loadSavedName);
+  const [name, setName] = useState(initialName);
 
   const connecting = phase === "connecting";
 

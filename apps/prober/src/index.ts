@@ -14,7 +14,9 @@
 //
 // Probe schedule (doc 03 §7, binding):
 //   - pending: every run (until verified; deleted after 7 days unverified).
-//   - live with fresh beats (<5 min): skipped — heartbeats are the freshness.
+//   - live with fresh beats (<5 min): skipped — heartbeats are the freshness
+//     — EXCEPT one audit probe per 6 h (AUDIT_PROBE_INTERVAL_MS) so the
+//     fake-count heuristic can observe servers that never let beats lapse.
 //   - live, last accepted beat was `quiet`: suspended to ≤1 reachability
 //     check per 6 h (idle DOs must not be woken every 5 minutes). ANY
 //     accepted beat ends the suspension (the intake overwrites last_event).
@@ -22,6 +24,8 @@
 //   - unreachable: backed off to every 60 min; deleted after 30 days.
 
 import {
+  FAKE_COUNT_PROBE_STREAK,
+  isFakeCountObservation,
   probeServerInfo,
   PROBE_HISTORY_DAYS,
   type ProbeResult,
@@ -36,6 +40,14 @@ const DUE_LIMIT = 45;
 const POOL_SIZE = 6;
 const FRESH_BEAT_MS = 5 * 60_000; // ~3 missed beats → stale (doc 03 §7)
 const QUIET_PROBE_INTERVAL_MS = 6 * 3_600_000;
+/** Slow audit cadence for live rows with continuously-fresh beats. Without
+ * it a server that beats forever is NEVER cron-probed, so the doc 02 §7
+ * fake-count heuristic is dead code for exactly the servers that lie (a
+ * fabricated `players` claim refreshed every 60 s keeps last_heartbeat_at
+ * permanently fresh) and "probe values overwrite heartbeat values" never
+ * fires for them. One spot-check per 6 h keeps the claim honest at
+ * negligible probe cost — the DO is already awake (it's beating). */
+const AUDIT_PROBE_INTERVAL_MS = 6 * 3_600_000;
 const UNREACHABLE_PROBE_INTERVAL_MS = 60 * 60_000;
 const PENDING_TTL_MS = 7 * 86_400_000;
 const UNREACHABLE_TTL_MS = 30 * 86_400_000;
@@ -57,6 +69,9 @@ interface DueRow {
   last_heartbeat_at: number | null;
   last_event: string | null;
   unreachable_since: number | null;
+  /** Stored claim — a heartbeat's when last_heartbeat_at > last_probe_at. */
+  players: number;
+  flagged: number;
 }
 
 function isDue(row: DueRow, now: number): boolean {
@@ -69,7 +84,9 @@ function isDue(row: DueRow, now: number): boolean {
     return now - row.last_probe_at >= QUIET_PROBE_INTERVAL_MS;
   }
   if (row.last_heartbeat_at !== null && now - row.last_heartbeat_at < FRESH_BEAT_MS) {
-    return false; // occupied with fresh beats — heartbeats carry freshness
+    // Occupied with fresh beats — heartbeats carry freshness, but the claim
+    // still gets a spot-check probe every AUDIT_PROBE_INTERVAL_MS.
+    return now - row.last_probe_at >= AUDIT_PROBE_INTERVAL_MS;
   }
   return true;
 }
@@ -86,13 +103,14 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
   const due = await env.DB.prepare(
     `SELECT id, url, status, challenge_hash, challenge_hash_next,
             consecutive_failures, created_at, last_probe_at,
-            last_heartbeat_at, last_event, unreachable_since
+            last_heartbeat_at, last_event, unreachable_since,
+            players, flagged
      FROM servers
      WHERE status = 'pending'
         OR (status = 'unreachable' AND (last_probe_at <= ? OR unreachable_since <= ?))
         OR (status = 'live' AND CASE
               WHEN last_event = 'quiet' THEN last_probe_at <= ?
-              ELSE (last_heartbeat_at IS NULL OR last_heartbeat_at <= ?)
+              ELSE (last_heartbeat_at IS NULL OR last_heartbeat_at <= ? OR last_probe_at <= ?)
             END)
      ORDER BY last_probe_at ASC
      LIMIT ?`,
@@ -102,6 +120,7 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
       now - UNREACHABLE_TTL_MS, // past-TTL rows must surface for the expiry DELETE
       now - QUIET_PROBE_INTERVAL_MS,
       now - FRESH_BEAT_MS,
+      now - AUDIT_PROBE_INTERVAL_MS, // fresh-beat rows still get the slow audit probe
       DUE_LIMIT,
     )
     .all<DueRow>();
@@ -153,7 +172,11 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
     if (probe.ok && probe.info) {
       const info = probe.info;
       // Success: refresh listing content (re-sanitized — never trust the
-      // origin's sanitization), reset failures, and step the state machine:
+      // origin's sanitization), reset failures, and step the state machine.
+      // The status guard mirrors the /verify + heartbeat inline-probe paths:
+      // an admin hide/ban issued while this sweep's batch was open must NOT
+      // be reverted to 'live' by the writeback (the sweep can stay open for
+      // tens of seconds across 45 probes).
       // pending→live on first passing probe; unreachable→live on any passing
       // probe. Probe values overwrite heartbeat values on conflict (doc 02
       // §7); probe bodies never move joinUrl (pinned at registration).
@@ -174,7 +197,7 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
              players = ?, players_max = ?, uptime_s = ?,
              colo = COALESCE(?, colo),
              last_probe_at = ?, updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ? AND status IN ('pending', 'live', 'unreachable')`,
         ).bind(
           now,
           info.status === "idle" ? 1 : 0,
@@ -192,10 +215,51 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
           row.id,
         ),
       );
+      // Fake-count flag heuristic (doc 02 §7, M7): three consecutive probes
+      // each reporting < half the latest heartbeat claim ⇒ flagged=1 for
+      // human review (never auto-hide/auto-ban). The stored `players` is a
+      // genuine heartbeat CLAIM only when the last write was a beat
+      // (last_heartbeat_at > last_probe_at) — after our own success UPDATE
+      // above overwrites it, the next beat must re-claim before the next
+      // probe can count again, which is exactly the doc's "latest
+      // heartbeat's claim" cadence. The streak is confirmed in SQL over the
+      // last 3 non-verify probe rows (this run's INSERT precedes this
+      // statement in the same ordered batch): all 3 must be ok=1 with
+      // players under half the claim — a failed probe reports nothing and
+      // breaks the streak.
+      //
+      // Known false-positive mode (accepted): the window's older probe rows
+      // predate the CURRENT claim, so a legitimate spike (claim jumps, crowd
+      // leaves) can complete the streak off observations taken under earlier
+      // smaller claims. Requiring the rows to postdate last_heartbeat_at
+      // would instead make the streak impossible (each success UPDATE below
+      // overwrites the stored claim, so pre-claim rows are structural). The
+      // flag is review-only and /admin's clear-flag action is the recovery
+      // path.
+      if (
+        row.flagged === 0 &&
+        row.last_heartbeat_at !== null &&
+        row.last_heartbeat_at > row.last_probe_at &&
+        isFakeCountObservation(info.players, row.players)
+      ) {
+        stmts.push(
+          env.DB.prepare(
+            `UPDATE servers SET flagged = 1, updated_at = ?2
+             WHERE id = ?1 AND flagged = 0
+               AND (SELECT COUNT(*) FROM (
+                      SELECT ok, players FROM probes
+                      WHERE server_id = ?1 AND source != 'verify'
+                      ORDER BY at DESC LIMIT ?3)
+                    WHERE ok = 1 AND players IS NOT NULL AND players * 2 < ?4) = ?3`,
+          ).bind(row.id, now, FAKE_COUNT_PROBE_STREAK, row.players),
+        );
+      }
     } else {
       // Failure (timeout / non-200 / >16 KB / bad shape / challenge-mismatch):
       // count it; live→unreachable at 3 consecutive (~15 min). Pending rows
-      // just keep failing until verified or the 7-day expiry above.
+      // just keep failing until verified or the 7-day expiry above. Same
+      // status guard as the success UPDATE: never flip a mid-sweep ban/hide
+      // to 'unreachable'.
       const failures = row.consecutive_failures + 1;
       const goesUnreachable = row.status === "live" && failures >= FAILURES_TO_UNREACHABLE;
       stmts.push(
@@ -205,7 +269,7 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
              status = CASE WHEN ? THEN 'unreachable' ELSE status END,
              unreachable_since = CASE WHEN ? THEN ? ELSE unreachable_since END,
              last_probe_at = ?, updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ? AND status IN ('pending', 'live', 'unreachable')`,
         ).bind(failures, goesUnreachable ? 1 : 0, goesUnreachable ? 1 : 0, now, now, now, row.id),
       );
     }
