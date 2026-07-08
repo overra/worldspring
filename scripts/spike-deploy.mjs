@@ -39,8 +39,8 @@ const CONFIG = {
   // Throwaway script name: generated + persisted by resolveScriptName() in the
   // `deploy` phase (env override CF_SPIKE_SCRIPT_NAME) so every phase targets the
   // SAME worker. NOT a static field — a per-`node`-run random broke update/clean.
-  WORKER_BUNDLE: "dist/survival_game/index.js", // built by `pnpm --filter @worldspring/game build`
-  ASSET_DIR: "dist/client",                      // 60 files / 4.8 MB
+  WORKER_BUNDLE: "apps/game/dist/worldspring/index.js", // built by `pnpm --filter @worldspring/game build`
+  ASSET_DIR: "apps/game/dist/client",                    // ~90 files / 7.5 MB (honors .assetsignore)
   COMPAT_DATE: "2026-06-01",
   // Persisted between phases via this file (deploy writes account_id/access_token here):
 };
@@ -231,9 +231,10 @@ async function phaseDeploy() {
   log("  tags round-trip (U7)? ", JSON.stringify(re.json?.result?.tags ?? re.json?.result?.default_environment ?? "n/a"));
   const url = `https://${scriptName}.${subdomain}.workers.dev`;
   log("\n  LIVE URL:", url);
-  // M1 verify target is /api/health (server-info route does NOT exist yet):
-  const h = await fetch(url + "/api/health").then((r) => r.status).catch((e) => String(e));
-  log("  GET /api/health ->", h, " (use /api/health, NOT /api/server-info — not in tree yet)");
+  // Verify like the real deployer will (§5 step 8): /api/server-info exists
+  // since doc 03 M2 — assert it serves and report the version fields.
+  const si = await fetch(url + "/api/server-info").then((r) => r.json()).catch((e) => ({ error: String(e) }));
+  log("  GET /api/server-info ->", si.error ?? `gameVersion=${si.gameVersion} protocolVersion=${si.protocolVersion}`);
   log("\n>> For U11: hold ONE ws session ~10 min then read 'Log Events Written' in the dashboard.");
   log("   e.g. node apps/game/scripts/loadtest.mjs " + url.replace("https", "wss") + "/ws 1 600");
 }
@@ -243,13 +244,17 @@ async function buildManifest(dir) {
   async function walk(d) { for (const e of await readdir(d, { withFileTypes: true })) {
     const p = join(d, e.name); if (e.isDirectory()) await walk(p); else files.push(p); } }
   await walk(dir);
+  // Honor .assetsignore (exact names) like wrangler does; the file itself never ships.
+  const ignore = new Set([".assetsignore"]);
+  try { for (const l of (await readFile(join(dir, ".assetsignore"), "utf8")).split("\n")) if (l.trim()) ignore.add(l.trim()); } catch {}
   const map = {}; const byHash = {};
   for (const f of files) {
+    const rel = relative(dir, f).split("\\").join("/");
+    if (ignore.has(rel) || ignore.has(rel.split("/").pop())) continue;
     const buf = await readFile(f);
     const ext = extname(f).slice(1);
     const hash = assetHash(buf, ext);
-    const key = "/" + relative(dir, f).split("\\").join("/");
-    map[key] = { hash, size: buf.length };
+    map["/" + rel] = { hash, size: buf.length };
     byHash[hash] = { buf, ct: guessCt(ext) };
   }
   return { map, byHash };

@@ -1,0 +1,128 @@
+# Release pipeline (doc 01 M2): every `v*` tag builds a versioned artifact and
+# publishes it to R2 (`worldspring-releases`, the deploy source of truth) and a
+# GitHub Release (the public mirror / disaster recovery). The site's create-
+# server flow (doc 01 M5) deploys ONLY artifacts this pipeline published.
+#
+# Setup (one-time, see README.md §release.yml): create the R2 bucket and make
+# sure CLOUDFLARE_API_TOKEN can write to it. Unlike deploy-prod's skip-green
+# gate, a release with missing secrets FAILS — a release that didn't publish is
+# not a release.
+#
+# GAME_VERSION is injected from the tag BEFORE the build so /api/server-info
+# and heartbeats report the release version (doc 01 §3 step 5); the release
+# gate inside build-artifact.mjs refuses to produce an artifact if the
+# injection didn't happen, if PROTOCOL_VERSION is malformed, or if the bundle
+# lacks /api/server-info.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # gh release create
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never cancel a half-published release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      R2_BUCKET: worldspring-releases
+    steps:
+      - name: Require Cloudflare secrets
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID not set — a release cannot publish to R2 (see .github/workflows/README.md)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Doc 01 §3 step 5: the tag is the version. Local/dev builds keep the
+      # hand-maintained value; only release builds get the overwrite.
+      - name: Inject GAME_VERSION from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          sed -i "s/export const GAME_VERSION = \"[^\"]*\";/export const GAME_VERSION = \"$VERSION\";/" packages/shared/src/version.ts
+          grep "GAME_VERSION = \"$VERSION\"" packages/shared/src/version.ts || { echo "::error::version injection failed"; exit 1; }
+
+      - name: Typecheck
+        run: pnpm -w typecheck
+
+      - name: Build game
+        run: pnpm --filter @worldspring/game build
+
+      # Previous release's meta.json (if any) → wipesWorld comparison. Absent
+      # bucket/objects (first release) is fine — build-artifact defaults false.
+      - name: Fetch previous release meta
+        run: |
+          set +e
+          npx wrangler@4.99.0 r2 object get "$R2_BUCKET/releases/latest.json" --file prev-latest.json --remote 2>/dev/null
+          if [ -f prev-latest.json ]; then
+            PREV=$(node -p "JSON.parse(require('fs').readFileSync('prev-latest.json','utf8')).version")
+            npx wrangler@4.99.0 r2 object get "$R2_BUCKET/releases/v$PREV/meta.json" --file prev-meta.json --remote 2>/dev/null
+          fi
+          exit 0
+
+      - name: Build artifact (release gate inside)
+        run: |
+          ARGS="--version $VERSION --out artifact"
+          [ -f prev-meta.json ] && ARGS="$ARGS --prev-meta prev-meta.json"
+          node scripts/build-artifact.mjs $ARGS
+
+      # R2 first (deploy source of truth), latest.json LAST — a run that dies
+      # mid-upload must never repoint latest at a half-published release.
+      - name: Publish to R2
+        run: |
+          set -euo pipefail
+          PREFIX="releases/v$VERSION"
+          npx wrangler@4.99.0 r2 object put "$R2_BUCKET/$PREFIX/index.js" --file artifact/index.js --content-type application/javascript --remote
+          npx wrangler@4.99.0 r2 object put "$R2_BUCKET/$PREFIX/meta.json" --file artifact/meta.json --content-type application/json --remote
+          for f in artifact/assets/*; do
+            npx wrangler@4.99.0 r2 object put "$R2_BUCKET/$PREFIX/assets/$(basename "$f")" --file "$f" --remote
+          done
+          printf '{ "version": "%s" }\n' "$VERSION" > latest.json
+          npx wrangler@4.99.0 r2 object put "$R2_BUCKET/releases/latest.json" --file latest.json --content-type application/json --remote
+
+      - name: Mirror as GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar czf "worldspring-$GITHUB_REF_NAME-artifact.tar.gz" -C artifact .
+          WIPES=$(node -p "JSON.parse(require('fs').readFileSync('artifact/meta.json','utf8')).wipesWorld")
+          NOTES="Release artifact for $GITHUB_REF_NAME (mirror of R2 \`releases/v$VERSION/\`)."
+          if [ "$WIPES" = "true" ]; then
+            NOTES="$NOTES"$'\n\n'"⚠️ **This release wipes worlds** (SCHEMA_VERSION bump — characters + world reset, leaderboards survive)."
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            "worldspring-$GITHUB_REF_NAME-artifact.tar.gz" \
+            artifact/meta.json \
+            --title "Worldspring $GITHUB_REF_NAME" \
+            --notes "$NOTES"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Release $GITHUB_REF_NAME"
+            echo "- R2: \`$R2_BUCKET/releases/v$VERSION/\` (+ latest.json repointed)"
+            echo "- GitHub Release: worldspring-$GITHUB_REF_NAME-artifact.tar.gz"
+            echo '```'
+            node -p "const m=JSON.parse(require('fs').readFileSync('artifact/meta.json','utf8')); \`version=\${m.version} protocol=\${m.protocolVersion} schema=\${m.schemaVersion} wipesWorld=\${m.wipesWorld} assets=\${Object.keys(m.assetManifest).length}\`"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

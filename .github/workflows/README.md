@@ -57,3 +57,34 @@ Only the **game** is previewed today (web/prober are not). Fork PRs are skipped
 
 These are independent of the doc 01 "deploy into the user's own account" flow —
 previews deploy into the Worldspring account, not a visitor's.
+
+## `release.yml` — versioned release artifacts (every `v*` tag)
+
+Doc 01 M2. Tagging `vX.Y.Z` injects the version into
+`packages/shared/src/version.ts`, typechecks, builds the game, runs
+`scripts/build-artifact.mjs` (whose **release gate** hard-fails without the
+`/api/server-info` route or a numeric `PROTOCOL_VERSION` — see doc 01 §3), and
+publishes:
+
+- **R2** (deploy source of truth): `worldspring-releases/releases/vX.Y.Z/`
+  (`meta.json`, `index.js`, `assets/<hash>` one object per unique asset), then
+  repoints `releases/latest.json` **last** so a half-published run never wins.
+- **GitHub Release** (public mirror): the artifact tarball + `meta.json`, with
+  a red **wipes worlds** warning in the notes when `SCHEMA_VERSION` bumped vs
+  the previous release.
+
+Unlike `deploy-prod`, missing Cloudflare secrets **fail** the run (a release
+that didn't publish is not a release). A release tag does NOT deploy anything —
+prod still ships from pushes to `main`; artifacts exist for the doc 01
+create-server flow and the update story.
+
+### Required setup (one-time, by a maintainer)
+
+1. **R2 bucket**: `wrangler r2 bucket create worldspring-releases` (on the
+   Worldspring account).
+2. **Token scope**: extend the existing `CLOUDFLARE_API_TOKEN` repo secret with
+   **Workers R2 Storage: Edit** (or rotate in a token that has it) — the
+   preview/deploy jobs only needed Workers edit.
+3. Cut a release: `git tag v0.1.0 && git push origin v0.1.0`. First release has
+   no predecessor in R2 — `wipesWorld` defaults to `false`, later releases
+   compare `SCHEMA_VERSION` against the previous `meta.json` automatically.

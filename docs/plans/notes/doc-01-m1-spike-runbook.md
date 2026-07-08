@@ -1,5 +1,22 @@
 # Doc 01 M1 — Cloudflare OAuth + deploy-API spike runbook
 
+> **Refresh 2026-07-07** (facts below that changed since this runbook was written;
+> the harness is updated to match):
+> - Build output moved: worker bundle `apps/game/dist/worldspring/index.js`, generated
+>   config `apps/game/dist/worldspring/wrangler.json`, assets `apps/game/dist/client/**`
+>   (~90 files / 7.5 MB, honoring `.assetsignore`). Run
+>   `pnpm --filter @worldspring/game build` before the `deploy` phase.
+> - `/api/server-info` NOW EXISTS (doc 03 M2 landed) and `PROTOCOL_VERSION` is **5** —
+>   the deploy phase verifies via `/api/server-info` like the real deployer will,
+>   not `/api/health`.
+> - The site is live at **worldspring.games** (doc 01 open Q1 resolved); the production
+>   OAuth client (M4) will use redirect `https://worldspring.games/oauth/callback`. The
+>   spike keeps its throwaway client + localhost redirect — which also settles whether
+>   localhost redirects are accepted (U6).
+> - The release pipeline (doc 01 M2) is now committed: `.github/workflows/release.yml`
+>   + `scripts/build-artifact.mjs`. Its asset-hash + multipart-metadata assumptions are
+>   exactly what this spike validates — run the spike before trusting a first real tag.
+
 > Produced by the `wave0-next-milestones` workflow. This milestone **cannot run autonomously** —
 > it needs a throwaway Cloudflare account + credentials and makes side-effectful API calls (create an
 > OAuth client, upload a Worker, force-delete it). Run the harness one phase at a time. The milestone's
