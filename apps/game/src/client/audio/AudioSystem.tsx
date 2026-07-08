@@ -15,6 +15,7 @@ import { clientWorld, debugStats, drainAudioEvents, type ZombieView } from "@/cl
 import { useSettingsStore } from "@/client/state/settings";
 import { useUIStore } from "@/client/state/store";
 import { TEMP_SHIVER } from "@worldspring/shared/constants";
+import { distSq2D } from "@worldspring/shared/math";
 import type { GameEvent, WireFire, ZombieState } from "@worldspring/shared/protocol";
 
 // --- Presentation tunables (audio polish, not gameplay) ---
@@ -91,6 +92,16 @@ const RAIN_MUFFLE_FACTOR = 0.7;
 const PLANE_FLYOVER_VOLUME = 0.5;
 const CRATE_THUD_VOLUME = 0.9;
 const CRATE_THUD_REF_DISTANCE = 25; // audible far across the island
+const TREE_FALL_VOLUME = 0.9;
+const TREE_FALL_REF_DISTANCE = 20; // a toppling tree carries (crate_thud precedent)
+// Chop "hit" events are emitted at exactly the trunk axis (server trees.ts) —
+// the wood test only needs the trunk radius plus wire-rounding slack.
+const TREE_HIT_QUERY_RADIUS = 2;
+const TREE_HIT_EPS_SQ = 0.04;
+const RELOAD_VOLUME = 0.6;
+// A completed reload's final snap leaves remainingS just above 0 (snap
+// cadence); anything larger on exit means the channel was interrupted.
+const RELOAD_FINISH_MAX_REMAINING_S = 0.25;
 const WAVES_VOLUME = 0.45;
 const WAVES_FULL_BELOW = 1.5;
 const WAVES_SILENT_ABOVE = 6;
@@ -104,6 +115,7 @@ const CUE_VOLUMES: Partial<Record<SfxName, number>> = {
   bandage: 0.55,
   campfire_place: 0.7,
   pickup: 0.5,
+  dry_fire: 0.5,
 };
 const CUE_DEFAULT_VOLUME = 0.6;
 
@@ -148,6 +160,13 @@ interface Engine {
   zombieAttackLastAt: Map<number, number>;
   /** Airdrop id → last seen `falling` flag (plane on appear, thud on landing). */
   dropPrevFalling: Map<number, boolean>;
+  /** Last consumed clientWorld.felledVersion (-1 = never observed). */
+  felledPrevVersion: number;
+  /** True once heardFelled mirrors the current connection's felled set —
+   * pre-join history (and post-reconnect reseeds) must not play crashes. */
+  felledSynced: boolean;
+  /** Felled tree indices already accounted for (heard or silently seeded). */
+  heardFelled: Set<number>;
   shotLastPlayed: Map<ShotWeapon, { t: number; x: number; y: number; z: number }>;
   lcg: number;
 }
@@ -204,6 +223,9 @@ function createEngine(): Engine {
     zombiePrevState: new Map(),
     zombieAttackLastAt: new Map(),
     dropPrevFalling: new Map(),
+    felledPrevVersion: -1,
+    felledSynced: false,
+    heardFelled: new Set(),
     shotLastPlayed: new Map(),
     lcg: 0x2f6e2b1,
   };
@@ -325,6 +347,23 @@ function fleshNear(x: number, y: number, z: number): boolean {
   return false;
 }
 
+// Axe chops arrive as plain "hit" events emitted at exactly the standing
+// trunk's axis (server trees.ts) — so a hit point sitting on a still-standing
+// tree is a chop and thunks wood instead of flesh/dirt. Pure client-side
+// inference, no wire change; a whiffed chop stays a plain swing.
+function hitStandingTree(x: number, z: number): boolean {
+  const world = clientWorld.world;
+  if (!world) return false;
+  for (const tree of world.queryStatics(x, z, TREE_HIT_QUERY_RADIUS).trees) {
+    if (distSq2D(tree.x, tree.z, x, z) > tree.r * tree.r + TREE_HIT_EPS_SQ) continue;
+    // queryStatics returns references into world.trees (the server chop
+    // idiom) — indexOf recovers the wire index. O(TREE_COUNT), hit-rate only.
+    const index = world.trees.indexOf(tree);
+    if (index !== -1 && !clientWorld.felledTrees.has(index)) return true;
+  }
+  return false;
+}
+
 function isDuplicateShot(engine: Engine, ev: Extract<GameEvent, { e: "shot" }>, now: number): boolean {
   const last = engine.shotLastPlayed.get(ev.w);
   if (!last || now - last.t >= SHOT_DEDUPE_WINDOW_S) return false;
@@ -372,7 +411,11 @@ function processEvents(engine: Engine, events: GameEvent[], cam: THREE.Vector3, 
         break;
       }
       case "hit": {
-        const name: SfxName = fleshNear(ev.x, ev.y, ev.z) ? "hit_flesh" : "hit_thud";
+        const name: SfxName = hitStandingTree(ev.x, ev.z)
+          ? "axe_wood"
+          : fleshNear(ev.x, ev.y, ev.z)
+            ? "hit_flesh"
+            : "hit_thud";
         playPositional(engine, name, ev.x, ev.y, ev.z, 0.7);
         break;
       }
@@ -552,6 +595,48 @@ function updateAirdrops(engine: Engine): void {
   }
 }
 
+// --- Felled trees: crash one-shot where the trunk topples (doc 13 M2) ---
+//
+// Consumes clientWorld.felledVersion exactly like Trees.tsx — the set is
+// updated when the render cursor reaches the felling snap, the same delayed
+// frame the standing tree vanishes and the dynamic trunk appears.
+
+function updateFelledTrees(engine: Engine): void {
+  if (engine.felledPrevVersion === clientWorld.felledVersion) return;
+  const first = engine.felledPrevVersion === -1;
+  engine.felledPrevVersion = clientWorld.felledVersion;
+
+  const felled = clientWorld.felledTrees;
+  if (felled.size === 0) {
+    // Empty on first sight = genuinely nothing felled (live from here).
+    // Empty later = a reconnect reset wiped the set — stay muted until the
+    // welcome reseeds, so trees felled before/while away never chorus.
+    engine.heardFelled.clear();
+    engine.felledSynced = first;
+    return;
+  }
+
+  const world = clientWorld.world;
+  const live = engine.felledSynced && !first;
+  for (const index of felled) {
+    if (engine.heardFelled.has(index)) continue;
+    engine.heardFelled.add(index);
+    if (!live || !world) continue; // pre-join history seeds silently
+    const tree = world.trees[index];
+    if (!tree) continue;
+    playPositional(
+      engine,
+      "tree_fall",
+      tree.x,
+      tree.groundY + tree.height / 2,
+      tree.z,
+      TREE_FALL_VOLUME,
+      TREE_FALL_REF_DISTANCE,
+    );
+  }
+  engine.felledSynced = true;
+}
+
 // --- Ambience (non-positional gain-faded loops) ---
 
 function clamp01(v: number): number {
@@ -640,6 +725,9 @@ function silenceEngine(engine: Engine): void {
   engine.zombiePrevState.clear();
   engine.zombieAttackLastAt.clear();
   engine.dropPrevFalling.clear();
+  engine.felledPrevVersion = -1;
+  engine.felledSynced = false;
+  engine.heardFelled.clear();
   engine.shotLastPlayed.clear();
 }
 
@@ -712,7 +800,27 @@ export function AudioSystem(): null {
       }
     });
 
+    // Reload channel start/finish (doc 11 M3) — inferred from the snapshot's
+    // server-authoritative `you.action` mirror. Both a completed and an
+    // interrupted reload end as reload -> null/other; the outgoing remainingS
+    // tells them apart (a completed cast exits with at most one snap left).
+    const unsubReload = useUIStore.subscribe((state, prev) => {
+      const was = prev.channelAction?.kind === "reload";
+      const is = state.channelAction?.kind === "reload";
+      if (!was && is) {
+        playFlat(engine, "reload_start", RELOAD_VOLUME);
+        return;
+      }
+      if (was && !is) {
+        const remaining = prev.channelAction?.remainingS ?? Number.POSITIVE_INFINITY;
+        if (remaining <= RELOAD_FINISH_MAX_REMAINING_S) {
+          playFlat(engine, "reload_finish", RELOAD_VOLUME);
+        }
+      }
+    });
+
     return () => {
+      unsubReload();
       unsubPhase();
       unsubVolume();
       registerCueSink(null);
@@ -742,6 +850,7 @@ export function AudioSystem(): null {
     updateVocalizations(engine, now, tmpCamPos);
     updateFires(engine, tmpCamPos);
     updateAirdrops(engine);
+    updateFelledTrees(engine);
     updateAmbience(engine, dt);
   });
 

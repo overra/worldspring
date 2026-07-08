@@ -34,7 +34,12 @@ export type SfxName =
   | "death"
   | "rain_loop"
   | "plane_flyover"
-  | "crate_thud";
+  | "crate_thud"
+  | "tree_fall"
+  | "axe_wood"
+  | "reload_start"
+  | "reload_finish"
+  | "dry_fire";
 
 export const SFX_FILES: Record<SfxName, string> = {
   shot: "/sfx/shot.mp3",
@@ -69,6 +74,11 @@ export const SFX_FILES: Record<SfxName, string> = {
   rain_loop: "/sfx/rain_loop.mp3",
   plane_flyover: "/sfx/plane_flyover.mp3",
   crate_thud: "/sfx/crate_thud.mp3",
+  tree_fall: "/sfx/tree_fall.mp3",
+  axe_wood: "/sfx/axe_wood.mp3",
+  reload_start: "/sfx/reload_start.mp3",
+  reload_finish: "/sfx/reload_finish.mp3",
+  dry_fire: "/sfx/dry_fire.mp3",
 };
 
 /** Sounds the engine should treat as seamless loops. */

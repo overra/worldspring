@@ -20,6 +20,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactElement } from "react";
+import { cueSound } from "@/client/audio/cues";
 import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
@@ -141,8 +142,11 @@ export function TouchControls(): ReactElement | null {
           if (gameplayBlocked()) return;
           // Attack always goes to the server (an empty-mag pull triggers the
           // auto-reload) but the local swing only animates when a shot can
-          // actually happen — no phantom fire on a dry mag or mid-reload.
+          // actually happen — no phantom fire on a dry mag or mid-reload. A
+          // dry pull clicks instead, except while the reload cast already
+          // runs (its start/finish pair covers that window; no click spam).
           if (attackAnimAllowed()) triggerLocalAttackAnim();
+          else if (ui.channelAction?.kind !== "reload") cueSound("dry_fire");
           doAttack();
           return;
         case "jump":

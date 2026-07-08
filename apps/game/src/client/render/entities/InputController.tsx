@@ -5,6 +5,7 @@
 import { useEffect } from "react";
 import { useThree } from "@react-three/fiber";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
+import { cueSound } from "@/client/audio/cues";
 import { clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
@@ -183,8 +184,11 @@ export function InputController(): null {
       // The attack message always goes out (an empty-mag pull is what triggers
       // the server auto-reload), but the optimistic swing animation only plays
       // when a shot is actually possible — no phantom "shots" on a dry mag or
-      // mid-reload (doc 11 M3: the trigger is dead during the cast).
+      // mid-reload (doc 11 M3: the trigger is dead during the cast). A dry
+      // pull clicks instead, except while the reload cast already runs (the
+      // start/finish pair covers that window; repeat pulls shouldn't spam).
       if (attackAnimAllowed()) triggerLocalAttackAnim();
+      else if (ui.channelAction?.kind !== "reload") cueSound("dry_fire");
       doAttack();
     };
 
