@@ -16,7 +16,6 @@
 
 import type { BodyKind, WireBody } from "@worldspring/shared/protocol";
 import type { PhysicsConfig } from "@worldspring/shared/config";
-import { WORLD_SIZE } from "@worldspring/shared/constants";
 
 // Minimal structural types for the injected Rapier namespace — `import type`
 // only (erased at runtime; the harness runs this file via strip-types).
@@ -28,6 +27,9 @@ type RapierCollider = import("@dimforge/rapier3d-compat").Collider;
 /** What the terrain/statics collider build needs from the game World — a
  * structural subset so the replay harness can pass a tiny fake. */
 export interface PhysicsStaticsSource {
+  /** World edge length in meters (World.size — doc 07 M2). Drives the
+   * heightfield extent and sample count (cell size stays ~4 m at every tier). */
+  size: number;
   heightAt(x: number, z: number): number;
   buildings: ReadonlyArray<{ walls: ReadonlyArray<Aabb>; roof: Aabb }>;
   militaryWalls: ReadonlyArray<Aabb>;
@@ -62,11 +64,13 @@ export interface PersistedBody {
   asleep: boolean;
 }
 
-/** Terrain heightfield sampling resolution: (N-1)×(N-1) cells over
- * WORLD_SIZE². 201 → 4 m cells at 800 m, ~160 KB of floats, built once per
- * room. Bodies rest on this sampled field while players stand on the analytic
+/** Terrain heightfield cell size in meters. The sample count scales with the
+ * world edge (doc 07 M2, open decision #4): n = size/4 + 1 → 201 at standard
+ * 800 m (~160 KB of floats, exactly the pre-M2 resolution), 801 at huge
+ * (801² Float32 ≈ 2.6 MB, one-time, server-only — trivial vs the 128 MB DO).
+ * Bodies rest on this sampled field while players stand on the analytic
  * heightAt — a ≤ half-cell seam that reads fine for props (doc 13 §1). */
-const HEIGHTFIELD_N = 201;
+const HEIGHTFIELD_CELL_M = 4;
 /** Crates half-extent (matches the client's crate mesh + loot-crate scale). */
 const CRATE_HALF = 0.4;
 /** Seconds a body must sleep before it counts as "settled" for eviction. */
@@ -126,21 +130,22 @@ export class PhysicsSystem {
     this.world = world;
 
     // Terrain: one sampled heightfield spanning the whole island, centered on
-    // the origin like the world itself (WORLD_SIZE square, constants.ts:7).
+    // the origin like the world itself (world.size square, doc 07 M2).
     // Rapier heightfield data is COLUMN-major: heights[col * nrows+1 + row],
     // columns along x, rows along z — validated empirically by the replay
     // harness's slope probes (swap = probe failure, not a silent tilt).
-    const n = HEIGHTFIELD_N;
+    const size = this.statics.size;
+    const n = Math.round(size / HEIGHTFIELD_CELL_M) + 1;
     const heights = new Float32Array(n * n);
     for (let col = 0; col < n; col++) {
-      const x = (col / (n - 1) - 0.5) * WORLD_SIZE;
+      const x = (col / (n - 1) - 0.5) * size;
       for (let row = 0; row < n; row++) {
-        const z = (row / (n - 1) - 0.5) * WORLD_SIZE;
+        const z = (row / (n - 1) - 0.5) * size;
         heights[col * n + row] = Math.fround(this.statics.heightAt(x, z));
       }
     }
     world.createCollider(
-      engine.ColliderDesc.heightfield(n - 1, n - 1, heights, { x: WORLD_SIZE, y: 1, z: WORLD_SIZE }),
+      engine.ColliderDesc.heightfield(n - 1, n - 1, heights, { x: size, y: 1, z: size }),
     );
 
     // Statics: the SAME AABBs the kinematic sim collides with (world.ts) —

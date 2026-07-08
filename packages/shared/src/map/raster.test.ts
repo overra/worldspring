@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { tierParamsOf } from "../config";
 import { WATER_LEVEL, WORLD_SIZE } from "../constants";
 import { createWorld } from "../world";
 import { makeProjection } from "./projection";
@@ -31,7 +32,7 @@ describe("makeProjection", () => {
 });
 
 describe("rasterizeBase", () => {
-  const world = createWorld(1337);
+  const world = createWorld({ seed: 1337, ...tierParamsOf("standard") });
   const px = 64;
   const { pixels } = rasterizeBase(world.heightAt, WORLD_SIZE, px, WATER_LEVEL);
   const at = (ix: number, iy: number): { r: number; g: number; b: number } => {
@@ -56,7 +57,7 @@ describe("rasterizeBase", () => {
 });
 
 describe("mapPOIs", () => {
-  const world = createWorld(1337);
+  const world = createWorld({ seed: 1337, ...tierParamsOf("standard") });
   const shapes = mapPOIs(world);
 
   it("emits a footprint rect per building and a label per town", () => {

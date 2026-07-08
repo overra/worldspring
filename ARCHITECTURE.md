@@ -76,11 +76,13 @@ To be built (one owner each):
   - Action helpers (thin wrappers over `sendMsg`): `doAttack()`,
     `doUse(slot)`, `doEquip(slot)`, `doPickup(id)`, `doDrop(slot)`,
     `doRespawn()`.
-- On `welcome`: build `createWorld(seed)`, set `clientWorld.world`, `ready`,
-  `myId`, seed `me` from `you`, store inventory, phase `playing`. Also clamp the
-  additive optional `config` field (`clampConfig(msg.config)`, never the raw
-  object) into `clientWorld.config`. (Doc 04 M6 later amends this to
-  `createWorld(worldParamsOf(config.world))` for non-standard world tiers.)
+- On `welcome`: clamp the additive optional `config` field
+  (`clampConfig(msg.config)`, never the raw object) into `clientWorld.config`
+  FIRST, then build `createWorld(worldParamsOf(clientWorld.config.world))`
+  (doc 07 M1-M2 — supersedes the old seed-only `createWorld(seed)`; the clamp
+  is the allocation guard, so a hostile `sizeTier` never reaches worldgen).
+  Set `clientWorld.world`, `ready`, `myId`, seed `me` from `you`, store
+  inventory, phase `playing`.
 - On `death`: phase `dead`, `setDeathCause`. On `inv`: update store. On
   `notice`: `pushNotice`. Keep socket open while dead (respawn reuses it).
 
@@ -118,9 +120,11 @@ mount only after `ready` since App renders Canvas post-welcome... NOT true:
 Canvas mounts at phase `playing` which is set on welcome, so `clientWorld.world`
 is non-null at mount. You may read it synchronously and keep a local ref).
 
-- `Terrain.tsx` — one segmented plane geometry (~200x200 verts over
-  `WORLD_SIZE`), displaced by `world.heightAt`, vertex colors by
-  height/slope (sand < 1.5, grass, rock on steep/high), `flatShading`.
+- `Terrain.tsx` — one segmented plane geometry over `world.size` (segment
+  count scales with tier: 200x200 at the standard 800m tier, constant ~4m
+  cells; the chunked/LOD renderer for large/huge is doc 07 M3), displaced by
+  `world.heightAt`, vertex colors by height/slope (sand < 1.5, grass, rock on
+  steep/high), `flatShading`.
 - `WaterPlane.tsx` — large translucent plane at `WATER_LEVEL`, slight
   opacity animation.
 - `Buildings.tsx` — for each `world.buildings`: boxes for the wall AABBs,

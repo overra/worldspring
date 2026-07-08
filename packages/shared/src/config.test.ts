@@ -19,12 +19,14 @@ import {
   PRESETS,
   resolveServerConfig,
   summarizeRules,
+  tierParamsOf,
   wipeEpochOf,
   worldFingerprintOf,
   worldParamsOf,
 } from "./config";
 import type { ServerConfig } from "./config";
 import {
+  CABIN_COUNT,
   DAY_DURATION_S,
   DEER_COUNT,
   LOGOUT_LINGER_S,
@@ -34,8 +36,13 @@ import {
   MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   RESPAWN_DELAY_S,
+  ROCK_COUNT,
   START_HOUR,
+  TOWN_COUNT,
+  TREE_COUNT,
   WORLD_SEED,
+  WORLD_SIZE,
+  WORLDGEN_VERSION,
   ZOMBIE_MAX,
 } from "./constants";
 import { gameHours } from "./protocol";
@@ -245,8 +252,16 @@ describe("resolveServerConfig", () => {
     expect(r.worldTainted).toBe(true);
   });
 
-  it("M1 coerces a non-standard sizeTier to standard + taints", () => {
-    const r = resolveServerConfig({ overrides: { world: { sizeTier: "huge" } } });
+  it("doc 07 M2: a non-standard sizeTier is honored cleanly (no taint)", () => {
+    for (const tier of ["large", "huge"] as const) {
+      const r = resolveServerConfig({ overrides: { world: { sizeTier: tier } } });
+      expect(r.config.world.sizeTier).toBe(tier);
+      expect(r.worldTainted).toBe(false);
+    }
+  });
+
+  it("an unknown sizeTier still falls back to standard + taints", () => {
+    const r = resolveServerConfig({ overrides: { world: { sizeTier: "gigantic" } } });
     expect(r.config.world.sizeTier).toBe("standard");
     expect(r.worldTainted).toBe(true);
   });
@@ -390,14 +405,38 @@ describe("clampConfig (client-side total clamp)", () => {
 });
 
 // =============================================================================
-// worldParamsOf — seed-only in M1
+// worldParamsOf / tierParamsOf — full WorldGenParams (doc 07 M2)
 // =============================================================================
 
-describe("worldParamsOf", () => {
-  it("returns { seed } ONLY in M1", () => {
+describe("tierParamsOf / worldParamsOf", () => {
+  it("the standard row IS the shipped constants (byte-identical worldgen)", () => {
+    expect(tierParamsOf("standard")).toEqual({
+      size: WORLD_SIZE,
+      towns: TOWN_COUNT,
+      cabins: CABIN_COUNT,
+      trees: TREE_COUNT,
+      rocks: ROCK_COUNT,
+    });
+  });
+
+  it("large/huge rows match the doc 07 §3 table", () => {
+    expect(tierParamsOf("large")).toEqual({ size: 1600, towns: 10, cabins: 18, trees: 2800, rocks: 280 });
+    expect(tierParamsOf("huge")).toEqual({ size: 3200, towns: 22, cabins: 44, trees: 11200, rocks: 1120 });
+  });
+
+  it("every tier row is integers only (no float math into createWorld)", () => {
+    for (const tier of ["standard", "large", "huge"] as const) {
+      for (const v of Object.values(tierParamsOf(tier))) {
+        expect(Number.isInteger(v)).toBe(true);
+      }
+    }
+  });
+
+  it("returns { seed, ...tier } flat", () => {
     const p = worldParamsOf(DEFAULT_CONFIG.world);
-    expect(p).toEqual({ seed: WORLD_SEED });
-    expect(Object.keys(p)).toEqual(["seed"]);
+    expect(p).toEqual({ seed: WORLD_SEED, ...tierParamsOf("standard") });
+    const large = worldParamsOf({ seed: 7, sizeTier: "large", waterFeatures: false });
+    expect(large).toEqual({ seed: 7, ...tierParamsOf("large") });
   });
 });
 
@@ -406,9 +445,23 @@ describe("worldParamsOf", () => {
 // =============================================================================
 
 describe("worldFingerprintOf / parseWorldFingerprint", () => {
-  it("default world stringifies to the canonical v1 form", () => {
-    expect(worldFingerprintOf(DEFAULT_CONFIG.world)).toBe(
-      `v1|seed:${WORLD_SEED}|size:standard|water:0`,
+  it("default world stringifies to the canonical v1 form (gen omitted at 1)", () => {
+    // ROLLBACK-SAFETY PIN: while WORLDGEN_VERSION === 1 the fingerprint MUST
+    // be the 4-part form (byte-identical to what every pre-doc-07 binary
+    // writes and reads). An eagerly-written `|gen:1` suffix would be
+    // unreadable to a rollback binary and turn a routine revert into a
+    // production wipe. The 5-part form appears only once WORLDGEN_VERSION >= 2
+    // (doc 07 M5). absent gen == 1 on every parse path, so nothing is lost.
+    const expected =
+      (WORLDGEN_VERSION as number) >= 2
+        ? `v1|seed:${WORLD_SEED}|size:standard|water:0|gen:${WORLDGEN_VERSION}`
+        : `v1|seed:${WORLD_SEED}|size:standard|water:0`;
+    expect(worldFingerprintOf(DEFAULT_CONFIG.world)).toBe(expected);
+  });
+
+  it("parses a legacy 4-part (pre-gen) fingerprint — absent gen == 1", () => {
+    expect(parseWorldFingerprint(`v1|seed:${WORLD_SEED}|size:standard|water:0`)).toEqual(
+      DEFAULT_CONFIG.world,
     );
   });
 
@@ -433,6 +486,9 @@ describe("worldFingerprintOf / parseWorldFingerprint", () => {
       "v1|seed:1|size:gigantic|water:0",
       "v1|seed:1|size:standard|water:2",
       "v1|seed:1|size:standard",
+      "v1|seed:1|size:standard|water:0|gen:",
+      "v1|seed:1|size:standard|water:0|gen:x",
+      "v1|seed:1|size:standard|water:0|gen:1|extra:1",
       "garbage",
     ]) {
       expect(parseWorldFingerprint(bad)).toBeNull();

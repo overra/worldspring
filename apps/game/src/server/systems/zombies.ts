@@ -10,7 +10,6 @@ import {
   MILITARY_ZOMBIE_HP,
   MILITARY_ZOMBIE_SPEED,
   MILITARY_ZOMBIES,
-  WORLD_SIZE,
   ZOMBIE_AGGRO_RADIUS,
   ZOMBIE_ATTACK_COOLDOWN_S,
   ZOMBIE_ATTACK_RANGE,
@@ -115,8 +114,8 @@ export function spawnInitialZombies(state: GameState): void {
   const roamers = Math.round(ZOMBIE_ROAMERS * density);
   for (let i = 0; i < roamers && state.zombies.size < max; i++) {
     for (let attempt = 0; attempt < 40; attempt++) {
-      const x = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
-      const z = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
+      const x = (Math.random() * 2 - 1) * state.world.size * 0.45;
+      const z = (Math.random() * 2 - 1) * state.world.size * 0.45;
       if (state.world.heightAt(x, z) < ROAMER_MIN_TERRAIN_H) continue;
       spawnZombie(state, x, z, false);
       break;

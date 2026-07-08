@@ -14,7 +14,6 @@ import {
   DEER_WANDER_SPEED,
   VENISON_PER_DEER_MAX,
   VENISON_PER_DEER_MIN,
-  WORLD_SIZE,
 } from "@worldspring/shared/constants";
 import { effectiveDeerMax } from "@worldspring/shared/config";
 import { distSq2D } from "@worldspring/shared/math";
@@ -60,8 +59,8 @@ function pickDeerPoint(state: GameState): { x: number; z: number } | null {
   const military = world.military;
   const militaryRadiusSq = military.radius * military.radius;
   for (let attempt = 0; attempt < SPAWN_ATTEMPTS; attempt++) {
-    const x = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
-    const z = (Math.random() * 2 - 1) * WORLD_SIZE * 0.45;
+    const x = (Math.random() * 2 - 1) * world.size * 0.45;
+    const z = (Math.random() * 2 - 1) * world.size * 0.45;
     if (world.heightAt(x, z) < SPAWN_MIN_TERRAIN_H) continue;
     if (distSq2D(x, z, military.cx, military.cz) < militaryRadiusSq) continue;
     let inTown = false;

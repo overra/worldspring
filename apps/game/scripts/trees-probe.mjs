@@ -28,7 +28,9 @@ const sharedDir = fileURLToPath(new URL("../../../packages/shared", import.meta.
 const { build } = createRequire(sharedDir + "/scripts/x.mjs")("esbuild");
 const bundled = await build({
   stdin: {
-    contents: 'export { createWorld } from "./world.ts";\n',
+    contents:
+      'export { createWorld } from "./world.ts";\n' +
+      'export { clampConfig, worldParamsOf } from "./config.ts";\n',
     resolveDir: sharedDir + "/src",
     loader: "ts",
     sourcefile: "trees-probe-entry.ts",
@@ -39,7 +41,7 @@ const bundled = await build({
   write: false,
   logLevel: "silent",
 });
-const { createWorld } = await import(
+const { createWorld, clampConfig, worldParamsOf } = await import(
   "data:text/javascript;base64," + Buffer.from(bundled.outputFiles[0].text).toString("base64")
 );
 
@@ -107,7 +109,11 @@ ws.addEventListener("message", (ev) => {
       fail("no axe in the spawn inventory — server must run with TESTBED=1 (scenario 'trees')");
     }
     send({ t: "equip", slot: axeSlot });
-    world = createWorld(m.seed);
+    // doc 07 M2: mirror the client — clamp welcome.config, coerce the legacy
+    // top-level seed, build the world from the derived params.
+    const worldCfg = clampConfig(m.config).world;
+    if (worldCfg.seed !== m.seed) worldCfg.seed = m.seed;
+    world = createWorld(worldParamsOf(worldCfg));
     you = { x: m.you.x, z: m.you.z };
     // Nearest STANDING tree to the spawn (worldgen is deterministic + shared;
     // welcome.felled excludes trees earlier probe runs already brought down).

@@ -7,9 +7,13 @@ import * as THREE from "three";
 import { WORLD_SIZE } from "@worldspring/shared/constants";
 import { clamp } from "@worldspring/shared/math";
 import { MAP_BIOME, MAP_PALETTE } from "@worldspring/shared/map/palette";
+import type { World } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 
+/** Plane segments at the standard 800 m tier (4 m cells). Scales with
+ * world.size so vertex density stays constant per tier (doc 07 M2-minimal;
+ * the chunked/LOD terrain is doc 07 M3). */
 const SEGMENTS = 200;
 
 // Palette literals + thresholds are the SHARED source (packages/shared/src/map/
@@ -25,8 +29,10 @@ const ROCK_HEIGHT = MAP_BIOME.rockHeight; // high altitude turns to bare rock
 const ROCK_SLOPE_START = MAP_BIOME.rockSlopeStart; // gradient (m/m) where rock starts blending in
 const ROCK_SLOPE_FULL = MAP_BIOME.rockSlopeFull;
 
-function buildTerrainGeometry(heightAt: (x: number, z: number) => number): THREE.BufferGeometry {
-  const geometry = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, SEGMENTS, SEGMENTS);
+function buildTerrainGeometry(world: World): THREE.BufferGeometry {
+  const heightAt = world.heightAt;
+  const segments = Math.round(SEGMENTS * (world.size / WORLD_SIZE));
+  const geometry = new THREE.PlaneGeometry(world.size, world.size, segments, segments);
   geometry.rotateX(-Math.PI / 2); // lie flat: plane XY -> world XZ
 
   const pos = geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -75,7 +81,7 @@ export function Terrain(): ReactElement | null {
   const realm = useUIStore((s) => s.realm);
   const isRed = realm === "red";
   const geometry = useMemo(
-    () => (world ? buildTerrainGeometry(world.heightAt) : null),
+    () => (world ? buildTerrainGeometry(world) : null),
     [world],
   );
 

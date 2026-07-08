@@ -8,8 +8,16 @@
 // This guards the only code in the project that can destroy a live world.
 import { captureBookmark, initSchema } from "../src/server/persistence.ts";
 
+// Canonical form while WORLDGEN_VERSION === 1: the 4-part string, byte-
+// identical to what every pre-doc-07 binary reads and writes (doc 07 M1's
+// `gen:` component is implicit — absent == 1 on every parse path — and is
+// only EMITTED once WORLDGEN_VERSION >= 2, so a rollback deploy can always
+// read the stored row). An explicit `|gen:1` is the same world and is
+// normalized (stripped) in place.
 const FP_1337 = "v1|seed:1337|size:standard|water:0";
 const FP_9999 = "v1|seed:9999|size:standard|water:0";
+const FP_1337_GEN1 = "v1|seed:1337|size:standard|water:0|gen:1";
+const FP_1337_LARGE = "v1|seed:1337|size:large|water:0";
 
 // In-memory SqlStorage. meta is a Map; characters/world_state/leaderboard are
 // row counts (initSchema only ever DELETEs them wholesale, and the test seeds
@@ -108,6 +116,68 @@ scenario("pre-M2 migration adopts the live world without wiping", () => {
   eq(db.meta.get("world_fingerprint"), FP_1337, "fingerprint back-filled");
 });
 
+// 2a-strict. The adopt rule is STRICT equality against the default-shape
+//     fingerprint at the stored seed (doc 07 §1 binding rule: seed matches AND
+//     "the rest of the fingerprint is default"). A clean non-standard-tier
+//     boot against a legacy standard-world DB must NOT adopt — it falls
+//     through to the sanctioned-wipe path (rehydrating 800m-world characters
+//     into large-world geometry is the exact desync the gate prevents).
+scenario("pre-M2 DB + clean large-tier boot does NOT adopt (sanctioned wipe)", () => {
+  const db = makeDb({ schema_version: "2", world_seed: "1337" });
+  db.seed(5, 2, 3);
+  eq(initSchema(db.sql, boot({ fingerprint: FP_1337_LARGE })), FP_1337_LARGE, "returned the new fingerprint");
+  eq(db.counts().characters, 0, "characters wiped (legacy world is standard, boot is large)");
+  eq(db.counts().leaderboard, 3, "leaderboard survives");
+  eq(db.meta.get("world_fingerprint"), FP_1337_LARGE, "new fingerprint stored");
+});
+
+// 2a-refusal. Same legacy DB, but the large config is untrustworthy — fail
+//     closed: boot the persisted (legacy standard) world, wipe nothing.
+scenario("pre-M2 DB + tainted large-tier boot refuses and boots the legacy world", () => {
+  const db = makeDb({ schema_version: "2", world_seed: "1337" });
+  db.seed(5, 2, 3);
+  const fp = initSchema(db.sql, boot({ fingerprint: FP_1337_LARGE, worldTainted: true }));
+  eq(fp, FP_1337, "boots the persisted legacy standard world");
+  eq(db.counts().characters, 5, "characters preserved (fail-closed)");
+  eq(db.meta.get("world_fingerprint"), FP_1337, "legacy fingerprint back-filled");
+});
+
+// 2b. A stored 4-part fingerprint IS the canonical form while gen is 1: a
+//     routine deploy matches it byte-for-byte — no rewrite, no wipe. (This is
+//     the rollback-safety invariant: the row stays readable by pre-doc-07
+//     binaries until an actual gen bump.)
+scenario("a stored 4-part fingerprint matches without rewrite (no wipe)", () => {
+  const db = makeDb({ schema_version: "2", world_fingerprint: FP_1337 });
+  db.seed(5, 2, 3);
+  eq(initSchema(db.sql, boot()), FP_1337, "returned the canonical fingerprint");
+  eq(db.counts().characters, 5, "characters preserved");
+  eq(db.counts().world, 2, "world_state preserved");
+  eq(db.meta.get("world_fingerprint"), FP_1337, "stored string untouched");
+});
+
+// 2b'. An explicit redundant `|gen:1` suffix (written only by interim doc 07
+//     builds) is the SAME world — normalized (stripped) in place, never wiped.
+scenario("a stored explicit gen:1 fingerprint is normalized in place (no wipe)", () => {
+  const db = makeDb({ schema_version: "2", world_fingerprint: FP_1337_GEN1 });
+  db.seed(5, 2, 3);
+  eq(initSchema(db.sql, boot()), FP_1337, "returned the canonical 4-part fingerprint");
+  eq(db.counts().characters, 5, "characters preserved");
+  eq(db.counts().world, 2, "world_state preserved");
+  eq(db.meta.get("world_fingerprint"), FP_1337, "redundant gen:1 stripped in place");
+});
+
+// 2c. A stored gen that this binary cannot regenerate (future formula version)
+//     is NOT recoverable on the refusal path: booting "from the stored string"
+//     would rehydrate characters into divergent geometry — wipe instead.
+scenario("a stored future-gen fingerprint under refusal wipes (cannot regenerate)", () => {
+  const db = makeDb({ schema_version: "2", world_fingerprint: "v1|seed:1337|size:standard|water:0|gen:2" });
+  db.seed(5, 2, 3);
+  const fp = initSchema(db.sql, boot({ varAbsent: true }));
+  eq(fp, FP_1337, "returns the running fingerprint (fresh world)");
+  eq(db.counts().characters, 0, "characters wiped (unrecoverable gen)");
+  eq(db.counts().leaderboard, 3, "leaderboard survives");
+});
+
 // 3. Benign LIVE edit: fingerprint unchanged → no wipe (LIVE fields like
 //    zombieDensity are NOT in the fingerprint, so editing them never wipes).
 scenario("a benign LIVE config edit does not wipe", () => {
@@ -128,6 +198,26 @@ scenario("an explicit clean seed change is a sanctioned wipe (leaderboard kept)"
   eq(db.counts().world, 0, "world_state wiped");
   eq(db.counts().leaderboard, 3, "leaderboard survives the wipe");
   eq(db.meta.get("pre_wipe_bookmark"), "bm-test", "pre-wipe bookmark captured");
+});
+
+// 4b. Sanctioned tier change: sizeTier is WIPE-class exactly like the seed
+//     (doc 07 M2 un-restricted it) — an explicit clean change wipes.
+scenario("an explicit clean sizeTier change is a sanctioned wipe", () => {
+  const db = makeDb({ schema_version: "2", world_fingerprint: FP_1337 });
+  db.seed(5, 2, 3);
+  eq(initSchema(db.sql, boot({ fingerprint: FP_1337_LARGE })), FP_1337_LARGE, "returned the new fingerprint");
+  eq(db.counts().characters, 0, "characters wiped");
+  eq(db.counts().leaderboard, 3, "leaderboard survives");
+});
+
+// 4c. Tier mismatch under refusal: a persisted LARGE world with a tainted
+//     config boots the persisted large world (fail closed, tier included).
+scenario("a tainted config refuses to wipe a persisted large world", () => {
+  const db = makeDb({ schema_version: "2", world_fingerprint: FP_1337_LARGE });
+  db.seed(5, 2, 3);
+  const fp = initSchema(db.sql, boot({ worldTainted: true }));
+  eq(fp, FP_1337_LARGE, "boots the persisted large world");
+  eq(db.counts().characters, 5, "characters preserved");
 });
 
 // 5. varAbsent refusal: a dropped GAME_CONFIG reverts to 1337 against a 9999

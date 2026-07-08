@@ -28,11 +28,13 @@ import {
   TREE_COUNT,
   WORLD_SEED,
   WORLD_SIZE,
+  WORLDGEN_VERSION,
   ZOMBIE_MAX,
 } from "./constants";
 import { gameHours } from "./protocol";
 import type { LootTier } from "./items";
 import type { RulesSummary } from "./serverInfo";
+import type { WorldGenParams } from "./world";
 
 // =============================================================================
 // 1. Schema
@@ -46,7 +48,9 @@ export type WipeSchedule = "never" | "weekly" | "biweekly" | "monthly";
 export interface WorldConfig {
   /** Worldgen seed. WIPE-class. Default WORLD_SEED (1337). */
   seed: number;
-  /** WIPE-class. Only "standard" is accepted until milestone M6 lands. */
+  /** WIPE-class. All three tiers honored since doc 07 M2 (createWorld is
+   * size-parameterized; a tier change on a persisted world routes through
+   * initSchema's fail-closed wipe gate). */
   sizeTier: WorldSizeTier;
   /** WIPE-class. Reserved: forced to `false` until doc 07 wires it — the live
    * world has no fresh water, and a `true` placeholder would bake `water:1`
@@ -437,7 +441,9 @@ const WIPE_SCHEDULES: readonly WipeSchedule[] = [
   "biweekly",
   "monthly",
 ];
-const SIZE_TIERS: readonly WorldSizeTier[] = ["standard", "large", "huge"];
+/** The tier value set, exported so consumers (e.g. GameRoom's size reverse
+ * lookup) never duplicate the literal list. */
+export const SIZE_TIERS: readonly WorldSizeTier[] = ["standard", "large", "huge"];
 const MAP_ACQUIRES: readonly MapAcquire[] = ["spawn", "loot", "none"];
 const MAP_REVEALS: readonly MapReveal[] = ["full", "explored"];
 
@@ -556,14 +562,15 @@ function clampInto(
       worldCoerced = true;
     }
   }
-  // M6 restriction: only "standard" is honored until non-standard tiers land.
-  if (sizeTier !== "standard") {
-    warnings.push(
-      `world.sizeTier: "${sizeTier}" not supported yet, coerced to "standard"`,
-    );
-    sizeTier = "standard";
-    worldCoerced = true;
-  }
+  // doc 07 M2: non-standard tiers are honored (the former force-to-standard
+  // coercion is gone) — createWorld is size-parameterized and the tier is
+  // WIPE-class via worldFingerprintOf, so initSchema's fail-closed gate guards
+  // persisted state against a tier change exactly like a seed change.
+  // OPERATIONAL CAVEAT: client bundles built BEFORE this change still send the
+  // same PROTOCOL_VERSION but coerce large/huge -> standard here, so they pass
+  // the join gate against a tier'd server and silently desync. Flipping a live
+  // server to a non-standard tier is only safe after a PROTOCOL_VERSION bump
+  // ships post-M2 (doc 07 §1 runbook caveat).
 
   let waterFeatures = base.world.waterFeatures;
   if (rw.waterFeatures !== undefined) {
@@ -848,46 +855,45 @@ export function resolveServerConfig(raw: unknown): ResolvedConfig {
 // 5. Worldgen params + derivations
 // =============================================================================
 
-interface TierParams {
-  worldSize: number;
+/** The per-tier slice of WorldGenParams (everything but the seed). */
+export interface TierParams {
+  /** World edge length in meters (WorldGenParams.size). */
+  size: number;
   towns: number;
   cabins: number;
   trees: number;
   rocks: number;
 }
 
-/** Per-tier worldgen constants. The standard row is equal to today's compile-
- * time values (byte-identical worldgen); large/huge are owned by doc 07 §3 and
- * are NOT reachable in M1 (clampConfig coerces every tier to "standard"). This
- * is the single place M6 will branch on sizeTier. */
+/** Per-tier worldgen constants (doc 07 §3; doc 04 M6 subsumed). The standard
+ * row is single-sourced from the shipped constants, so standard-tier worldgen
+ * stays byte-identical — the committed world.fingerprint.txt is the gate. */
 const TIER_PARAMS: Record<WorldSizeTier, TierParams> = {
   standard: {
-    worldSize: WORLD_SIZE,
+    size: WORLD_SIZE,
     towns: TOWN_COUNT,
     cabins: CABIN_COUNT,
     trees: TREE_COUNT,
     rocks: ROCK_COUNT,
   },
-  large: { worldSize: 1600, towns: 10, cabins: 18, trees: 2800, rocks: 280 },
-  huge: { worldSize: 3200, towns: 22, cabins: 44, trees: 11200, rocks: 1120 },
+  large: { size: 1600, towns: 10, cabins: 18, trees: 2800, rocks: 280 },
+  huge: { size: 3200, towns: 22, cabins: 44, trees: 11200, rocks: 1120 },
 };
 
-/** Full per-tier worldgen params (M6 consumer). Exported so M6's createWorld
- * call site and any tooling derive identical geometry from the same table. NOT
- * used by worldParamsOf in M1 (seed-only) — present so the table is live. */
+/** Full per-tier worldgen params. Exported so createWorld call sites and
+ * tooling (fingerprint harness, map renderer) derive identical geometry from
+ * the same table. */
 export function tierParamsOf(tier: WorldSizeTier): TierParams {
   return TIER_PARAMS[tier];
 }
 
 /**
- * The explicit inputs createWorld needs, derived from WorldConfig. In M1–M5 it
- * returns `{ seed }` ONLY and createWorld is unchanged — the existing rng
- * stream draw order is frozen and the committed world.fingerprint.txt stays
- * green. M6 returns the full set from tierParamsOf (integers only, no float
- * math, doc 07 §3).
+ * The explicit inputs createWorld needs, derived from WorldConfig (doc 07 M2).
+ * Integers straight off the tier table — no float math, so client and server
+ * derive bit-identical params from the same config.
  */
-export function worldParamsOf(world: WorldConfig): { seed: number } {
-  return { seed: world.seed };
+export function worldParamsOf(world: WorldConfig): WorldGenParams {
+  return { seed: world.seed, ...tierParamsOf(world.sizeTier) };
 }
 
 /** Effective zombie population cap (server cap AND client pool hint). 0 when
@@ -917,27 +923,41 @@ export function effectiveGameHour(cfg: TimeConfig, gameTimeS: number): number {
 
 /**
  * Canonical string of the WIPE-class world fields: `v1|seed:1337|size:standard|
- * water:0`. Round-trippable with parseWorldFingerprint. M2's persistence
- * compares this instead of the bare world_seed, and the fail-closed refusal path
- * boots the world FROM the stored string. NOTE: this is the config wipe identity,
- * NOT the worldgen determinism hash (scripts/fingerprint.mjs) — they are
- * unrelated; do not conflate them.
+ * water:0` (plus `|gen:N` once WORLDGEN_VERSION >= 2). Round-trippable with
+ * parseWorldFingerprint. Persistence compares this instead of the bare
+ * world_seed, and the fail-closed refusal path boots the world FROM the stored
+ * string. `gen:` is WORLDGEN_VERSION (doc 07 M1) — a formula-change counter;
+ * absent == 1 on EVERY parse path, so the suffix is OMITTED while the running
+ * version is 1. That omission is load-bearing rollback safety: a stored
+ * `...|gen:1` string is unreadable to every pre-doc-07 binary (their 4-part
+ * fingerprint regex + string equality both fail), so eagerly writing the
+ * 5-part form would turn a routine revert of the doc 07 deploy into a
+ * production wipe on both the sanctioned and fail-closed paths. The first
+ * 5-part writer must be the first actual gen bump (doc 07 M5), by which time
+ * no gen-unaware binary is a plausible rollback target. NOTE: this is the
+ * config wipe identity, NOT the worldgen determinism hash
+ * (scripts/fingerprint.mjs) — they are unrelated; do not conflate them.
  */
 export function worldFingerprintOf(world: WorldConfig): string {
-  return `v1|seed:${world.seed}|size:${world.sizeTier}|water:${world.waterFeatures ? 1 : 0}`;
+  const base = `v1|seed:${world.seed}|size:${world.sizeTier}|water:${world.waterFeatures ? 1 : 0}`;
+  return (WORLDGEN_VERSION as number) >= 2 ? `${base}|gen:${WORLDGEN_VERSION}` : base;
 }
 
 /** Parse a fingerprint string back to a WorldConfig, or null if it is not a
- * well-formed v1 fingerprint. Total; never throws. */
+ * well-formed v1 fingerprint. Accepts 4 parts (pre-gen legacy, gen == 1) or 5
+ * parts (`gen:N`). Total; never throws. The gen component is validated for
+ * shape but not returned — WorldConfig has no gen field; the running binary's
+ * WORLDGEN_VERSION is compile-time. */
 export function parseWorldFingerprint(fp: string): WorldConfig | null {
   if (typeof fp !== "string") return null;
   const parts = fp.split("|");
-  if (parts.length !== 4 || parts[0] !== "v1") return null;
+  if ((parts.length !== 4 && parts.length !== 5) || parts[0] !== "v1") return null;
 
   const seedMatch = /^seed:(-?\d+)$/.exec(parts[1]);
   const sizeMatch = /^size:(.+)$/.exec(parts[2]);
   const waterMatch = /^water:([01])$/.exec(parts[3]);
   if (!seedMatch || !sizeMatch || !waterMatch) return null;
+  if (parts.length === 5 && !/^gen:\d+$/.test(parts[4])) return null;
 
   const sizeTier = sizeMatch[1];
   if (!(SIZE_TIERS as readonly string[]).includes(sizeTier)) return null;

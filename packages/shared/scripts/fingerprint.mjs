@@ -32,7 +32,7 @@ const bundled = await build({
   stdin: {
     contents:
       'export { createWorld } from "./world.ts";\n' +
-      'export { WORLD_SIZE } from "./constants.ts";\n',
+      'export { tierParamsOf } from "./config.ts";\n',
     resolveDir: dir,
     loader: "ts",
     sourcefile: "fingerprint-entry.ts",
@@ -44,31 +44,55 @@ const bundled = await build({
   logLevel: "silent",
 });
 const code = bundled.outputFiles[0].text;
-const { createWorld, WORLD_SIZE } = await import(
+const { createWorld, tierParamsOf } = await import(
   "data:text/javascript;base64," + Buffer.from(code).toString("base64")
 );
 
 const SEEDS = [1337, 0, 1, 42, 7, 2026, 65535, 99991];
 const GRID = 48; // (GRID+1)^2 sample points per seed
 
-const lines = [];
-for (const seed of SEEDS) {
-  const w = createWorld(seed);
+// doc 07 M2 added World.size (a config-derived scalar, not geometry). It is
+// EXCLUDED from the JSON hash so the standard-tier hashes stay byte-identical
+// to the pre-M2 baseline — the exclusion loses nothing (size fully determines
+// via the params, and every geometry field reflects it). No nested field is
+// named "size"; if one ever appears, rename it or version the baseline.
+const dropSize = (key, value) => (key === "size" ? undefined : value);
+
+function fingerprintWorld(seed, tier) {
+  const w = createWorld({ seed, ...tierParamsOf(tier) });
   const h = createHash("sha256");
   // All geometry data (seed/towns/buildings/military/props/trees/loot/spawns);
   // function members serialize to undefined and drop out — deterministic order.
-  h.update(JSON.stringify(w));
+  h.update(JSON.stringify(w, dropSize));
   // Sample the height functions on a fixed grid — captures the seeded noise.
+  // The grid spans the world's own size, so per-tier rows sample per-tier
+  // extents (identical bytes at standard, where w.size === WORLD_SIZE).
   const heights = [];
-  const half = WORLD_SIZE / 2;
+  const size = w.size;
+  const half = size / 2;
   for (let i = 0; i <= GRID; i++) {
     for (let j = 0; j <= GRID; j++) {
-      const x = -half + (i / GRID) * WORLD_SIZE;
-      const z = -half + (j / GRID) * WORLD_SIZE;
+      const x = -half + (i / GRID) * size;
+      const z = -half + (j / GRID) * size;
       heights.push(w.heightAt(x, z), w.groundHeight(x, z));
     }
   }
   h.update(Buffer.from(Float64Array.from(heights).buffer)); // exact float bytes
-  lines.push(`seed ${String(seed).padStart(6)} : ${h.digest("hex")}`);
+  return h.digest("hex");
+}
+
+const lines = [];
+// Standard rows FIRST and in the legacy line format — these 8 lines must stay
+// byte-identical to the pre-doc-07 baseline (the CI diff proves M2 didn't
+// drift prod worldgen).
+for (const seed of SEEDS) {
+  lines.push(`seed ${String(seed).padStart(6)} : ${fingerprintWorld(seed, "standard")}`);
+}
+// doc 07 M1: large/huge matrix rows (Linux-canonical baselines, like the
+// standard rows — regenerate only on CI/Linux, never commit macOS hashes).
+for (const tier of ["large", "huge"]) {
+  for (const seed of SEEDS) {
+    lines.push(`seed ${String(seed).padStart(6)} ${tier} : ${fingerprintWorld(seed, tier)}`);
+  }
 }
 process.stdout.write(lines.join("\n") + "\n");

@@ -14,6 +14,20 @@ deployment platform (workerd), so the baseline is the Linux value; regenerate it
 **in CI / on Linux**, and expect `pnpm fingerprint` on a Mac to mismatch seed 0.
 Bumping `.nvmrc` may shift hashes too — regenerate then.
 
+The baseline covers all three world-size tiers (doc 07 M2): 8 standard rows
+(the original, byte-frozen lines) plus 8 `large` and 8 `huge` rows. The tier
+rows are Linux-canonical too (huge seeds 42/7 diverge macOS↔Linux); they were
+generated with `docker run --platform linux/amd64 node:22.21.1` at the pinned
+Node — regenerate the same way, or from CI output. A convenient one-liner from
+the repo root:
+
+```sh
+docker run --rm --platform linux/amd64 -v "$PWD/packages/shared:/shared:ro" node:22.21.1 \
+  bash -lc 'mkdir -p /tmp/fp && cd /tmp/fp && npm init -y >/dev/null 2>&1 && \
+  npm i esbuild@0.27.3 simplex-noise@4.0.3 >/dev/null 2>&1 && \
+  cp -r /shared/scripts /shared/src . && node scripts/fingerprint.mjs src'
+```
+
 ### Production deploy (`deploy-prod` job, push to `main` only)
 
 After `verify` passes on a push to `main` (a merged PR), `deploy-prod` builds and

@@ -38,6 +38,9 @@ function fnv1a(bytes) {
 // Fake statics source: x>50 is a 6m plateau, z>50 is a 3m plateau, else flat 0.
 // Piecewise-constant (no transcendentals) — bit-identical everywhere.
 const fakeWorld = {
+  // size 800 keeps the heightfield extent + sample count identical to the
+  // pre-doc-07 constant (WORLD_SIZE) so the committed replay hash stands.
+  size: 800,
   heightAt: (x, z) => (x > 50 ? 6 : z > 50 ? 3 : 0),
   buildings: [],
   militaryWalls: [],
@@ -73,6 +76,7 @@ const dt = 1 / 15;
 {
   // A world with one 8m tree at the origin (flat ground elsewhere).
   const treeWorld = {
+    size: 800,
     heightAt: () => 0,
     buildings: [],
     militaryWalls: [],

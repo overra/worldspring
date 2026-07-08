@@ -26,7 +26,6 @@ import {
   USE_CHANNEL_S,
   WATER_LEVEL,
   WATER_SAMPLE_DIST,
-  WORLD_SIZE,
 } from "@worldspring/shared/constants";
 import {
   createExploredGrid,
@@ -164,7 +163,7 @@ export function createPlayer(
     movedThisTick: false,
     sprintedThisTick: false,
     fishCooldownT: 0,
-    explored: createExploredGrid(WORLD_SIZE),
+    explored: createExploredGrid(state.world.size),
     fogDelta: [],
     lastFogCell: -1,
     action: null,
@@ -228,7 +227,7 @@ export function restorePlayer(
     sprintedThisTick: false,
     fishCooldownT: 0,
     // Per-token fog: explored knowledge accrues across lives (doc 12 Open Q4).
-    explored: decodeExplored(WORLD_SIZE, saved.explored),
+    explored: decodeExplored(state.world.size, saved.explored),
     fogDelta: [],
     lastFogCell: -1,
     action: null,

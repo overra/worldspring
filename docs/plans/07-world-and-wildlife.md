@@ -251,7 +251,16 @@ pattern).
   gated join. Corollary: flipping any server to a non-default world config is only safe
   on builds where `PROTOCOL_VERSION ≥ 2` (post-M7), so absent-`proto` clients that would
   build the wrong world from the bare seed are refused — the same hard dependency
-  doc 04's M6 declares.
+  doc 04's M6 declares. **Runbook caveat (post-M2 gap the proto gate does NOT cover):**
+  client bundles built BEFORE M2 landed still send the current `proto` (7) but their
+  `clampConfig` coerces `sizeTier` large/huge → `standard` (log-only), so against a
+  tier'd server they pass the join gate and silently build an 800m world — total
+  geometry/prediction desync with no refusal. M2 is wire-additive and per the bump
+  policy above MUST NOT bump, so the residual rule is operational: do NOT flip a live
+  server to a non-standard tier until a `PROTOCOL_VERSION` bump has shipped after M2
+  (any later bump closes the gap — pre-M2 bundles are then refused at join), or you
+  can otherwise rule out pre-M2 client bundles rejoining (stale open tabs survive a
+  deploy; rejoining from the in-memory menu does not refetch the bundle).
 - `WORLDGEN_VERSION` (new, `packages/shared/src/constants.ts`, starts 1) is bumped whenever a
   carve/derivation formula change alters the world generated from identical config. It
   does NOT ride the wire — both sides compile it in, and a formula change is by

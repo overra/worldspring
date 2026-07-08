@@ -4,7 +4,16 @@
 export const WORLD_SEED = 1337;
 
 // --- World ---
-export const WORLD_SIZE = 800; // meters, square, centered on origin
+export const WORLD_SIZE = 800; // meters, square, centered on origin (standard tier)
+/**
+ * Worldgen FORMULA version (doc 07 M1). Compile-time on both sides, never on
+ * the wire. Bump ONLY when a formula change alters createWorld output from an
+ * identical config (e.g. doc 07 M5 water carving) — a bump is WIPE-class (it
+ * enters worldFingerprintOf as `gen:`) and per doc 03's criteria each bump
+ * also demands a PROTOCOL_VERSION bump (old clients would predict against
+ * divergent geometry).
+ */
+export const WORLDGEN_VERSION = 1;
 export const WATER_LEVEL = 0; // world y of the ocean plane
 export const WATER_WALK_MIN = -0.55; // terrain height below this blocks walking (deep water)
 export const TERRAIN_MAX_HEIGHT = 22;

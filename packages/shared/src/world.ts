@@ -1,17 +1,18 @@
 // Deterministic world generation. The client and the GameRoom Durable Object
-// each call createWorld(WORLD_SEED) and MUST get identical results — movement
-// prediction depends on it. Keep everything here seeded; no Math.random().
+// each call createWorld(worldParamsOf(config.world)) and MUST get identical
+// results — movement prediction depends on it. Keep everything here seeded; no
+// Math.random().
+//
+// doc 07 M2: createWorld takes explicit WorldGenParams (size/counts derived
+// from the config sizeTier by config.ts tierParamsOf — this module stays
+// config-agnostic). ABSOLUTE constraint: with the standard-tier params (which
+// equal the constants below) the output is BIT-IDENTICAL to the pre-M2
+// createWorld(seed) — the committed world.fingerprint.txt baseline is the CI
+// gate. The nine sequential rng streams (rng/noise/milRng/townRng/bRng/lRng/
+// tRng/rockRng/propRng) must never gain or lose a draw at standard scale.
 
 import { createNoise2D, type NoiseFunction2D } from "simplex-noise";
-import {
-  STEP_UP_MAX,
-  CABIN_COUNT,
-  ROCK_COUNT,
-  TERRAIN_MAX_HEIGHT,
-  TOWN_COUNT,
-  TREE_COUNT,
-  WORLD_SIZE,
-} from "./constants";
+import { STEP_UP_MAX, TERRAIN_MAX_HEIGHT, WORLD_SIZE } from "./constants";
 import { clamp, distSq2D, rayAabb, type Aabb, type Vec3 } from "./math";
 import { createRng, hashString, type Rng } from "./rng";
 
@@ -109,6 +110,10 @@ export interface StaticsQuery {
 
 export interface World {
   seed: number;
+  /** World edge length in meters (square, centered on origin). Standard tier
+   * equals WORLD_SIZE (800); everything downstream reads this, not the
+   * constant. */
+  size: number;
   heightAt(x: number, z: number): number;
   /** Terrain height plus building floors — what you actually stand on. */
   groundHeight(x: number, z: number): number;
@@ -195,14 +200,17 @@ const ROCK_MIN_TERRAIN_H = 0.8;
 const ROCK_BUILDING_MARGIN = 4;
 const PROP_LOOTPOINT_CLEARANCE = 1.5; // military props keep loot spawns reachable
 
-function makeHeightFn(noise: NoiseFunction2D): (x: number, z: number) => number {
+function makeHeightFn(noise: NoiseFunction2D, size: number): (x: number, z: number) => number {
   return (x: number, z: number): number => {
     const n =
       0.6 * noise(x * 0.008, z * 0.008) +
       0.3 * noise(x * 0.02 + 100, z * 0.02 + 100) +
       0.1 * noise(x * 0.06 + 200, z * 0.06 + 200);
     const h01 = n * 0.5 + 0.5;
-    const d = Math.sqrt(x * x + z * z) / (WORLD_SIZE * 0.5);
+    // Radial island mask scales with the world edge (size is baked into world
+    // character). At size === WORLD_SIZE the arithmetic is bit-identical to
+    // the pre-M2 constant path.
+    const d = Math.sqrt(x * x + z * z) / (size * 0.5);
     let mask = clamp(1.15 - 1.6 * d * d, 0, 1);
     mask = mask * mask * (3 - 2 * mask);
     return (h01 * 0.75 + 0.35) * TERRAIN_MAX_HEIGHT * mask - 4;
@@ -459,10 +467,44 @@ function buildWalls(b: {
   return { walls, roof };
 }
 
-export function createWorld(seed: number): World {
+/**
+ * Explicit worldgen inputs (doc 07 M2). Derived from the config sizeTier by
+ * config.ts `worldParamsOf` (integers only, no float math). The standard tier
+ * is exactly the shipped constants, so createWorld with those params is
+ * bit-identical to the pre-M2 seed-only generator.
+ */
+export interface WorldGenParams {
+  seed: number;
+  /** World edge in meters. Standard = WORLD_SIZE (800); large 1600; huge 3200. */
+  size: number;
+  towns: number;
+  cabins: number;
+  trees: number;
+  rocks: number;
+}
+
+/**
+ * Per-tier town placement bands (doc 07 §3): the distance ring towns are
+ * scattered over and their minimum separation. Keyed off the linear scale
+ * (size / WORLD_SIZE); the standard row is EXACTLY today's literals so the
+ * rng stream consumes identical values at scale 1.
+ */
+function townPlacementOf(scale: number): { ringMin: number; ringMax: number; minSep: number } {
+  if (scale <= 1) return { ringMin: 70, ringMax: 270, minSep: 150 };
+  if (scale <= 2) return { ringMin: 140, ringMax: 620, minSep: 190 };
+  return { ringMin: 280, ringMax: 1350, minSep: 230 };
+}
+
+export function createWorld(params: WorldGenParams): World {
+  const { seed, size } = params;
+  // Linear/area scale vs the standard tier. Tier sizes are power-of-two
+  // multiples of WORLD_SIZE, so both ratios are exact in float (1/2/4, 1/4/16)
+  // and every `cap * areaScale` below is an exact integer.
+  const scale = size / WORLD_SIZE;
+  const areaScale = scale * scale;
   const rng: Rng = createRng(seed >>> 0);
   const noise = createNoise2D(createRng((seed ^ 0x9e3779b9) >>> 0).next);
-  const heightAt = makeHeightFn(noise);
+  const heightAt = makeHeightFn(noise, size);
 
   // --- Military compound site (chosen first: everything else avoids it) ---
   // Highest acceptable ground near the island center: the compound should be
@@ -488,18 +530,22 @@ export function createWorld(seed: number): World {
   }
 
   // --- Towns ---
+  // Placement ring + min separation are per-tier rows; the rejection-attempt
+  // cap scales with area (×4 large, ×16 huge; exactly 4000 at standard).
   const towns: Town[] = [];
   const townRng = createRng((seed ^ 0x7041) >>> 0);
-  for (let attempt = 0; attempt < 4000 && towns.length < TOWN_COUNT; attempt++) {
+  const townPlace = townPlacementOf(scale);
+  const townAttemptCap = 4000 * areaScale;
+  for (let attempt = 0; attempt < townAttemptCap && towns.length < params.towns; attempt++) {
     const ang = townRng.range(0, Math.PI * 2);
-    const dist = townRng.range(70, 270);
+    const dist = townRng.range(townPlace.ringMin, townPlace.ringMax);
     const cx = Math.cos(ang) * dist;
     const cz = Math.sin(ang) * dist;
     if (distSq2D(cx, cz, military.cx, military.cz) < (military.radius + 70) ** 2) continue;
     const h = heightAt(cx, cz);
     if (h < 2.5 || h > 9.5) continue;
     if (slopeAt(heightAt, cx, cz, 14) > 3) continue;
-    if (towns.some((t) => (t.cx - cx) ** 2 + (t.cz - cz) ** 2 < 150 ** 2)) continue;
+    if (towns.some((t) => (t.cx - cx) ** 2 + (t.cz - cz) ** 2 < townPlace.minSep ** 2)) continue;
     towns.push({ cx, cz, radius: townRng.range(26, 38), name: TOWN_NAMES[towns.length] ?? "Outpost" });
   }
 
@@ -603,9 +649,10 @@ export function createWorld(seed: number): World {
     }
   }
   // Lone cabins in the wilderness.
-  for (let placed = 0, attempt = 0; attempt < 2000 && placed < CABIN_COUNT; attempt++) {
-    const x = bRng.range(-WORLD_SIZE * 0.42, WORLD_SIZE * 0.42);
-    const z = bRng.range(-WORLD_SIZE * 0.42, WORLD_SIZE * 0.42);
+  const cabinAttemptCap = 2000 * areaScale;
+  for (let placed = 0, attempt = 0; attempt < cabinAttemptCap && placed < params.cabins; attempt++) {
+    const x = bRng.range(-size * 0.42, size * 0.42);
+    const z = bRng.range(-size * 0.42, size * 0.42);
     if (towns.some((t) => (t.cx - x) ** 2 + (t.cz - z) ** 2 < (t.radius + 30) ** 2)) continue;
     if (distSq2D(x, z, military.cx, military.cz) < (military.radius + 30) ** 2) continue;
     if (tryPlace(x, z, BUILDING_SPECS[0], "wild")) placed++;
@@ -631,9 +678,10 @@ export function createWorld(seed: number): World {
   // --- Trees ---
   const trees: Tree[] = [];
   const tRng = createRng((seed ^ 0x7ee5) >>> 0);
-  for (let attempt = 0; attempt < 6000 && trees.length < TREE_COUNT; attempt++) {
-    const x = tRng.range(-WORLD_SIZE * 0.48, WORLD_SIZE * 0.48);
-    const z = tRng.range(-WORLD_SIZE * 0.48, WORLD_SIZE * 0.48);
+  const treeAttemptCap = 6000 * areaScale;
+  for (let attempt = 0; attempt < treeAttemptCap && trees.length < params.trees; attempt++) {
+    const x = tRng.range(-size * 0.48, size * 0.48);
+    const z = tRng.range(-size * 0.48, size * 0.48);
     const h = heightAt(x, z);
     if (h < 1.2) continue;
     if (towns.some((t) => (t.cx - x) ** 2 + (t.cz - z) ** 2 < (t.radius + 4) ** 2)) continue;
@@ -650,11 +698,15 @@ export function createWorld(seed: number): World {
   }
 
   // --- Spawn points (beach ring) ---
+  // Angles/target scale linearly with the tier (48/24 → 96/48 → 192/96) so
+  // spawn density along the coast stays constant; the march step stays 4.
   const spawnPoints: Array<{ x: number; z: number }> = [];
-  for (let i = 0; i < 48 && spawnPoints.length < 24; i++) {
-    const ang = (i / 48) * Math.PI * 2;
+  const spawnAngles = 48 * scale;
+  const spawnTarget = 24 * scale;
+  for (let i = 0; i < spawnAngles && spawnPoints.length < spawnTarget; i++) {
+    const ang = (i / spawnAngles) * Math.PI * 2;
     // March inward from the edge until we cross onto dry beach.
-    for (let d = WORLD_SIZE * 0.49; d > WORLD_SIZE * 0.2; d -= 4) {
+    for (let d = size * 0.49; d > size * 0.2; d -= 4) {
       const x = Math.cos(ang) * d;
       const z = Math.sin(ang) * d;
       const h = heightAt(x, z);
@@ -763,9 +815,10 @@ export function createWorld(seed: number): World {
   // rectangle test (not town/compound radius) is what guarantees clearance:
   // edge buildings extend beyond their area's exclusion circle.
   const rockRng = createRng((seed ^ 0x6a09e6) >>> 0);
-  for (let attempt = 0, placed = 0; attempt < 8000 && placed < ROCK_COUNT; attempt++) {
-    const x = rockRng.range(-WORLD_SIZE * 0.48, WORLD_SIZE * 0.48);
-    const z = rockRng.range(-WORLD_SIZE * 0.48, WORLD_SIZE * 0.48);
+  const rockAttemptCap = 8000 * areaScale;
+  for (let attempt = 0, placed = 0; attempt < rockAttemptCap && placed < params.rocks; attempt++) {
+    const x = rockRng.range(-size * 0.48, size * 0.48);
+    const z = rockRng.range(-size * 0.48, size * 0.48);
     if (heightAt(x, z) < ROCK_MIN_TERRAIN_H) continue;
     if (towns.some((t) => distSq2D(x, z, t.cx, t.cz) < t.radius ** 2)) continue;
     if (distSq2D(x, z, military.cx, military.cz) < military.radius ** 2) continue;
@@ -916,8 +969,32 @@ export function createWorld(seed: number): World {
     return out;
   };
 
+  // Building-footprint grid for groundHeight (doc 07 M2): the old linear scan
+  // over every building is O(n) per sample — pathological at large/huge tier
+  // building counts. Same GRID_CELL cells as the statics grid; VALUE-IDENTICAL
+  // to the scan (zero rng, buildings never overlap — margin 2.5m — so at most
+  // one footprint contains any point and candidate order cannot matter). The
+  // CI fingerprint itself verifies this: the harness hashes groundHeight
+  // samples.
+  const floorGrid = new Map<number, Building[]>();
+  for (const b of buildings) {
+    for (let ix = cellOf(b.cx - b.halfW); ix <= cellOf(b.cx + b.halfW); ix++) {
+      for (let iz = cellOf(b.cz - b.halfD); iz <= cellOf(b.cz + b.halfD); iz++) {
+        const key = cellKey(ix, iz);
+        let cell = floorGrid.get(key);
+        if (!cell) {
+          cell = [];
+          floorGrid.set(key, cell);
+        }
+        cell.push(b);
+      }
+    }
+  }
+
   const buildingFloorAt = (x: number, z: number): number | null => {
-    for (const b of buildings) {
+    const cell = floorGrid.get(cellKey(cellOf(x), cellOf(z)));
+    if (!cell) return null;
+    for (const b of cell) {
       if (Math.abs(x - b.cx) <= b.halfW && Math.abs(z - b.cz) <= b.halfD) return b.floorY;
     }
     return null;
@@ -1001,6 +1078,7 @@ export function createWorld(seed: number): World {
 
   return {
     seed,
+    size,
     heightAt,
     groundHeight,
     towns,

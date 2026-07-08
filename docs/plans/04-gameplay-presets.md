@@ -1088,7 +1088,14 @@ validated no-ops until their docs land.
    REST version update (exercises §4's `keep_bindings: ["secret_text"]` obligation);
    restore, against a DEPLOYED instance only (PITR is absent under `wrangler dev`,
    §4): wipe → revert `GAME_CONFIG` → `POST /api/admin/restore` brings the world back.
-6. **M6 — world size tiers** *(Opus 4.8 — worldgen, determinism-critical)*. Depends:
+6. **M6 — world size tiers** — **SUBSUMED by doc 07 M1-M2 (shipped)**: the
+   `createWorld(params)` threading, `World.size`, `WORLD_SIZE`-consumer replacement,
+   and the un-restricted `sizeTier` validation all landed there; the caveat below
+   about stale clients building standard geometry from the bare seed remains LIVE —
+   proto-7 client bundles built before doc 07 M2 coerce non-standard tiers to
+   `standard` and would silently desync, so flipping a live server to a non-default
+   tier is only safe after the next `PROTOCOL_VERSION` bump (see doc 07 §1).
+   Original scope (historical): *(Opus 4.8 — worldgen, determinism-critical)*. Depends:
    M1+M2 **and doc 03's `PROTOCOL_VERSION` join gate (hard dependency)** — a
    non-standard-tier server must refuse joins from clients that predate worldgen-param
    awareness, or a stale tab builds standard geometry from the bare seed
