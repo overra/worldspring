@@ -78,6 +78,7 @@ function newVehicleMeta(id: number, fuel: number, hp: number, wrecked: boolean):
     wrecked,
     seats: new Array(VEHICLE_SEATS).fill(null),
     input: { throttle: 0, steer: 0, brake: 0 },
+    lastInputAt: 0,
     lastForward: 0,
     ramCooldown: 0,
   };

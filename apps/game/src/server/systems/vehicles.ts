@@ -22,13 +22,16 @@ import {
   MAX_VEHICLES,
   PLAYER_RADIUS,
   VEHICLE_CRASH_DMG_PER_MS,
+  VEHICLE_CRASH_MAX_LATERAL,
   VEHICLE_CRASH_MIN_DROP,
   VEHICLE_ENTER_RANGE,
+  VEHICLE_EXIT_RAM_GRACE_S,
   VEHICLE_FUEL_BURN_PER_S,
   VEHICLE_FUEL_MAX,
   VEHICLE_HALF_X,
   VEHICLE_HALF_Y,
   VEHICLE_HP_MAX,
+  VEHICLE_INPUT_STALE_S,
   VEHICLE_RAM_COOLDOWN_S,
   VEHICLE_RAM_DMG_PER_SPEED,
   VEHICLE_RAM_MAX_DMG,
@@ -41,6 +44,7 @@ import { distSq2D } from "@worldspring/shared/math";
 import { resolveStatics } from "@worldspring/shared/movement";
 import { vehicleSpawns } from "@worldspring/shared/vehicles";
 import type { VehicleSensors } from "../physics/PhysicsSystem";
+import { meleeBlocked } from "./combat";
 import { countOf, removeFromInventory, sendInventory } from "./players";
 import { queueEvent, sendTo, type GameState, type ServerPlayer, type VehicleMeta } from "./state";
 import { damagePlayer } from "./survival";
@@ -85,6 +89,7 @@ export function freshVehicleMeta(
     wrecked,
     seats: new Array(VEHICLE_SEATS).fill(null),
     input: { throttle: 0, steer: 0, brake: 0 },
+    lastInputAt: 0,
     lastForward: 0,
     ramCooldown: 0,
   };
@@ -127,6 +132,9 @@ export function exitVehicle(state: GameState, player: ServerPlayer): void {
   if (id === null) return;
   const s = state.physics.vehicleSensors(id);
   placeBesideVehicle(state, player, s);
+  // Grace so the hull you just left can't roadkill you: the exit spot can sit
+  // inside VEHICLE_RAM_RADIUS while the (still-moving) hull coasts past.
+  player.ramGrace = { vehicle: id, until: state.time + VEHICLE_EXIT_RAM_GRACE_S };
   vacateSeat(state, player);
 }
 
@@ -163,6 +171,7 @@ export function driveInput(
   const meta = state.vehicleMeta.get(player.seatedVehicle);
   if (!meta || meta.wrecked) return;
   meta.input = { throttle, steer, brake };
+  meta.lastInputAt = state.time;
 }
 
 /** doc 13 M4 — top up a nearby vehicle's tank from ONE fuel item in inventory. */
@@ -205,6 +214,11 @@ export function stepVehicles(state: GameState, dt: number): void {
       continue;
     }
     if (meta.seats[0] === null) continue; // no driver → no control
+    // Stale-input guard: if no fresh `drive` arrived within the window (the
+    // client backgrounded its rAF send loop, stalled, or silently dropped), the
+    // stored throttle/steer go IDLE so the hull coasts to a stop instead of
+    // ghost-driving on a leftover value until the tank empties.
+    if (state.time - meta.lastInputAt > VEHICLE_INPUT_STALE_S) meta.input = { ...ZERO_INPUT };
     const inp = meta.input;
     const effThrottle = meta.fuel > 0 ? inp.throttle : 0;
     state.physics.driveVehicle(meta.id, effThrottle, inp.steer, inp.brake, dt);
@@ -230,11 +244,17 @@ export function tickVehicles(state: GameState, dt: number): void {
     if (!s) continue;
 
     if (!meta.wrecked) {
-      // (1) Crash: the DROP in |forward speed| this tick. Grip never touches
-      // forward speed and steering rotates the facing only gradually, so a big
-      // drop is an impact, not a turn or a brake.
+      // (1) Crash: a large single-tick DROP in |forward speed| — a wall stops the
+      // hull far faster than the bounded brake ever can. But a big forward-speed
+      // drop ALSO happens with NO impact during a hard drift/donut: as the hull
+      // yaws, the (lagging) velocity swings sideways relative to the new facing,
+      // so v·forward collapses while the car keeps moving. The tell is lateral
+      // speed: a genuine head-on impact has the velocity aligned with the facing
+      // (lateral ~0), a drift has it swung sideways (lateral high). Gate on low
+      // lateral so cornering can't self-wreck the buggy on open ground.
       const drop = Math.abs(meta.lastForward) - Math.abs(s.forward);
-      if (drop > VEHICLE_CRASH_MIN_DROP) {
+      const lateral = Math.sqrt(Math.max(0, s.speed * s.speed - s.forward * s.forward));
+      if (drop > VEHICLE_CRASH_MIN_DROP && lateral < VEHICLE_CRASH_MAX_LATERAL) {
         damageVehicle(state, meta, (drop - VEHICLE_CRASH_MIN_DROP) * VEHICLE_CRASH_DMG_PER_MS, s);
       }
       // (2) Ram: a fast hull hurts everything it plows through (cooldown-gated).
@@ -287,6 +307,9 @@ function ramTargets(state: GameState, meta: VehicleMeta, s: VehicleSensors): boo
   let hit = false;
   for (const zombie of state.zombies.values()) {
     if (distSq2D(s.x, s.z, zombie.x, zombie.z) > rSq) continue;
+    // Wall occlusion — the same discipline melee/ranged enforce: a target behind
+    // a wall from the hull can't be plowed through it.
+    if (meleeBlocked(state, s.x, s.y, s.z, zombie.x, zombie.y, zombie.z)) continue;
     zombie.hp -= dmg;
     queueEvent(state, { e: "hit", x: zombie.x, y: zombie.y + 1, z: zombie.z }, zombie.x, zombie.z);
     if (zombie.hp <= 0) killZombie(state, zombie);
@@ -297,7 +320,11 @@ function ramTargets(state: GameState, meta: VehicleMeta, s: VehicleSensors): boo
   if (state.config.pvp.enabled) {
     for (const player of state.players.values()) {
       if (!player.alive || player.seatedVehicle === meta.id) continue;
+      // A rider who just left THIS hull is ram-immune for a short grace, so
+      // bailing out of a moving car doesn't roadkill them as it coasts past.
+      if (player.ramGrace && player.ramGrace.vehicle === meta.id && state.time < player.ramGrace.until) continue;
       if (distSq2D(s.x, s.z, player.core.x, player.core.z) > rSq) continue;
+      if (meleeBlocked(state, s.x, s.y, s.z, player.core.x, player.core.y, player.core.z)) continue;
       damagePlayer(state, player, dmg, "roadkill", true);
       hit = true;
     }

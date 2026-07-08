@@ -357,6 +357,22 @@ export const VEHICLE_RAM_COOLDOWN_S = 0.5;
 export const VEHICLE_CRASH_MIN_DROP = 3.5;
 /** Hull damage per (m/s of crash drop over the min). */
 export const VEHICLE_CRASH_DMG_PER_MS = 9;
+/** Lateral (sideways) speed (m/s) at/above which a forward-speed drop is read as
+ *  a DRIFT (hard cornering), NOT an impact — so donuts don't self-wreck the hull.
+ *  A real head-on wall crash has the velocity aligned with the facing (lateral
+ *  ~0); a drift has the velocity swung sideways relative to it (lateral high).
+ *  Measured empirically: head-on/angled crashes land ≤0.5 m/s lateral, a
+ *  full-steer donut at top speed swings to ~5.6 m/s — 2.5 cleanly separates. */
+export const VEHICLE_CRASH_MAX_LATERAL = 2.5;
+/** Seconds after a rider leaves a seat during which that hull cannot ram them —
+ *  so bailing out of a moving car doesn't roadkill you with your own vehicle
+ *  (the exit spot can sit inside VEHICLE_RAM_RADIUS as the hull coasts past). */
+export const VEHICLE_EXIT_RAM_GRACE_S = 1.5;
+/** Seconds without a fresh `drive` message after which the driver's stored input
+ *  goes IDLE — a stalled/backgrounded/dirty-disconnected client can't keep a
+ *  driverless-in-practice hull self-driving on stale throttle. The hull then
+ *  coasts to a stop instead of ghost-driving until the tank empties. */
+export const VEHICLE_INPUT_STALE_S = 0.5;
 
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */

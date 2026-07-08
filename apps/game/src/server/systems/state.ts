@@ -163,6 +163,11 @@ export interface ServerPlayer {
   /** doc 13 M4 — which seat (0 = driver, 1 = passenger); -1 when on foot. Only
    * the driver (0) may steer. Transient. */
   seatIndex: number;
+  /** doc 13 M4 — after leaving a seat, the hull `vehicle` and game-time `until`
+   * during which THAT hull cannot ram this player (so bailing out of a moving car
+   * doesn't roadkill you with your own vehicle as it coasts past). null on foot /
+   * once the grace lapses. Transient. */
+  ramGrace: { vehicle: number; until: number } | null;
 }
 
 /** Structurally compatible with ZombieCore so stepZombie applies directly. */
@@ -366,6 +371,11 @@ export interface VehicleMeta {
   seats: (string | null)[];
   /** Latest validated DRIVER input, applied each tick (transient). */
   input: { throttle: number; steer: number; brake: number };
+  /** game.time the last `drive` message updated `input` — the input goes IDLE
+   * once it is older than VEHICLE_INPUT_STALE_S so a stalled/backgrounded client
+   * can't keep a driverless-in-practice hull self-driving on stale throttle.
+   * Transient. */
+  lastInputAt: number;
   /** Signed forward speed at the END of the previous tick — the crash detector
    * flags a large single-tick forward-speed DROP as an impact. Transient. */
   lastForward: number;

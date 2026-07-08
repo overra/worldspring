@@ -172,6 +172,7 @@ export function createPlayer(
     portalArmed: true,
     seatedVehicle: null,
     seatIndex: -1,
+    ramGrace: null,
   };
   state.players.set(id, player);
   return player;
@@ -239,6 +240,7 @@ export function restorePlayer(
     // doc 13 M4 — never seated across a restart (seat occupancy is transient).
     seatedVehicle: null,
     seatIndex: -1,
+    ramGrace: null,
   };
   state.players.set(id, player);
   return player;
@@ -976,6 +978,15 @@ export function stepPortals(state: GameState): void {
   const rSq = PORTAL_RADIUS * PORTAL_RADIUS;
   for (const player of state.players.values()) {
     if (!player.alive) continue;
+    // doc 13 M4 — portals are an ON-FOOT mechanic; a rider rides the hull, whose
+    // pose the vehicle system syncs to their core each tick (AFTER this pass).
+    // Without this guard a seated driver whose hull drifts within PORTAL_RADIUS
+    // is crossed — realm flips to "red", core teleports to the twin — then the
+    // same tick's rider-sync yanks the core back to the overworld hull but leaves
+    // realm="red": the vehicle vanishes from their (now red-realm) snapshot,
+    // freezing the camera on an invisible hull they still steer. The vehicle is
+    // overworld-only, so riders never portal-cross while seated.
+    if (player.seatedVehicle !== null) continue;
     let on: Portal | null = null;
     for (const portal of state.portals) {
       if (portal.realm !== player.realm) continue;

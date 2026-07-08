@@ -76,12 +76,14 @@ const cfg = {
   pvp: { enabled: false, damageMult: 1, fullLoot: true },
 };
 
-// Gameplay world (vehicles.ts reads heightAt/groundHeight/queryStatics).
+// Gameplay world (vehicles.ts reads heightAt/groundHeight/queryStatics, and
+// meleeBlocked — the ram occlusion ray — reads raycastStatics: no walls here).
 const flatWorld = {
   size: 800,
   heightAt: () => 0,
   groundHeight: () => 0,
   queryStatics: () => ({ walls: [], trees: [] }),
+  raycastStatics: () => null,
   buildings: [],
 };
 
@@ -138,6 +140,7 @@ function spawnVehicle(g, x, z, fuel = VEHICLE_FUEL_MAX, hp = VEHICLE_HP_MAX) {
     wrecked: false,
     seats: [null, null],
     input: { throttle: 0, steer: 0, brake: 0 },
+    lastInputAt: 0,
     lastForward: 0,
     ramCooldown: 0,
   });
@@ -280,6 +283,26 @@ const settle = (g, n = 30) => {
     tickVehicles(g2, dt);
   }
   check(g2.vehicleMeta.get(id2).hp === VEHICLE_HP_MAX, "open-ground driving + braking never false-triggers crash damage");
+
+  // Hard cornering (a full-steer donut at speed) on OPEN ground must deal ZERO
+  // hull damage: forward speed swings hard as the hull yaws (a drift), but with
+  // no wall the crash detector must read the high lateral velocity as a turn,
+  // not an impact. Regression guard for the phantom-crash self-wreck.
+  const g3 = makeGame(false);
+  const id3 = spawnVehicle(g3, 0, 0, VEHICLE_FUEL_MAX, VEHICLE_HP_MAX);
+  settle(g3);
+  const p3 = makePlayer("c3", "ch3", g3.physics.vehicleSensors(id3).x, g3.physics.vehicleSensors(id3).z);
+  g3.players.set(p3.id, p3);
+  enterVehicle(g3, p3, id3, 0);
+  for (let i = 0; i < 40; i++) { // build to top speed straight first
+    driveInput(g3, p3, 1, 0, 0);
+    stepVehicles(g3, dt); g3.physics.step(dt, (g3.time += dt)); tickVehicles(g3, dt);
+  }
+  for (let i = 0; i < 240; i++) { // sustained full-steer donut
+    driveInput(g3, p3, 1, 1, 0);
+    stepVehicles(g3, dt); g3.physics.step(dt, (g3.time += dt)); tickVehicles(g3, dt);
+  }
+  check(g3.vehicleMeta.get(id3).hp === VEHICLE_HP_MAX, `a hard donut on open ground deals ZERO hull damage (${g3.vehicleMeta.get(id3).hp.toFixed(0)} == ${VEHICLE_HP_MAX})`);
 }
 
 // --- 4. ram damage -----------------------------------------------------------

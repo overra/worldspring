@@ -18,8 +18,16 @@
 // them from the bodies snapshot instead — never both, the barrel posture).
 
 import { WATER_WALK_MIN } from "./constants";
+import { resolveStatics } from "./movement";
 import { createRng, hashString } from "./rng";
 import type { World } from "./world";
+
+/** Footprint radius (m) a spawn site must have clear of any static collider
+ * (other buildings' walls, tree trunks, solid rocks/props). Between the hull's
+ * half-width (0.75) and half-length (1.25): a parked buggy whose center clears
+ * this of every static won't gross-interpenetrate and get launched on the first
+ * physics step. Uses the SAME statics the sim collides with (resolveStatics). */
+const VEHICLE_SPAWN_CLEAR_RADIUS = 1;
 
 /** Fraction of ELIGIBLE (large enough) buildings that receive a vehicle. */
 const VEHICLE_BUILDING_CHANCE = 0.5;
@@ -62,7 +70,16 @@ export function vehicleSpawns(world: World, max: number): VehicleSpawn[] {
     // undriveable and look broken). Deterministic reject — it consumes no extra
     // rng, so the site set stays byte-stable.
     if (world.heightAt(x, z) < WATER_WALK_MIN) continue;
-    out.push({ x, y: world.groundHeight(x, z), z });
+    const gy = world.groundHeight(x, z);
+    // Never park a buggy clipping OTHER geometry (a neighbouring building's wall,
+    // a tree trunk, a rock). The random angle+distance can land the site inside a
+    // static; on the first physics step Rapier would eject the interpenetrating
+    // hull, launching the parked buggy. If resolveStatics has to push the site
+    // out of a collider, it overlaps one — reject it. Deterministic (pure query,
+    // no extra rng), so the site set stays byte-stable.
+    const [cx2, cz2] = resolveStatics(world, x, z, gy, VEHICLE_SPAWN_CLEAR_RADIUS);
+    if (Math.abs(cx2 - x) > 1e-3 || Math.abs(cz2 - z) > 1e-3) continue;
+    out.push({ x, y: gy, z });
   }
   return out;
 }
