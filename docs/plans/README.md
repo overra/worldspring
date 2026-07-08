@@ -28,6 +28,49 @@ choice, not a fork — and docs 05/06/07 grow the game itself: a real scavenge�
 arc, bases that persist and get raided, bigger islands with rivers, wolves, and fishing.
 A directory full of servers with *personalities* is the product.
 
+## Status re-baseline — 2026-07-07
+
+One month in, the wave plan below (§Recommended build order) ran **asymmetrically**:
+the gameplay track sprinted two waves ahead while the platform track stalled at
+Wave 0's last item. This section is the current truth and supersedes the original
+ordering; the wave sections below are kept for provenance and milestone detail.
+
+**Done:** doc 03 M1–M2 (PROTOCOL_VERSION — now 5 — + `/api/server-info`); doc 04
+M1–M4 (config/presets live in prod); persistAll single-row fix; doc 09 monorepo;
+doc 10 preview testbed + QA; doc 12 complete (map/minimap/fog); doc 05 M1–M3
+(items/crafting/containers); doc 11 M1–M2 (channel primitive + cast bar); doc 08
+M1 (profiler only). **Platform surface landed opportunistically:** worldspring.games
+is live on `apps/web` (doc 01 open Q1 resolved — see that doc), the directory D1
+exists, and `play.worldspring.games` serves the official game worker.
+
+**Not started:** doc 01 M1 spike (the Wave 0 survivor — still gates all platform
+implementation detail), doc 01 M2+, doc 02 M2+ (registration/heartbeat/prober/
+browse), doc 03 M3 heartbeat sender, doc 06, doc 07, doc 08 M2+.
+
+**Unmodeled tracks that emerged** (real, recurring, keep them resourced): the
+asset pipeline (Blender export + Meshy→GLB registry), and playtester-driven
+features (the red realm shipped because a young playtester asked — this track
+validates the product and gets a standing slot).
+
+### Wave 1.5 — the current plan (decided 2026-07-07)
+
+**Platform spine** (sequential): doc 01 **M1 spike** → doc 01 **M2 release
+pipeline** (`v*` tags; makes `/api/v1/latest` real) → doc 03 **M3 heartbeat
+sender** → doc 02 **M2–M5 directory core** (registration, ingest, prober,
+browse — the official server gets listed and `/servers` stops being empty) →
+then doc 01 M4–M5 (OAuth + Deployer DO).
+**Ordering flip vs. the original plan:** doc 02's directory now lands *before*
+doc 01's create-flow build — the site is live and needs to be real, and doc 01
+M5 consumes doc 02's registration API anyway.
+
+**Gameplay cadence** (parallel): ONE contained milestone per week — doc 05
+M4/M5 tails, doc 11 M3 (reload/magazine), or a playtester request. Docs 06/07
+big builds stay parked until the platform loop closes.
+
+**Launch gate, made explicit:** doc 08 M2–M3 (auto-tier + mobile) is scheduled
+the moment the directory is live, and gates any public announcement. It does
+not wait for "Wave 3".
+
 ## Doc index
 
 | Doc | One line |
