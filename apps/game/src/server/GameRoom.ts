@@ -111,6 +111,7 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
+import { DirectoryHeartbeat, directoryChallengeFor } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
@@ -215,6 +216,12 @@ export class GameRoom extends DurableObject<Env> {
    * Set once from the deploy-time var; undefined in prod → false → never seeds. */
   private readonly testbed: boolean;
 
+  /** doc 03 M3: directory heartbeat sender. Inert unless BOTH
+   * env.DIRECTORY_URL and env.DIRECTORY_TOKEN are set (zero-config CLI
+   * deploys stay request-free); all state is in-memory — a DO restart
+   * re-arms a 401-disarmed sender by design. */
+  private readonly heartbeat: DirectoryHeartbeat;
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Resolve deploy-time config BEFORE schema init. resolveServerConfig never
@@ -225,6 +232,13 @@ export class GameRoom extends DurableObject<Env> {
     this.resolved = resolveServerConfig(env.GAME_CONFIG);
     this.config = this.resolved.config;
     this.testbed = isTestbedEnabled(env);
+    // Heartbeat sender (doc 03 M3): beats reuse buildServerInfo's request-less
+    // path (joinUrl from the captured publicOrigin / meta.origin).
+    this.heartbeat = new DirectoryHeartbeat({
+      directoryUrl: env.DIRECTORY_URL,
+      directoryToken: env.DIRECTORY_TOKEN,
+      buildInfo: () => this.buildServerInfo(),
+    });
     for (const w of this.resolved.warnings) {
       console.warn(`[config] ${w}`);
     }
@@ -408,12 +422,14 @@ export class GameRoom extends DurableObject<Env> {
       status: occupied ? "occupied" : "idle",
       uptimeS: occupied ? Math.floor((Date.now() - this.activeSince) / 1000) : 0,
       worldAgeS,
-      // colo is the M4 cdn-cgi/trace spike; directoryChallenge needs
-      // DIRECTORY_TOKEN from M3/doc 01. Both stay present-but-null per the
+      // colo is the M4 cdn-cgi/trace spike, present-but-null per the
       // forward-compat rule 3 (required fields always emitted).
       colo: null,
       joinUrl,
-      directoryChallenge: null,
+      // sha256("worldspring-directory-challenge:" + DIRECTORY_TOKEN), cached
+      // module-level; null when the token is unset (doc 03 §2) or for the
+      // first responses on a cold start while the digest settles.
+      directoryChallenge: directoryChallengeFor(this.env.DIRECTORY_TOKEN),
     };
   }
 
@@ -648,6 +664,8 @@ export class GameRoom extends DurableObject<Env> {
     // here (doc 03 §2). Set after the guard so a redundant call can't reset it.
     this.activeSince = Date.now();
     this.tickHandle = setInterval(() => this.timedTick(), TICK_MS);
+    // Directory beat: the idle→occupied transition (doc 03 §6 "boot").
+    this.heartbeat.onBoot();
   }
 
   private stopTicking(): void {
@@ -772,6 +790,9 @@ export class GameRoom extends DurableObject<Env> {
       }
       this.persistAll(game);
       this.broadcastMsg({ t: "notice", msg: `${existing.name} reconnected` });
+      // Join path 1 (adopt/takeover): connected count may have changed
+      // (offline body reclaimed) — directory edge beat (doc 03 §6).
+      this.heartbeat.onEdge();
       return;
     }
 
@@ -796,6 +817,8 @@ export class GameRoom extends DurableObject<Env> {
       this.sendWelcome(ws, game, player, true, null);
       this.persistAll(game);
       this.broadcastMsg({ t: "notice", msg: `${player.name} joined` });
+      // Join path 2 (resume saved character): directory edge beat.
+      this.heartbeat.onEdge();
       return;
     }
 
@@ -826,6 +849,8 @@ export class GameRoom extends DurableObject<Env> {
     this.sendWelcome(ws, game, player, false, recap);
     this.persistAll(game);
     this.broadcastMsg({ t: "notice", msg: `${name} joined` });
+    // Join path 3 (new life): directory edge beat.
+    this.heartbeat.onEdge();
   }
 
   private sendWelcome(
@@ -900,6 +925,11 @@ export class GameRoom extends DurableObject<Env> {
             game.players.delete(playerId);
           }
           this.broadcastMsg({ t: "notice", msg: `${player.name} left` });
+          // Connected count dropped on EVERY branch above (alive-leaver
+          // lingered/saved, dead row deleted) — directory edge beat. Linger
+          // EXPIRY is deliberately not a trigger (doc 03 §6): it never
+          // changes the connected count.
+          this.heartbeat.onEdge();
         }
       }
     }
@@ -1072,6 +1102,11 @@ export class GameRoom extends DurableObject<Env> {
     }
     this.persistAll(game);
     this.stopTicking();
+    // Directory beat: the occupied→idle transition (doc 03 §6 "quiet") —
+    // AFTER stopTicking so the body derives players: 0, status: "idle",
+    // uptimeS: 0. Fire-and-forget; the in-flight fetch briefly holds the DO
+    // (sub-second, accepted). After this, silence is normal and indefinite.
+    this.heartbeat.onQuiet();
   }
 
   // --- Tick ---
@@ -1175,6 +1210,10 @@ export class GameRoom extends DurableObject<Env> {
     // A tick that threw before sending re-broadcasts it next tick — harmless,
     // the client-side fold-in is a Set add (idempotent).
     game.felledDelta.length = 0;
+
+    // Directory beats ride the already-running tick — never a timer/alarm of
+    // their own (doc 03 §5). Flushes a debounced edge or a due periodic beat.
+    this.heartbeat.onTick();
   }
 
   // --- Snapshots ---

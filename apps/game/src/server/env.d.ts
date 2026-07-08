@@ -15,6 +15,17 @@ interface Env {
   SERVER_NAME?: string;
   /** Operator-set message of the day; falls back to "" in code. */
   SERVER_MOTD?: string;
+  /** doc 03 M3: origin of the server directory (e.g. "https://worldspring.games").
+   * Optional var — the pair {DIRECTORY_URL, DIRECTORY_TOKEN} arms the heartbeat
+   * sender; either unset leaves the subsystem completely inert (zero outbound
+   * requests), preserving the zero-config CLI deploy. Shipping a default in
+   * wrangler.jsonc is deferred to launch wiring (doc 02 Open Q4 / M8). */
+  DIRECTORY_URL?: string;
+  /** doc 03 M3: the `dcd1.<serverId>.<secretHex>` registration token minted by
+   * the directory (doc 02 §2). A SECRET (`wrangler secret put DIRECTORY_TOKEN`) —
+   * authenticates heartbeats; its derived challenge hash is published in
+   * /api/server-info.directoryChallenge. */
+  DIRECTORY_TOKEN?: string;
   /** Deploy-time gameplay config (doc 04). A preset name, a JSON string, or an
    * object { preset, overrides } — `unknown` because it is untrusted env input;
    * resolveServerConfig validates it. NOT in wrangler.jsonc (the official deploy
