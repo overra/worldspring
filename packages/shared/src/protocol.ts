@@ -44,7 +44,15 @@ import type { ItemStack, ItemType } from "./items";
 // additive ServerMsg SHAPE changes (doc 03's shape clause), so 4 → 5.
 // doc 13 M1: snapshots gain a `bodies` array (server-authoritative physics) —
 // an additive ServerMsg SHAPE change (doc 03's shape clause), so 5 → 6.
-export const PROTOCOL_VERSION: number = 6;
+// doc 11 M3: ranged fire becomes MAGAZINE-gated — `{t:"attack"}` on a ranged
+// weapon consumes from the loaded mag (`ItemStack.mag`) instead of raw
+// inventory ammo, an empty mag fires nothing, and `{t:"use"}` on an equipped
+// ranged weapon now STARTS the reload channel instead of no-oping. Both are
+// message SEMANTICS changes (the exact clause that forced 3 → 4): an old
+// client holding inventory ammo pulls the trigger and gets silence from an
+// empty mag it cannot see. The `mag` field on `inv` stacks is additive-only
+// (fog/felled posture) — the bump fires on the semantics clause. So 6 → 7.
+export const PROTOCOL_VERSION: number = 7;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A

@@ -320,6 +320,45 @@
   white-space: nowrap;
 }
 
+/* --- ammo readout for the equipped ranged weapon (doc 11 M3) --- */
+
+.hud-ammo {
+  position: absolute;
+  /* Just above the hotbar, centered with it — survives the mobile hotbar
+   * rescales without pinning to the bar's (variable) right edge. */
+  bottom: calc(16px + 48px + 8px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 10px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  font-family: var(--ui-mono);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.hud-ammo-mag {
+  font-size: 15px;
+}
+
+.hud-ammo--empty .hud-ammo-mag {
+  color: #e05a4e;
+}
+
+.hud-ammo-sep,
+.hud-ammo-reserve {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.hud-ammo-hint {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
 /* --- cast bar for the channeled (timed) action (doc 11 M2) --- */
 
 .hud-channel {

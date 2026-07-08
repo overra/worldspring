@@ -26,7 +26,8 @@ import {
   rayVerticalCylinder,
   type Vec3,
 } from "@worldspring/shared/math";
-import { consumeFromSlot, sendInventory } from "./players";
+import { roundsInMag, tryConsumeRound } from "./magazine";
+import { sendInventory, startReload } from "./players";
 import {
   queueEvent,
   type Deer,
@@ -294,9 +295,15 @@ function meleeAttack(
 
 /**
  * Hitscan fire driven by the equipped weapon's RangedConfig: consumes one
- * round of `ranged.ammo` per trigger pull, then casts `ranged.pellets` rays
+ * round from the LOADED MAGAZINE per trigger pull (doc 11 M3 — inventory ammo
+ * is touched only by the reload channel), then casts `ranged.pellets` rays
  * (each perturbed by up to `spreadRad`) — `def.power` damage per pellet hit.
  * One "shot" event per pellet: the tracer fan IS the shotgun visual.
+ *
+ * An EMPTY magazine fires nothing; if the inventory still holds matching
+ * ammo the pull auto-starts the reload channel instead (doc 11:156 QoL —
+ * combat's call), otherwise it is a silent no-op (the HUD's 0-rounds readout
+ * is the click).
  */
 function fireRanged(
   state: GameState,
@@ -307,16 +314,25 @@ function fireRanged(
   const ranged = def.ranged;
   if (!ranged) return; // guaranteed present for kind "ranged"; belt-and-braces
 
-  // Needs a round anywhere in the inventory — one per pull, however many pellets.
-  const ammoSlot = player.inventory.findIndex(
-    (stack) => stack !== null && stack.type === ranged.ammo,
-  );
-  if (ammoSlot === -1) return;
+  // No firing mid-reload: the trigger is dead until the cast completes or
+  // cancels (move/damage/slot-swap per doc 11 §3 — the pull itself never
+  // cancels, so holding the trigger can't fight the auto-reload below).
+  if (player.action !== null && player.action.kind === "reload") return;
+
+  const stack = player.inventory[player.selectedSlot];
+  if (!stack) return; // equipped slot emptied since performAttack read it
+
+  if (roundsInMag(stack, ranged) <= 0) {
+    // Empty mag: auto-reload when there's ammo to load (startReload validates
+    // reserve and no-ops on none) — never a shot.
+    startReload(state, player);
+    return;
+  }
 
   player.attackCooldown = ranged.cooldownS;
   player.attackAnimT = ATTACK_ANIM_S;
-  consumeFromSlot(player.inventory, ammoSlot);
-  sendInventory(state, player);
+  tryConsumeRound(stack, ranged);
+  sendInventory(state, player); // mag counter rides the stack in the inv msg
 
   // Lag comp: one rewound lookup per trigger pull, shared by every pellet.
   // TARGETS are tested at their rewound positions; the SHOOTER's ray origin
