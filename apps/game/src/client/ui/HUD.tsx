@@ -15,8 +15,8 @@ import {
 import { ITEM_DEFS, RECIPES, UNKNOWN_DEF } from "@worldspring/shared/items";
 import type { CraftRecipe, ItemKind, ItemStack, ItemType } from "@worldspring/shared/items";
 import { distSq2D } from "@worldspring/shared/math";
-import type { ChannelKind } from "@worldspring/shared/protocol";
-import { doCraft, doDrop, doEquip, doUse } from "@/client/net/connection";
+import type { ChannelKind, WearSlot } from "@worldspring/shared/protocol";
+import { doCraft, doDrop, doEquip, doUnwear, doUse, doWear } from "@/client/net/connection";
 import { clientWorld, debugStats } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { ChatPanel } from "./ChatPanel";
@@ -35,6 +35,7 @@ const USABLE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
   "heal",
   "placeable",
   "tool", // added M1: canteen fill/boil/drink, fishing rod, torch-equip parity with F key
+  "wear", // added M6: USE on a jacket/backpack wears it (F-key parity; server routes to wearItem)
 ]);
 
 function formatClock(hours: number): string {
@@ -325,7 +326,14 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
       <span className="inv-count">×{stack.count}</span>
       <span className="inv-kind">{def.kind}</span>
       <span className="inv-actions">
-        {USABLE_KINDS.has(def.kind) && (
+        {def.kind === "wear" && (
+          // Dedicated wear verb (doc 05 M6): both WEAR and USE converge on the
+          // server's wearItem; WEAR is the discoverable label per doc 05 §7.
+          <button className="inv-btn" onClick={() => doWear(slot)}>
+            WEAR
+          </button>
+        )}
+        {USABLE_KINDS.has(def.kind) && def.kind !== "wear" && (
           <button className="inv-btn" onClick={() => doUse(slot)}>
             USE
           </button>
@@ -405,6 +413,52 @@ function CraftRow({ recipe, index, inventory }: CraftRowProps): ReactElement {
   );
 }
 
+// --- equipment (Tab) — doc 05 M6 ---
+
+const WEAR_SLOT_LABELS: Record<WearSlot, string> = { body: "body", back: "back" };
+
+function EquipmentRow({ ws, stack }: { ws: WearSlot; stack: ItemStack | null }): ReactElement {
+  const def = stack ? (ITEM_DEFS[stack.type] ?? UNKNOWN_DEF) : null;
+  return (
+    <div className="inv-row">
+      <span className="inv-slot-num">{WEAR_SLOT_LABELS[ws]}</span>
+      {stack !== null && def !== null ? (
+        <>
+          <img
+            className="inv-swatch inv-icon"
+            src={`/icons/${stack.type}.png`}
+            alt=""
+            draggable={false}
+            onError={(e) => {
+              e.currentTarget.style.background = def.color;
+              e.currentTarget.src = BLANK_PX;
+            }}
+          />
+          <span className="inv-name">{def.name}</span>
+          <span className="inv-actions">
+            <button className="inv-btn" onClick={() => doUnwear(ws)}>
+              REMOVE
+            </button>
+          </span>
+        </>
+      ) : (
+        <span className="inv-empty">—</span>
+      )}
+    </div>
+  );
+}
+
+function EquipmentSection(): ReactElement {
+  const worn = useUIStore((s) => s.worn);
+  return (
+    <>
+      <div className="inv-title inv-subtitle">EQUIPMENT</div>
+      <EquipmentRow ws="body" stack={worn.body} />
+      <EquipmentRow ws="back" stack={worn.back} />
+    </>
+  );
+}
+
 function CraftingSection({ inventory }: { inventory: (ItemStack | null)[] }): ReactElement {
   return (
     <>
@@ -430,9 +484,24 @@ function InventoryPanel(): ReactElement | null {
     >
       <div className="hud-inv">
         <div className="inv-title">INVENTORY</div>
-        {Array.from({ length: INVENTORY_SLOTS }, (_, i) => (
+        {Array.from({ length: Math.min(INVENTORY_SLOTS, inventory.length) }, (_, i) => (
           <InventoryRow key={i} slot={i} stack={inventory[i] ?? null} />
         ))}
+        {/* PACK rows (doc 05 M6): slots 8+ exist only while a backpack is worn.
+            Storage-only — the hotbar stays 0–7 (the server's equipSlot bound). */}
+        {inventory.length > INVENTORY_SLOTS && (
+          <>
+            <div className="inv-title inv-subtitle">PACK</div>
+            {Array.from({ length: inventory.length - INVENTORY_SLOTS }, (_, i) => (
+              <InventoryRow
+                key={INVENTORY_SLOTS + i}
+                slot={INVENTORY_SLOTS + i}
+                stack={inventory[INVENTORY_SLOTS + i] ?? null}
+              />
+            ))}
+          </>
+        )}
+        <EquipmentSection />
         <CraftingSection inventory={inventory} />
         <div className="inv-hint">Tab to close</div>
       </div>

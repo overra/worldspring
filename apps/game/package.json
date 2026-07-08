@@ -15,14 +15,15 @@
     "models:export": "node scripts/export-models.mjs",
     "models:icons": "node scripts/render-icons.mjs",
     "loadtest": "node --experimental-strip-types scripts/loadtest.mjs",
-    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:testbed && pnpm test:physics && pnpm test:heartbeat && pnpm test:reload",
+    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:testbed && pnpm test:physics && pnpm test:heartbeat && pnpm test:reload && pnpm test:wear",
     "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",
     "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs",
     "test:loot": "node --experimental-strip-types scripts/loot-invariant.mjs",
     "test:testbed": "node --experimental-strip-types scripts/testbed-provision.mjs",
     "test:physics": "node --experimental-strip-types scripts/physics-replay.mjs",
     "test:heartbeat": "node --experimental-strip-types scripts/heartbeat-cadence.mjs",
-    "test:reload": "node --experimental-strip-types scripts/reload-magazine.mjs"
+    "test:reload": "node --experimental-strip-types scripts/reload-magazine.mjs",
+    "test:wear": "node --experimental-strip-types scripts/wear-slots.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

@@ -1,0 +1,32 @@
+{
+  "name": "wear",
+  "provision": [
+    { "kind": "position", "zone": "coastal", "face": "inland" },
+    {
+      "kind": "loadout",
+      "items": [
+        { "type": "padded_jacket", "count": 1 },
+        { "type": "backpack", "count": 1 },
+        { "type": "beans", "count": 3 },
+        { "type": "water_bottle", "count": 2 },
+        { "type": "cloth", "count": 8 },
+        { "type": "wood", "count": 8 }
+      ]
+    },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 34 }
+  ],
+  "checklist": [
+    "Spawn on the beach with a full 8/8 inventory: flashlight, bandage, Padded Jacket, Canvas Backpack, beans, water, cloth, wood.",
+    "Open Tab — an EQUIPMENT section shows 'body: —' and 'back: —'; the jacket and backpack rows show a WEAR button.",
+    "WEAR the Padded Jacket — it moves to 'body:' and its inventory slot frees up.",
+    "WEAR the Canvas Backpack — it moves to 'back:' and a PACK section with 4 empty rows (slots 9-12) appears.",
+    "Drop a stack, pick it back up after filling slots — items flow into PACK rows; USE and DROP work from PACK rows (equip/hotbar keys 1-8 never select them).",
+    "Put an item in a PACK row, then REMOVE the backpack — rejected with the notice 'empty your pack first'; nothing is lost.",
+    "Empty the PACK rows but keep hotbar slots 1-8 full, then REMOVE the backpack — rejected with 'no room in inventory'; the pack stays worn (never destroyed).",
+    "Free one hotbar slot and REMOVE the backpack — it returns to the inventory and the PACK section disappears.",
+    "With the jacket worn, stand exposed at night (or in rain): temperature falls noticeably slower than with it removed (0.65 insulation).",
+    "Select the jacket on the hotbar and press F — F-key USE also wears it (parity with the WEAR button).",
+    "Die on a fullLoot server — the corpse contains the worn jacket and backpack; the fresh spawn has 8 slots and empty EQUIPMENT.",
+    "Wear both, disconnect, rejoin — EQUIPMENT and the 12-slot inventory are restored from the save."
+  ]
+}

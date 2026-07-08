@@ -17,6 +17,7 @@ import type {
   Realm,
   ServerMsg,
   Vitals,
+  WornState,
   ZombieState,
 } from "@worldspring/shared/protocol";
 import type { World } from "@worldspring/shared/world";
@@ -64,6 +65,14 @@ export interface ServerPlayer {
   core: PlayerCore;
   vitals: Vitals;
   inventory: (ItemStack | null)[];
+  /**
+   * Worn equipment (doc 05 M6): body = jacket (insulation multiplies the
+   * survival temp-fall terms), back = backpack (extraSlots extends `inventory`
+   * with pack slots 8+ while worn). Persisted additively as
+   * `CharacterState.worn`; on a fullLoot death the corpse takes both and this
+   * resets to nulls (spawnPlayerCorpse).
+   */
+  worn: WornState;
   selectedSlot: number;
   alive: boolean;
   /** Disconnected-but-lingering body (no socket); expires LOGOUT_LINGER_S

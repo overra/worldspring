@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { INVENTORY_SLOTS } from "@worldspring/shared/constants";
 import { ITEM_DEFS } from "@worldspring/shared/items";
 import type { ItemStack } from "@worldspring/shared/items";
-import type { DeathRecap, Realm, Vitals, YouState } from "@worldspring/shared/protocol";
+import type { DeathRecap, Realm, Vitals, WornState, YouState } from "@worldspring/shared/protocol";
 
 // "reconnecting": the in-game socket dropped (e.g. the server DO instance was
 // replaced under load, or a deploy/network blip) and we're auto-reconnecting
@@ -39,6 +39,9 @@ export interface UIState {
    * Render-only, set from each snapshot's `you.action` (server-authoritative). */
   channelAction: YouState["action"] | null;
   inventory: (ItemStack | null)[];
+  /** Worn equipment (doc 05 M6), mirrored from inv/welcome `worn`. Drives the
+   * Tab panel's EQUIPMENT section; nulls = nothing worn. */
+  worn: WornState;
   selectedSlot: number;
   /** Human-readable pickup prompt, e.g. "Canned Beans" — null hides it. */
   prompt: string | null;
@@ -70,7 +73,7 @@ export interface UIState {
   setPlayerName(name: string): void;
   setVitals(vitals: Vitals): void;
   setAction(action: YouState["action"] | undefined): void;
-  setInventory(slots: (ItemStack | null)[], selected: number): void;
+  setInventory(slots: (ItemStack | null)[], selected: number, worn?: WornState): void;
   setSelectedSlot(slot: number): void;
   setPrompt(prompt: string | null): void;
   pushNotice(msg: string): void;
@@ -102,6 +105,7 @@ export const useUIStore = create<UIState>((set) => ({
   vitals: { hp: 100, food: 100, water: 100, temp: 37 },
   channelAction: null,
   inventory: Array.from({ length: INVENTORY_SLOTS }, () => null),
+  worn: { body: null, back: null },
   selectedSlot: 0,
   prompt: null,
   notices: [],
@@ -128,7 +132,10 @@ export const useUIStore = create<UIState>((set) => ({
       const next = action ?? null;
       return next === null && s.channelAction === null ? s : { channelAction: next };
     }),
-  setInventory: (inventory, selectedSlot) => set({ inventory, selectedSlot }),
+  // worn rides every inv/welcome (proto 8+); the ?? covers the optional wire
+  // field so an absent value reads as nothing worn rather than a stale mirror.
+  setInventory: (inventory, selectedSlot, worn) =>
+    set({ inventory, selectedSlot, worn: worn ?? { body: null, back: null } }),
   setSelectedSlot: (selectedSlot) => set({ selectedSlot }),
   setPrompt: (prompt) =>
     set((s) => (s.prompt === prompt ? s : { prompt })),

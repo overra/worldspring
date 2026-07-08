@@ -25,7 +25,13 @@ import { LEADERBOARD_MAX } from "@worldspring/shared/constants";
 import type { WipeSchedule } from "@worldspring/shared/config";
 import { encodeExplored } from "@worldspring/shared/fog";
 import type { ItemStack } from "@worldspring/shared/items";
-import type { DeathRecap, LeaderboardEntry, PlayerCore, Vitals } from "@worldspring/shared/protocol";
+import type {
+  DeathRecap,
+  LeaderboardEntry,
+  PlayerCore,
+  Vitals,
+  WornState,
+} from "@worldspring/shared/protocol";
 import type { PersistedBody } from "./physics/PhysicsSystem";
 import type {
   Airdrop,
@@ -59,6 +65,12 @@ export interface CharacterState {
   /** doc 12 — base64 fog-of-war explored bitset. ADDITIVE/optional: pre-feature
    * rows lack it and load as all-unexplored, so SCHEMA_VERSION stays 2. */
   explored?: string;
+  /** doc 05 M6 — worn equipment (body jacket / back backpack). ADDITIVE/
+   * optional: pre-feature rows lack it and restore as nothing-worn, so
+   * SCHEMA_VERSION stays 2. Saved atomically with `inventory` in this one
+   * JSON, so a 12-length pack-extended array always arrives with its
+   * worn.back. */
+  worn?: WornState;
 }
 
 /** A characters-table row, decoded. */
@@ -501,6 +513,7 @@ export function saveCharacter(sql: SqlStorage, player: ServerPlayer, gameTime: n
     core: player.core,
     vitals: player.vitals,
     inventory: player.inventory,
+    worn: player.worn,
     selectedSlot: player.selectedSlot,
     stats: player.stats,
     savedAt: gameTime,

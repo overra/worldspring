@@ -38,7 +38,14 @@ import {
 import { ITEM_DEFS, RECIPES, type ItemStack, type ItemType } from "@worldspring/shared/items";
 import { clamp, distSq2D, yawToDir } from "@worldspring/shared/math";
 import { stepPlayer } from "@worldspring/shared/movement";
-import type { ChannelKind, InputCmd, PlayerCore, Realm } from "@worldspring/shared/protocol";
+import type {
+  ChannelKind,
+  InputCmd,
+  PlayerCore,
+  Realm,
+  WearSlot,
+  WornState,
+} from "@worldspring/shared/protocol";
 import type { CharacterState } from "../persistence";
 import { startLootRespawn } from "./loot";
 import { canStartReload, completeReload, rangedOf } from "./magazine";
@@ -138,6 +145,7 @@ export function createPlayer(
     core: freshSpawnCore(state),
     vitals: { hp: MAX_HP, food: MAX_FOOD, water: MAX_WATER, temp: TEMP_NORMAL },
     inventory: startingInventory(state),
+    worn: { body: null, back: null },
     selectedSlot: 0,
     alive: true,
     offline: false,
@@ -193,6 +201,14 @@ export function restorePlayer(
     core: { ...saved.core },
     vitals: { ...saved.vitals },
     inventory: saved.inventory.map((stack) => (stack ? { ...stack } : null)),
+    // doc 05 M6 — additive optional on old saves: missing → nothing worn. The
+    // inventory array round-trips at whatever length was saved, and worn +
+    // inventory live in ONE state_json — a 12-length array always arrives with
+    // its worn.back, never orphaned.
+    worn: {
+      body: saved.worn?.body ? { ...saved.worn.body } : null,
+      back: saved.worn?.back ? { ...saved.worn.back } : null,
+    },
     selectedSlot: saved.selectedSlot,
     alive: true,
     offline: false,
@@ -233,6 +249,10 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   // than starting empty. fullLoot (default) resets to the starting loadout.
   if (state.config.pvp.fullLoot) {
     player.inventory = startingInventory(state);
+    // Belt-and-braces: the corpse already took the worn items at death
+    // (spawnPlayerCorpse's fullLoot branch nulls them) — a fresh life must
+    // never inherit equipment. Keep-inventory keeps worn AND the pack slots.
+    player.worn = { body: null, back: null };
     player.selectedSlot = 0;
   }
   player.alive = true;
@@ -338,12 +358,23 @@ export function applyQueuedInputs(state: GameState, dt: number): void {
   }
 }
 
-/** Send the player's current inventory + selected slot. */
+/** Deep-copy the worn state for the wire (inv + welcome share the shape).
+ * `?.` tolerates the untyped .mjs harness fixtures that predate `worn`
+ * (the config.map precedent) — production players always carry it. */
+export function wornWire(player: ServerPlayer): WornState {
+  return {
+    body: player.worn?.body ? { ...player.worn.body } : null,
+    back: player.worn?.back ? { ...player.worn.back } : null,
+  };
+}
+
+/** Send the player's current inventory + selected slot + worn equipment. */
 export function sendInventory(state: GameState, player: ServerPlayer): void {
   sendTo(state, player.id, {
     t: "inv",
     slots: player.inventory.map((stack) => (stack ? { ...stack } : null)),
     selected: player.selectedSlot,
+    worn: wornWire(player),
   });
 }
 
@@ -457,7 +488,9 @@ function waterAhead(state: GameState, player: ServerPlayer): boolean {
  */
 export function useItem(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
-  if (slot < 0 || slot >= INVENTORY_SLOTS) return;
+  // Bound by the LIVE array length (doc 05 M6): pack slots 8+ exist while a
+  // backpack is worn, and USE must work from the Tab panel's PACK rows.
+  if (slot < 0 || slot >= player.inventory.length) return;
   const stack = player.inventory[slot];
   if (!stack) return;
   const def = ITEM_DEFS[stack.type];
@@ -551,6 +584,15 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
     return;
   }
 
+  // --- Wearables (doc 05 M6) ---
+  // §1 rule: kind "wear" routes USE to the same wear flow as {t:"wear"} — one
+  // wearItem authority for both verbs. No consume tail: the stack MOVES to the
+  // worn slot rather than being spent.
+  if (def.kind === "wear") {
+    wearItem(state, player, slot);
+    return;
+  }
+
   // --- Standard kind-based dispatch ---
   switch (def.kind) {
     case "food":
@@ -587,7 +629,7 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
       // Generic tools (flashlight, torch) have no use action beyond equip.
       return;
     default:
-      return; // weapons, ammo, material, wear are not usable via this path
+      return; // weapons, ammo, material are not usable via this path
   }
   consumeFromSlot(player.inventory, slot);
   sendInventory(state, player);
@@ -661,7 +703,9 @@ export function startUse(state: GameState, player: ServerPlayer, slot: number): 
   // One action at a time: ignore ANY use mid-cast (a channeled use OR the instant
   // water/fishing fallback) so nothing mutates the inventory during a cast (§1/§3).
   if (player.action !== null) return;
-  if (slot < 0 || slot >= INVENTORY_SLOTS) return;
+  // Live-length bound (doc 05 M6): {t:"use"} enters HERE, so pack slots must
+  // pass this gate too or USE from the PACK rows dies before reaching useItem.
+  if (slot < 0 || slot >= player.inventory.length) return;
   const stack = player.inventory[slot];
   if (!stack) return;
   const channel = channelForUse(stack);
@@ -956,6 +1000,96 @@ export function equipSlot(state: GameState, player: ServerPlayer, slot: number):
   sendInventory(state, player);
 }
 
+// --- Wearables (doc 05 M6) ---------------------------------------------------
+
+/**
+ * Wear the `kind:"wear"` item in inventory `slot`, swapping it with the current
+ * occupant of its wear slot (the occupant returns to that inventory slot; both
+ * verbs — {t:"wear"} and USE-on-a-wear-item — land here). Wearing a backpack
+ * extends the inventory with `extraSlots` null pack slots; a pack-for-pack swap
+ * is length-invariant in M6 (both shipped packs are extraSlots:4) and a
+ * hypothetical SMALLER future pack is rejected rather than truncating occupied
+ * slots. Rejected silently mid-cast: wear mutates inventory[slot] while
+ * player.action.slot may point at it (the dropSlot mutation-point rule,
+ * simplified to startUse's one-action-at-a-time posture).
+ */
+export function wearItem(state: GameState, player: ServerPlayer, slot: number): void {
+  if (!player.alive) return;
+  if (player.action !== null) return; // never mutate slots under an active cast
+  if (slot < 0 || slot >= player.inventory.length) return;
+  const stack = player.inventory[slot];
+  if (!stack) return;
+  const def = ITEM_DEFS[stack.type];
+  if (def.kind !== "wear" || def.wear === undefined) return;
+  const ws: WearSlot = def.wear.slot;
+  const current = player.worn[ws];
+
+  if (ws === "back") {
+    const target = INVENTORY_SLOTS + (def.wear.extraSlots ?? 0);
+    // Defensive: a swap that would SHRINK capacity (future smaller pack) could
+    // orphan occupied pack slots — refuse instead of truncating items away.
+    // Unreachable in M6 (both packs grant +4); the guard makes the constraint
+    // explicit rather than latent.
+    if (target < player.inventory.length) {
+      sendTo(state, player.id, { t: "notice", msg: "remove your current pack first" });
+      return;
+    }
+    player.worn.back = stack;
+    player.inventory[slot] = current;
+    while (player.inventory.length < target) player.inventory.push(null);
+  } else {
+    player.worn.body = stack;
+    player.inventory[slot] = current;
+  }
+  sendInventory(state, player);
+}
+
+/**
+ * Remove the worn item in `ws` back into the inventory. Loss-proof by design
+ * (doc 05 §5): rejected with a notice when nothing fits — never silently
+ * dropped. Backpack unwear additionally requires the pack slots be empty, and
+ * the order is load-bearing: TRUNCATE first, THEN addToInventory. The naive
+ * add-then-truncate destroys the backpack — addToInventory fills the FIRST
+ * empty slot, so with the hotbar full and pack slots empty (which passes the
+ * precondition) the pack would land in slot 8 and the truncation delete it.
+ */
+export function unwearItem(state: GameState, player: ServerPlayer, ws: WearSlot): void {
+  if (!player.alive) return;
+  if (player.action !== null) return; // truncation could pull action.slot out from under a cast
+  const worn = player.worn[ws];
+  if (!worn) return;
+
+  if (ws === "back") {
+    // Precondition: every pack slot empty ("simpler and loss-proof vs. spilling").
+    for (let i = INVENTORY_SLOTS; i < player.inventory.length; i++) {
+      if (player.inventory[i] !== null) {
+        sendTo(state, player.id, { t: "notice", msg: "empty your pack first" });
+        return;
+      }
+    }
+    const prevLen = player.inventory.length;
+    player.inventory.length = INVENTORY_SLOTS; // truncate FIRST (see above)
+    const leftover = addToInventory(player.inventory, worn.type, worn.count);
+    if (leftover > 0) {
+      // Hotbar full: re-extend to the worn capacity and reject — the pack
+      // stays worn, nothing is lost. (Wear items stack 1, so leftover > 0
+      // means nothing was added.)
+      while (player.inventory.length < prevLen) player.inventory.push(null);
+      sendTo(state, player.id, { t: "notice", msg: "no room in inventory" });
+      return;
+    }
+    player.worn.back = null;
+  } else {
+    const leftover = addToInventory(player.inventory, worn.type, worn.count);
+    if (leftover > 0) {
+      sendTo(state, player.id, { t: "notice", msg: "no room in inventory" });
+      return;
+    }
+    player.worn.body = null;
+  }
+  sendInventory(state, player);
+}
+
 /**
  * Pick up a loot entity, scavenge a corpse, or loot a landed airdrop crate
  * within PICKUP_RANGE (all three share the entity id space). Plain items
@@ -1044,7 +1178,8 @@ function takeStack(inv: (ItemStack | null)[], stack: ItemStack): number {
 /** Drop the whole stack in a slot as a loot entity at the player's feet. */
 export function dropSlot(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
-  if (slot < 0 || slot >= INVENTORY_SLOTS) return;
+  // Live-length bound (doc 05 M6): DROP must work from the PACK rows.
+  if (slot < 0 || slot >= player.inventory.length) return;
   const stack = player.inventory[slot];
   if (!stack) return;
   // Dropping the gun mid-reload cancels the cast (the doc 11 §3 slot-swap rule
