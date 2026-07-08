@@ -87,7 +87,15 @@ const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
 // new `cont` ServerMsg. The additive `locked`/`hp` fields on sState/WirePiece
 // would NOT bump on their own (fog/felled posture); the new messages do.
 // So 9 → 10.
-export const PROTOCOL_VERSION: number = 10;
+// doc 13 M4 (vehicles v1): NEW ClientMsg shapes `enterVehicle`/`exitVehicle`/
+// `drive`/`refuel` grow the wire vocabulary (doc 03's shape clause — the rule
+// that forced 2 → 3 for `craft`). This is the doc's PLANNED second bump (M1
+// bodies was the first; doc 13 §Migration "two bumps total"). The additive
+// growth alongside it — a new "vehicle" BodyKind value, WireBody `seats`/
+// `wrecked`, and YouState `seat` — would NOT bump on its own (the trunk/barrel
+// BodyKind precedent + the fog/felled optional-field posture); the new
+// messages do. So 10 → 11.
+export const PROTOCOL_VERSION: number = 11;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -210,6 +218,19 @@ export type ClientMsg =
    * slot `to` (dir "out"). Range re-validated per message; the reply is an
    * authoritative `cont` + full `inv`. */
   | { t: "cMove"; id: number; from: number; to: number; dir: "in" | "out" }
+  /** doc 13 M4 — board vehicle `id` at seat `seat` (0 = driver, 1 = passenger).
+   * Server validates range + an empty seat + alive/overworld/on-foot. */
+  | { t: "enterVehicle"; id: number; seat: number }
+  /** doc 13 M4 — leave whatever seat you're in (the server knows which); it
+   * places you on valid ground beside the vehicle. */
+  | { t: "exitVehicle" }
+  /** doc 13 M4 — driver control, applied by the server each tick to the vehicle
+   * body. `throttle`/`steer` clamped finite [-1,1], `brake` clamped [0,1].
+   * Ignored unless the sender is the DRIVER (seat 0) of a vehicle. */
+  | { t: "drive"; throttle: number; steer: number; brake: number }
+  /** doc 13 M4 — top up vehicle `id`'s fuel from a fuel item in inventory
+   * (server consumes one, adds FUEL_PER_CAN). Requires range. */
+  | { t: "refuel"; id: number }
   | { t: "respawn" }
   | { t: "chat"; text: string }
   | { t: "ping"; ts: number };
@@ -290,9 +311,11 @@ export interface WirePortal {
 /** Kinds of server-auth dynamic physics body (doc 13). Wire-enum GROWTH is
  * additive-safe (clients render unknown kinds as the fallback crate mesh).
  * "trunk" (doc 13 M2) is a felled tree; "barrel" (doc 13 M3) is a spawnable,
- * shovable loot prop — each an additive growth, no PROTOCOL_VERSION bump (the
- * trunk precedent: a new BodyKind value alone never bumped, see doc 13 M2). */
-export type BodyKind = "crate" | "trunk" | "barrel";
+ * shovable loot prop; "vehicle" (doc 13 M4) is the drivable ground buggy — each
+ * an additive growth. A new BodyKind value ALONE never bumps PROTOCOL_VERSION
+ * (the trunk/barrel precedent); doc 13 M4's bump is forced by its new ClientMsg
+ * shapes, not by this value. */
+export type BodyKind = "crate" | "trunk" | "barrel" | "vehicle";
 
 /**
  * A dynamic physics body pose (doc 13 M1). Server-authoritative — clients
@@ -317,6 +340,15 @@ export interface WireBody {
    * clients without it render the fallback crate mesh. */
   dims?: [number, number, number];
   asleep?: true;
+  /** doc 13 M4 — vehicle seats: WirePlayer ids per seat index (0 = driver,
+   * 1 = passenger), null for an empty seat. Present ONLY on "vehicle" bodies;
+   * lets clients hide a seated player's walking avatar (they ride the hull) and
+   * render riders. ADDITIVE optional (the dims precedent) — never on crates/
+   * trunks/barrels. */
+  seats?: (string | null)[];
+  /** doc 13 M4 — a wrecked (hp<=0) vehicle: undriveable, rendered as a hulk.
+   * ADDITIVE optional; absent = intact. */
+  wrecked?: true;
 }
 
 /**
@@ -398,6 +430,15 @@ export interface YouState extends Vitals {
   action?: { kind: ChannelKind; remainingS: number; totalS: number };
   /** Which realm you are in — drives the client's terrain/sky theming. */
   realm: Realm;
+  /**
+   * doc 13 M4 — set while YOU are seated in a vehicle: which vehicle body (`id`),
+   * which seat (`index`; 0 = driver), and the driver-HUD readout (`fuel`/`hp`
+   * absolute vs VEHICLE_FUEL_MAX/VEHICLE_HP_MAX, `speed` m/s, all round2'd).
+   * Absent ⇒ on foot. Render/HUD + input-routing only (the client sends `drive`
+   * instead of `input` while this names the driver seat) — prediction ignores
+   * it, exactly like `action`. ADDITIVE optional field.
+   */
+  seat?: { id: number; index: number; fuel: number; hp: number; speed: number };
 }
 
 export type GameEvent =
@@ -674,6 +715,28 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       if (m.dir !== "in" && m.dir !== "out") return null;
       return { t: "cMove", id: m.id | 0, from: m.from | 0, to: m.to | 0, dir: m.dir };
     }
+    case "enterVehicle":
+      // doc 13 M4 — vehicle id integer-checked; seat WHITELISTED to 0|1 (the
+      // two seats). Range/occupancy/alive are the server handler's checks.
+      if (!isFiniteNum(m.id)) return null;
+      if (m.seat !== 0 && m.seat !== 1) return null;
+      return { t: "enterVehicle", id: m.id | 0, seat: m.seat };
+    case "exitVehicle":
+      return { t: "exitVehicle" };
+    case "drive": {
+      // doc 13 M4 — driver control: NO client float trusted beyond the clamp.
+      // throttle/steer clamped to [-1,1], brake to [0,1]; non-finite is
+      // malformed (mirrors the input-cmd clamp, which uses Math.max/min inline).
+      if (!isFiniteNum(m.throttle) || !isFiniteNum(m.steer) || !isFiniteNum(m.brake)) return null;
+      return {
+        t: "drive",
+        throttle: Math.max(-1, Math.min(1, m.throttle)),
+        steer: Math.max(-1, Math.min(1, m.steer)),
+        brake: Math.max(0, Math.min(1, m.brake)),
+      };
+    }
+    case "refuel":
+      return isFiniteNum(m.id) ? { t: "refuel", id: m.id | 0 } : null;
     case "respawn":
       return { t: "respawn" };
     case "chat":

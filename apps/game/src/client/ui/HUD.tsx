@@ -11,6 +11,8 @@ import {
   MAX_HP,
   MAX_WATER,
   TEMP_SHIVER,
+  VEHICLE_FUEL_MAX,
+  VEHICLE_HP_MAX,
 } from "@worldspring/shared/constants";
 import { ITEM_DEFS, RECIPES, UNKNOWN_DEF } from "@worldspring/shared/items";
 import type { CraftRecipe, ItemKind, ItemStack, ItemType } from "@worldspring/shared/items";
@@ -210,6 +212,66 @@ function PickupPrompt(): ReactElement | null {
   return (
     <div className="hud-prompt">
       <span className="hud-prompt-key">[E]</span> {prompt}
+    </div>
+  );
+}
+
+// --- doc 13 M4: driving HUD (fuel / hull / speed) ---
+
+function VehicleMeter({ label, pct, color }: { label: string; pct: number; color: string }): ReactElement {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+      <span style={{ width: 40, opacity: 0.8 }}>{label}</span>
+      <span style={{ position: "relative", width: 120, height: 8, background: "rgba(255,255,255,0.15)", borderRadius: 4 }}>
+        <span style={{ position: "absolute", inset: 0, width: `${pct}%`, background: color, borderRadius: 4 }} />
+      </span>
+      <span style={{ width: 34, textAlign: "right", opacity: 0.9 }}>{pct}%</span>
+    </div>
+  );
+}
+
+function VehicleHud(): ReactElement | null {
+  const seat = useUIStore((s) => s.vehicleSeat);
+  if (!seat) return null;
+  const fuelPct = Math.round(Math.max(0, Math.min(1, seat.fuel / VEHICLE_FUEL_MAX)) * 100);
+  const hullPct = Math.round(Math.max(0, Math.min(1, seat.hp / VEHICLE_HP_MAX)) * 100);
+  const kmh = Math.round(seat.speed * 3.6);
+  const driver = seat.index === 0;
+  const empty = fuelPct === 0;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        right: 20,
+        bottom: 120,
+        padding: "10px 12px",
+        background: "rgba(12,14,10,0.72)",
+        border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 8,
+        color: "#e6e4d8",
+        fontFamily: "system-ui, sans-serif",
+        pointerEvents: "none",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        minWidth: 210,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span style={{ fontWeight: 700, letterSpacing: 1, fontSize: 12 }}>
+          {driver ? "DRIVING" : "PASSENGER"}
+        </span>
+        <span style={{ fontSize: 20, fontWeight: 700 }}>
+          {kmh}
+          <span style={{ fontSize: 11, opacity: 0.7 }}> km/h</span>
+        </span>
+      </div>
+      <VehicleMeter label="Fuel" pct={fuelPct} color={empty ? "#c8402a" : "#d8b23a"} />
+      <VehicleMeter label="Hull" pct={hullPct} color={hullPct < 30 ? "#c8402a" : "#5a9a5a"} />
+      <div style={{ fontSize: 11, opacity: 0.7 }}>
+        {driver ? "[W/S] drive · [A/D] steer · [Shift] brake · [E] exit" : "[E] exit"}
+        {empty && driver ? " — OUT OF FUEL" : ""}
+      </div>
     </div>
   );
 }
@@ -831,6 +893,7 @@ export function HUD(): ReactElement {
       <ChannelBar />
       <BuildPanel />
       <PickupPrompt />
+      <VehicleHud />
       <VitalsPanel />
       <ChatPanel />
       <Hotbar />

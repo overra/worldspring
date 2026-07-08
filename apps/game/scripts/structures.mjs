@@ -80,7 +80,10 @@ const {
 // --- 1. wire --------------------------------------------------------------
 console.log("protocol (doc 06 wire):");
 {
-  check(PROTOCOL_VERSION === 10, `PROTOCOL_VERSION bumped to 10 (got ${PROTOCOL_VERSION})`);
+  // doc 06 forced the bump to 10; later milestones (doc 13 M4 → 11) push it
+  // higher, so assert the floor rather than an exact value that every future
+  // bump would have to touch.
+  check(PROTOCOL_VERSION >= 10, `PROTOCOL_VERSION is at least 10 (got ${PROTOCOL_VERSION})`);
   const place = parseClientMsg(
     JSON.stringify({ t: "place", kind: "wall", tier: 1, gx: 4.9, gz: -3, edge: 2 }),
   );

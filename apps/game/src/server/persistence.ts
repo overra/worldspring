@@ -21,7 +21,14 @@
 // (positions/inventories from an old world layout would be nonsense) but the
 // leaderboard survives — finished lives stay comparable across wipes.
 
-import { CRATE_SLOTS, LEADERBOARD_MAX, WORLDGEN_VERSION } from "@worldspring/shared/constants";
+import {
+  CRATE_SLOTS,
+  LEADERBOARD_MAX,
+  VEHICLE_FUEL_MAX,
+  VEHICLE_HP_MAX,
+  VEHICLE_SEATS,
+  WORLDGEN_VERSION,
+} from "@worldspring/shared/constants";
 import type { WipeSchedule } from "@worldspring/shared/config";
 import { encodeExplored } from "@worldspring/shared/fog";
 import type { ItemStack } from "@worldspring/shared/items";
@@ -58,7 +65,23 @@ import type {
   LootRespawnTimer,
   PlayerStats,
   ServerPlayer,
+  VehicleMeta,
 } from "./systems/state";
+
+/** doc 13 M4 — a fresh/restored vehicle meta: persisted fuel/hp/wrecked from the
+ * caller; seats empty + input idle (transient, never seated across a restart). */
+function newVehicleMeta(id: number, fuel: number, hp: number, wrecked: boolean): VehicleMeta {
+  return {
+    id,
+    fuel,
+    hp,
+    wrecked,
+    seats: new Array(VEHICLE_SEATS).fill(null),
+    input: { throttle: 0, steer: 0, brake: 0 },
+    lastForward: 0,
+    ramCooldown: 0,
+  };
+}
 
 /** Bump when the persisted shape changes incompatibly (wipes world+characters). */
 export // v2: military compound changed worldgen — persisted world/character
@@ -415,6 +438,22 @@ interface WorldSnapshot {
    * structures") — no SCHEMA_VERSION bump. ~100 B/piece ⇒ ≈300 KB at the
    * 3000-piece world cap, far under the 2 MB row cap; row count unchanged. */
   structures: PersistedStructure[];
+  /** doc 13 M4 — vehicle GAMEPLAY meta (fuel/hp/wrecked); the hull POSE rides
+   * the `bodies` array like any body. Seats are NOT persisted (players aren't
+   * seated across a restart — doc 13 §5). ADDITIVE (the bodies/felled posture):
+   * older snapshots normalize to [], older code ignores the key — no
+   * SCHEMA_VERSION bump, old saves load clean (no vehicles). */
+  vehicles: PersistedVehicle[];
+}
+
+/** doc 13 M4 — a persisted vehicle's gameplay state, keyed to its `bodies` row
+ * by `id`. Pose/velocity are the physics body's job; this is the survival state
+ * (fuel/hp/wrecked) that must ride a DO restart. */
+export interface PersistedVehicle {
+  id: number;
+  fuel: number;
+  hp: number;
+  wrecked: boolean;
 }
 
 /** A persisted piece: the wire/shared record + server-only meta. The doc 06
@@ -467,6 +506,19 @@ function serializeStructures(game: GameState): PersistedStructure[] {
   return out;
 }
 
+/** doc 13 M4 — persist each vehicle's gameplay state. The `?.` tolerates the
+ * untyped .mjs harness fixtures that predate vehicleMeta (the serializeStructures
+ * precedent); production GameStates always carry the map. */
+function serializeVehicles(game: GameState): PersistedVehicle[] {
+  const out: PersistedVehicle[] = [];
+  const metas = game.vehicleMeta;
+  if (!metas) return out;
+  for (const meta of metas.values()) {
+    out.push({ id: meta.id, fuel: meta.fuel, hp: meta.hp, wrecked: meta.wrecked });
+  }
+  return out;
+}
+
 export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: GameState): void {
   const snapshot: WorldSnapshot = {
     loot: [...game.loot.values()],
@@ -484,6 +536,7 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     bodies: game.physics.serialize(),
     felled: [...game.felledTrees],
     structures: serializeStructures(game),
+    vehicles: serializeVehicles(game),
   };
   storage.transactionSync(() => {
     // O(1) rows written: delete the prior single snapshot row, insert the new
@@ -558,7 +611,7 @@ function normalizeContents(raw: unknown): (ItemStack | null)[] {
 function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled", "structures"] as const) {
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled", "structures", "vehicles"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
@@ -623,6 +676,28 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   if (bodies.length > 0) {
     game.physics.restore(bodies);
     for (const b of bodies) maxId = Math.max(maxId, b.id);
+  }
+
+  // doc 13 M4 — rebuild vehicle gameplay meta from the persisted `vehicles`
+  // array (seats empty, input idle — never seated across a restart). Fuel/hp are
+  // clamped to their caps (a corrupt row can't over/under-fill). Any restored
+  // "vehicle" body WITHOUT a matching meta (an older/corrupt save) gets a full-
+  // tank default so it stays driveable rather than inert. The `?.` tolerates the
+  // untyped .mjs persistence-harness fixtures (the structures precedent).
+  if (game.vehicleMeta) {
+    for (const v of snapshot.vehicles) {
+      if (!hasNumericId(v)) continue;
+      const raw = v as Partial<PersistedVehicle> & { id: number };
+      const fuel = Number.isFinite(raw.fuel) ? Math.max(0, Math.min(VEHICLE_FUEL_MAX, raw.fuel as number)) : VEHICLE_FUEL_MAX;
+      const hp = Number.isFinite(raw.hp) ? Math.max(0, Math.min(VEHICLE_HP_MAX, raw.hp as number)) : VEHICLE_HP_MAX;
+      game.vehicleMeta.set(raw.id, newVehicleMeta(raw.id, fuel, hp, raw.wrecked === true));
+      maxId = Math.max(maxId, raw.id);
+    }
+    for (const b of bodies) {
+      if (b.kind === "vehicle" && !game.vehicleMeta.has(b.id)) {
+        game.vehicleMeta.set(b.id, newVehicleMeta(b.id, VEHICLE_FUEL_MAX, VEHICLE_HP_MAX, false));
+      }
+    }
   }
 
   // doc 06 — structures: rebuild the shared index + server meta map. Per-

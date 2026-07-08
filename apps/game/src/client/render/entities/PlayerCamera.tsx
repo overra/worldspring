@@ -132,8 +132,9 @@ export function PlayerCamera(): null {
       TARGET.set(EYE.x + fx * LOOK_AHEAD, EYE.y + fy * LOOK_AHEAD, EYE.z + fz * LOOK_AHEAD);
       cam.lookAt(TARGET);
 
-      // Local body, third person only.
-      rig.root.visible = clientWorld.ready;
+      // Local body, third person only — hidden while seated (doc 13 M4: you ride
+      // the hull, not stand on it).
+      rig.root.visible = clientWorld.ready && ui.vehicleSeat === null;
       rig.root.position.set(me.x, me.y, me.z);
       rig.root.rotation.y = yaw;
       // Keys OR the virtual joystick (analog) count as moving — touch input

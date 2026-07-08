@@ -100,6 +100,10 @@ export interface UIState {
   /** doc 06 M5 — mirrors runtime.promptDoorId at store rate so touch can
    * show the LOCK button (runtime reads don't re-render React). */
   doorPromptId: number | null;
+  /** doc 13 M4 — your vehicle seat + driver HUD readout (fuel/hp/speed), or null
+   * on foot. Mirrored from each snapshot's `you.seat`; drives the driving HUD
+   * and the client input-routing decision (drive vs walk). */
+  vehicleSeat: NonNullable<YouState["seat"]> | null;
 
   setPhase(phase: GamePhase): void;
   setError(error: string | null): void;
@@ -134,6 +138,8 @@ export interface UIState {
   setContainer(container: ContainerState | null): void;
   /** doc 06 M5 — door-prompt mirror (writer: NetSystem, guarded on change). */
   setDoorPromptId(id: number | null): void;
+  /** doc 13 M4 — seat readout mirror (writer: net layer on welcome/snap). */
+  setVehicleSeat(seat: NonNullable<YouState["seat"]> | null): void;
 }
 
 let noticeId = 0;
@@ -165,6 +171,7 @@ export const useUIStore = create<UIState>((set) => ({
   codePad: null,
   container: null,
   doorPromptId: null,
+  vehicleSeat: null,
 
   setPhase: (phase) => set({ phase }),
   setError: (error) => set({ error }),
@@ -214,6 +221,10 @@ export const useUIStore = create<UIState>((set) => ({
     set((s) => (s.container === container ? s : { container })),
   setDoorPromptId: (doorPromptId) =>
     set((s) => (s.doorPromptId === doorPromptId ? s : { doorPromptId })),
+  // Hold the reference steady while on foot so the HUD subscription doesn't
+  // re-render every snap (the setAction precedent).
+  setVehicleSeat: (vehicleSeat) =>
+    set((s) => (vehicleSeat === null && s.vehicleSeat === null ? s : { vehicleSeat })),
 }));
 
 /**

@@ -135,6 +135,17 @@ import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
 import { spawnInitialProps } from "./systems/props";
+import {
+  driveInput,
+  enterVehicle,
+  exitVehicle,
+  refuelVehicle,
+  seatPlayerIds,
+  spawnInitialVehicles,
+  stepVehicles,
+  tickVehicles,
+  vacateSeat,
+} from "./systems/vehicles";
 import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
@@ -620,6 +631,18 @@ export class GameRoom extends DurableObject<Env> {
       case "cMove":
         handleContainerMove(game, player, msg);
         break;
+      case "enterVehicle":
+        enterVehicle(game, player, msg.id, msg.seat);
+        break;
+      case "exitVehicle":
+        exitVehicle(game, player);
+        break;
+      case "drive":
+        driveInput(game, player, msg.throttle, msg.steer, msg.brake);
+        break;
+      case "refuel":
+        refuelVehicle(game, player, msg.id);
+        break;
       case "respawn":
         // doc 06 griefing policy: "respawn is always available" is layer 2 of
         // the walling-in mitigation. Until structure damage lands (milestone
@@ -723,6 +746,10 @@ export class GameRoom extends DurableObject<Env> {
       // RESTORED world rebuilds barrels from the persisted `bodies` snapshot
       // instead, so this never double-spawns (the stockInitialLoot precedent).
       spawnInitialProps(game);
+      // doc 13 M4 — fresh world only: spawn the deterministic vehicles (buffer
+      // in PhysicsSystem until attach). A restored world rebuilds them from the
+      // `bodies` + `vehicles` snapshots instead, so this never double-spawns.
+      spawnInitialVehicles(game);
     }
     // Zombies and deer are never persisted — they always spawn fresh.
     spawnInitialZombies(game);
@@ -1009,6 +1036,9 @@ export class GameRoom extends DurableObject<Env> {
       if (game) {
         const player = game.players.get(playerId);
         if (player) {
+          // doc 13 M4 — free any seat first (a disconnecting player can't drive,
+          // and an offline body lingering "in" a vehicle would freeze its seat).
+          vacateSeat(game, player);
           if (player.alive && this.config.session.logoutLingerS > 0) {
             // Combat-log deterrent: the body lingers in the world, defenseless,
             // for session.logoutLingerS (it drops a real corpse only if
@@ -1283,8 +1313,14 @@ export class GameRoom extends DurableObject<Env> {
     }
     // Portal crossings resolve against this tick's post-movement positions.
     stepPortals(game);
+    // doc 13 M4 — apply each driven vehicle's control to its hull BEFORE the
+    // physics step, so the impulses ride this tick's substeps.
+    stepVehicles(game, dt);
     // doc 13 — server-auth physics step (no-op until the engine attaches).
     game.physics.step(dt, game.time);
+    // doc 13 M4 — POST-step: crash + ram damage, wreck handling, and seated
+    // riders follow the hull (kinematic — their walking was short-circuited).
+    tickVehicles(game, dt);
     // doc 13 M2 — settled felled trunks despawn to wood loot after their TTL.
     tickTrunks(game);
     tickZombies(game, dt);
@@ -1436,7 +1472,7 @@ export class GameRoom extends DurableObject<Env> {
     if (player.realm === "overworld") {
       for (const b of game.physics.poses()) {
         if (distSq2D(px, pz, b.x, b.z) > interestSq) continue;
-        bodies.push({
+        const wire: WireBody = {
           id: b.id,
           kind: b.kind,
           x: round2(b.x),
@@ -1446,7 +1482,17 @@ export class GameRoom extends DurableObject<Env> {
           // doc 13 M2 — per-instance half-extents (trunks); omitted otherwise.
           ...(b.dims ? { dims: [round2(b.dims[0]), round2(b.dims[1]), round2(b.dims[2])] as [number, number, number] } : {}),
           ...(b.asleep ? { asleep: true as const } : {}),
-        });
+        };
+        // doc 13 M4 — a vehicle carries who's seated (WirePlayer ids, so clients
+        // hide riders' walking avatars) and its wreck flag (rendered as a hulk).
+        if (b.kind === "vehicle") {
+          const meta = game.vehicleMeta.get(b.id);
+          if (meta) {
+            wire.seats = seatPlayerIds(game, meta);
+            if (meta.wrecked) wire.wrecked = true;
+          }
+        }
+        bodies.push(wire);
       }
     }
 
@@ -1516,6 +1562,22 @@ export class GameRoom extends DurableObject<Env> {
     const c = player.core;
     const v = player.vitals;
     const a = player.action;
+    // doc 13 M4 — seat readout for YOUR HUD + client input routing (drive vs
+    // walk). Only present while seated; fuel/hp/speed are round2'd like x/y/z.
+    let seat: YouState["seat"];
+    if (player.seatedVehicle !== null && this.game) {
+      const meta = this.game.vehicleMeta.get(player.seatedVehicle);
+      if (meta) {
+        const s = this.game.physics.vehicleSensors(player.seatedVehicle);
+        seat = {
+          id: player.seatedVehicle,
+          index: player.seatIndex,
+          fuel: round2(meta.fuel),
+          hp: round2(meta.hp),
+          speed: round2(s?.speed ?? 0),
+        };
+      }
+    }
     return {
       x: round2(c.x),
       y: round2(c.y),
@@ -1532,6 +1594,7 @@ export class GameRoom extends DurableObject<Env> {
       ...(a
         ? { action: { kind: a.kind, remainingS: round2(a.remainingS), totalS: round2(a.totalS) } }
         : {}),
+      ...(seat ? { seat } : {}),
     };
   }
 

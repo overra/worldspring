@@ -155,6 +155,14 @@ export interface ServerPlayer {
    * step OUT of the destination portal's radius before it can fire again
    * (prevents instant bounce-back). Re-armed once clear of all portals. */
   portalArmed: boolean;
+  /** doc 13 M4 — the vehicle body id this player is seated in, or null on foot.
+   * Transient (never persisted — players aren't seated across a restart, doc 13
+   * §5). While non-null, normal walking is short-circuited (applyQueuedInputs)
+   * and the player's core is synced to the hull each tick (systems/vehicles.ts). */
+  seatedVehicle: number | null;
+  /** doc 13 M4 — which seat (0 = driver, 1 = passenger); -1 when on foot. Only
+   * the driver (0) may steer. Transient. */
+  seatIndex: number;
 }
 
 /** Structurally compatible with ZombieCore so stepZombie applies directly. */
@@ -339,6 +347,32 @@ export interface StructureMeta {
   contents: (ItemStack | null)[] | null;
 }
 
+/**
+ * doc 13 M4 — server-only per-VEHICLE gameplay state, keyed by the vehicle's
+ * physics body id (same entity-id space) BESIDE the physics body itself (whose
+ * pose/velocity live in PhysicsSystem and ride the `bodies` snapshot). Fuel/hp/
+ * wrecked persist (the `vehicles` snapshot array); seats/input/lastForward/
+ * ramCooldown are TRANSIENT (players aren't seated across a restart — doc 13 §5).
+ */
+export interface VehicleMeta {
+  id: number;
+  /** Fuel units remaining (0..VEHICLE_FUEL_MAX). Persisted. */
+  fuel: number;
+  /** Hull hit points (0..VEHICLE_HP_MAX). hp<=0 ⇒ wrecked. Persisted. */
+  hp: number;
+  /** True once wrecked — undriveable hulk. Persisted. */
+  wrecked: boolean;
+  /** tokenHash per seat (index 0 driver, 1 passenger); null empty. Transient. */
+  seats: (string | null)[];
+  /** Latest validated DRIVER input, applied each tick (transient). */
+  input: { throttle: number; steer: number; brake: number };
+  /** Signed forward speed at the END of the previous tick — the crash detector
+   * flags a large single-tick forward-speed DROP as an impact. Transient. */
+  lastForward: number;
+  /** Seconds until this vehicle may deal its next ram hit (transient). */
+  ramCooldown: number;
+}
+
 /** doc 06 M5 — per-DOOR global brute-force budget (transient; a DO restart
  * resets it by design). NEVER keyed per-identity: identities are free to
  * mint, so only a shared scarce thing (the door) can hold a budget. */
@@ -421,6 +455,11 @@ export interface GameState {
    * treeChops posture): a partly-shoved barrel "heals" across a room restart,
    * while its shoved POSE rides the persisted `bodies` snapshot like any body. */
   propHits: Map<number, number>;
+  /** doc 13 M4 — per-vehicle gameplay state (fuel/hp/seats/…), keyed by the
+   * vehicle body id. fuel/hp/wrecked persist (the `vehicles` snapshot); the rest
+   * is transient. A fresh world spawns these once (spawnInitialVehicles); a
+   * restored world rebuilds them from the snapshot (the barrel/bodies posture). */
+  vehicleMeta: Map<number, VehicleMeta>;
   /**
    * Lag-compensation ring of recent end-of-tick positions, oldest first.
    * Bounded by capturePosHistory to LAG_COMP_MAX_REWIND_S + slack — at 15Hz
@@ -469,6 +508,7 @@ export function createGameState(
     felledDelta: [],
     treeChops: new Map(),
     propHits: new Map(),
+    vehicleMeta: new Map(),
     posHistory: [],
   };
 }

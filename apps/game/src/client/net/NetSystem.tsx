@@ -9,6 +9,8 @@ import {
   MAX_CMDS_PER_FRAME,
   MAX_INPUT_DT,
   PICKUP_RANGE,
+  VEHICLE_ENTER_RANGE,
+  VEHICLE_HALF_Y,
 } from "@worldspring/shared/constants";
 import { clamp, dist2D } from "@worldspring/shared/math";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
@@ -17,7 +19,7 @@ import type { InputCmd, WirePiece } from "@worldspring/shared/protocol";
 import { clientWorld, inputState } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import type { UIState } from "@/client/state/store";
-import { sendMsg } from "./connection";
+import { doDrive, sendMsg } from "./connection";
 import { applyLocalCmd, drainOutbox, nextSeq } from "./prediction";
 import { updateInterpolation } from "./interpolation";
 
@@ -42,8 +44,22 @@ export function NetSystem(): null {
       clientWorld.promptLootId = null;
       clientWorld.promptDoorId = null;
       clientWorld.promptCrateId = null;
+      clientWorld.promptVehicleId = null;
       ui.setPrompt(null);
       ui.setDoorPromptId(null);
+      return;
+    }
+
+    // --- doc 13 M4: SEATED in a vehicle ---
+    // No walking prediction and no `input` messages (the server ignores them
+    // for a seated player anyway). The DRIVER routes WASD to `drive` messages;
+    // the passenger just rides. The camera tracks the SMOOTHLY-interpolated hull
+    // body (not the 15 Hz `you`), so driving looks smooth WITHOUT predicting the
+    // vehicle — the "no prediction" discipline holds.
+    const seat = ui.vehicleSeat;
+    if (seat !== null) {
+      inputState.jump = false;
+      driveSeated(seat, ui, now);
       return;
     }
 
@@ -111,6 +127,71 @@ export function NetSystem(): null {
     closeOutOfRangePanels(ui);
   });
   return null;
+}
+
+let lastDriveMs = 0;
+
+/**
+ * doc 13 M4 — drive while seated. The camera follows the interpolated hull body
+ * (smooth); the DRIVER sends `drive` at the input cadence (W/S throttle, A/D
+ * steer, Shift brake); the passenger sends nothing. Blocking UI (inventory/menu/
+ * chat) coasts the vehicle (zero input). While seated the only prompt is exit.
+ */
+function driveSeated(
+  seat: NonNullable<UIState["vehicleSeat"]>,
+  ui: UIState,
+  now: number,
+): void {
+  // Camera anchor = the smoothly-interpolated hull, sat at ~ground level so the
+  // eye height reads normally. No prediction — this mirrors the authoritative
+  // interpolated body, it does not integrate input.
+  const body = clientWorld.bodies.get(seat.id);
+  if (body) {
+    clientWorld.me.x = body.x;
+    clientWorld.me.z = body.z;
+    clientWorld.me.y = body.y - VEHICLE_HALF_Y;
+    clientWorld.me.vy = 0;
+    clientWorld.me.grounded = true;
+  }
+
+  const blocked =
+    ui.invOpen ||
+    ui.menuOpen ||
+    ui.chatOpen ||
+    ui.codePad !== null ||
+    (!inputState.pointerLocked && !inputState.touchMode);
+
+  // Only the DRIVER (seat 0) steers; the passenger just rides.
+  if (seat.index === 0 && now - lastDriveMs >= INPUT_SEND_MS) {
+    lastDriveMs = now;
+    let throttle = 0;
+    let steer = 0;
+    let brake = 0;
+    if (!blocked) {
+      // W = forward (+throttle), S = reverse; A/D steer; Shift = brake. The
+      // virtual joystick's analogZ (forward = negative, matching walking) folds
+      // into throttle; analogX into steer.
+      throttle = clamp(
+        (inputState.forward ? 1 : 0) - (inputState.back ? 1 : 0) - inputState.analogZ,
+        -1,
+        1,
+      );
+      steer = clamp(
+        (inputState.right ? 1 : 0) - (inputState.left ? 1 : 0) + inputState.analogX,
+        -1,
+        1,
+      );
+      brake = inputState.sprint ? 1 : 0;
+    }
+    doDrive(throttle, steer, brake);
+  }
+
+  clientWorld.promptLootId = null;
+  clientWorld.promptDoorId = null;
+  clientWorld.promptCrateId = null;
+  clientWorld.promptVehicleId = null;
+  ui.setDoorPromptId(null);
+  ui.setPrompt("Exit vehicle");
 }
 
 /**
@@ -232,5 +313,30 @@ function updatePrompt(ui: UIState): void {
   clientWorld.promptDoorId = doorId;
   clientWorld.promptCrateId = crateId;
   ui.setDoorPromptId(doorId);
-  ui.setPrompt(bestId === null && doorId === null && crateId === null ? null : bestLabel);
+
+  // doc 13 M4 — nearest boardable vehicle (on foot), LOWEST priority: E boards
+  // it only when no loot/door/crate won. A wrecked hull is unboardable, so it
+  // never prompts. The refuel hint shows only while holding a jerry can.
+  let vehicleId: number | null = null;
+  if (bestId === null && doorId === null && crateId === null) {
+    let vd = VEHICLE_ENTER_RANGE;
+    for (const body of clientWorld.bodies.values()) {
+      if (body.kind !== "vehicle" || body.wrecked) continue;
+      const d = dist2D(me.x, me.z, body.x, body.z);
+      if (d <= vd) {
+        vd = d;
+        vehicleId = body.id;
+      }
+    }
+    if (vehicleId !== null) {
+      bestLabel = ui.inventory.some((s) => s?.type === "fuel")
+        ? "Enter vehicle · [R] refuel"
+        : "Enter vehicle";
+    }
+  }
+  clientWorld.promptVehicleId = vehicleId;
+
+  ui.setPrompt(
+    bestId === null && doorId === null && crateId === null && vehicleId === null ? null : bestLabel,
+  );
 }

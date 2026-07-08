@@ -170,6 +170,8 @@ export function createPlayer(
     tookDamageThisTick: false,
     realm: "overworld",
     portalArmed: true,
+    seatedVehicle: null,
+    seatIndex: -1,
   };
   state.players.set(id, player);
   return player;
@@ -234,6 +236,9 @@ export function restorePlayer(
     tookDamageThisTick: false,
     realm: "overworld",
     portalArmed: true,
+    // doc 13 M4 — never seated across a restart (seat occupancy is transient).
+    seatedVehicle: null,
+    seatIndex: -1,
   };
   state.players.set(id, player);
   return player;
@@ -277,6 +282,10 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   // the beach), regardless of which realm the old life died in.
   player.realm = "overworld";
   player.portalArmed = true;
+  // doc 13 M4 — belt-and-braces: death already vacated any seat (killPlayer), a
+  // fresh life must never inherit one.
+  player.seatedVehicle = null;
+  player.seatIndex = -1;
   sendInventory(state, player);
 }
 
@@ -324,6 +333,17 @@ export function applyQueuedInputs(state: GameState, dt: number): void {
     player.sprintedThisTick = false;
     if (!player.alive) {
       player.cmdQueue.length = 0;
+      continue;
+    }
+    // doc 13 M4 — a SEATED player's normal walking is short-circuited HERE (in
+    // the input handler, per the doc's discipline — the shared movement.ts
+    // integrator is untouched). Their steering rides a separate `drive` ClientMsg
+    // and their core is synced to the hull each tick (systems/vehicles.ts). Drain
+    // any stray `input` (a compliant client stops sending it, but never trust
+    // that) without stepping, so a seated player can never walk out of the seat.
+    if (player.seatedVehicle !== null) {
+      player.cmdQueue.length = 0;
+      player.sprinting = false;
       continue;
     }
     player.inputBudget = Math.min(player.inputBudget + dt, INPUT_BUDGET_CAP_S);

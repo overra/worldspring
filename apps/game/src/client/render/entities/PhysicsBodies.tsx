@@ -73,6 +73,9 @@ export function PhysicsBodies(): ReactElement {
     const slots = pool.slots;
     let i = 0;
     for (const view of clientWorld.bodies.values()) {
+      // doc 13 M4 — the buggy is a multi-part mesh rendered by <Vehicles/>; skip
+      // it here so it never consumes a crate/trunk/barrel slot.
+      if (view.kind === "vehicle") continue;
       if (i >= slots.length) break;
       const mesh = slots[i++];
       mesh.visible = true;

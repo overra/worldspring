@@ -160,6 +160,10 @@ export interface BodyView {
   /** Collider half-extents (trunks — doc 13 M2); absent for fixed-size kinds. */
   dims?: [number, number, number];
   asleep: boolean;
+  /** doc 13 M4 — vehicle seats: rider player ids by seat index (null empty). */
+  seats?: (string | null)[];
+  /** doc 13 M4 — a wrecked vehicle (rendered as a hulk). */
+  wrecked?: boolean;
 }
 
 export interface ClientWorldState {
@@ -184,6 +188,13 @@ export interface ClientWorldState {
   animals: Map<number, AnimalView>;
   /** Interpolated dynamic physics bodies (doc 13), keyed by id. */
   bodies: Map<number, BodyView>;
+  /** doc 13 M4 — player ids currently SEATED in any vehicle (rebuilt each frame
+   * from the vehicle bodies' seats). RemotePlayers hides these — a rider's
+   * walking avatar is replaced by them riding the hull. */
+  seatedPlayerIds: Set<string>;
+  /** doc 13 M4 — nearest boardable vehicle body id within enter range while ON
+   * FOOT, or null. Drives the enter/refuel prompt + the KeyE/KeyR handlers. */
+  promptVehicleId: number | null;
   /** Rain intensity 0..1, lerped between snapshots. */
   weather: number;
   /** Game-time of the interpolated state being rendered (lag comp aim time). */
@@ -233,6 +244,8 @@ export const clientWorld: ClientWorldState = {
   players: new Map(),
   zombies: new Map(),
   bodies: new Map(),
+  seatedPlayerIds: new Set(),
+  promptVehicleId: null,
   loot: [],
   corpses: [],
   fires: [],
@@ -330,6 +343,8 @@ export function resetClientWorld(): void {
   clientWorld.players.clear();
   clientWorld.zombies.clear();
   clientWorld.bodies.clear();
+  clientWorld.seatedPlayerIds.clear();
+  clientWorld.promptVehicleId = null;
   clientWorld.loot = [];
   clientWorld.corpses = [];
   clientWorld.fires = [];
