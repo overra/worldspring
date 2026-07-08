@@ -170,6 +170,9 @@ export function createPlayer(
     tookDamageThisTick: false,
     realm: "overworld",
     portalArmed: true,
+    seatedVehicle: null,
+    seatIndex: -1,
+    ramGrace: null,
   };
   state.players.set(id, player);
   return player;
@@ -234,6 +237,10 @@ export function restorePlayer(
     tookDamageThisTick: false,
     realm: "overworld",
     portalArmed: true,
+    // doc 13 M4 — never seated across a restart (seat occupancy is transient).
+    seatedVehicle: null,
+    seatIndex: -1,
+    ramGrace: null,
   };
   state.players.set(id, player);
   return player;
@@ -277,6 +284,10 @@ export function respawnPlayer(state: GameState, player: ServerPlayer): void {
   // the beach), regardless of which realm the old life died in.
   player.realm = "overworld";
   player.portalArmed = true;
+  // doc 13 M4 — belt-and-braces: death already vacated any seat (killPlayer), a
+  // fresh life must never inherit one.
+  player.seatedVehicle = null;
+  player.seatIndex = -1;
   sendInventory(state, player);
 }
 
@@ -324,6 +335,17 @@ export function applyQueuedInputs(state: GameState, dt: number): void {
     player.sprintedThisTick = false;
     if (!player.alive) {
       player.cmdQueue.length = 0;
+      continue;
+    }
+    // doc 13 M4 — a SEATED player's normal walking is short-circuited HERE (in
+    // the input handler, per the doc's discipline — the shared movement.ts
+    // integrator is untouched). Their steering rides a separate `drive` ClientMsg
+    // and their core is synced to the hull each tick (systems/vehicles.ts). Drain
+    // any stray `input` (a compliant client stops sending it, but never trust
+    // that) without stepping, so a seated player can never walk out of the seat.
+    if (player.seatedVehicle !== null) {
+      player.cmdQueue.length = 0;
+      player.sprinting = false;
       continue;
     }
     player.inputBudget = Math.min(player.inputBudget + dt, INPUT_BUDGET_CAP_S);
@@ -956,6 +978,15 @@ export function stepPortals(state: GameState): void {
   const rSq = PORTAL_RADIUS * PORTAL_RADIUS;
   for (const player of state.players.values()) {
     if (!player.alive) continue;
+    // doc 13 M4 — portals are an ON-FOOT mechanic; a rider rides the hull, whose
+    // pose the vehicle system syncs to their core each tick (AFTER this pass).
+    // Without this guard a seated driver whose hull drifts within PORTAL_RADIUS
+    // is crossed — realm flips to "red", core teleports to the twin — then the
+    // same tick's rider-sync yanks the core back to the overworld hull but leaves
+    // realm="red": the vehicle vanishes from their (now red-realm) snapshot,
+    // freezing the camera on an invisible hull they still steer. The vehicle is
+    // overworld-only, so riders never portal-cross while seated.
+    if (player.seatedVehicle !== null) continue;
     let on: Portal | null = null;
     for (const portal of state.portals) {
       if (portal.realm !== player.realm) continue;

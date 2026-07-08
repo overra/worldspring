@@ -39,7 +39,10 @@ export type ItemType =
   | "portal_kit"
   // doc 06: base building. Additive (no bump needed for the ItemType itself —
   // the UNKNOWN_DEF rule); the doc's wire messages take the proto bump.
-  | "hammer";
+  | "hammer"
+  // doc 13 M4: a jerry can of fuel — the vehicle's tank juice. Additive
+  // (UNKNOWN_DEF rule); doc 13 M4's proto bump is forced by its ClientMsgs.
+  | "fuel";
 
 export type ItemKind =
   | "food"
@@ -314,6 +317,11 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   // doc 06: base building — equipping it enters build mode (client) and gates
   // server-side placement. kind:"tool" → useItem no-op, like the flashlight.
   hammer: { type: "hammer", name: "Hammer", kind: "tool", stack: 1, color: "#8a7550", power: 0 },
+
+  // doc 13 M4: vehicle fuel. kind:"material" → useItem is a no-op (like the
+  // other materials); it is consumed only by the `refuel` interaction on a
+  // vehicle (systems/vehicles.ts), one can = FUEL_PER_CAN units.
+  fuel: { type: "fuel", name: "Jerry Can", kind: "material", stack: 2, color: "#c8402a", power: 0 },
 };
 
 // --- Crafting (doc 05 M2) ---
@@ -492,6 +500,8 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "canteen_empty", weight: 6, min: 1, max: 1 },
     { type: "portal_kit", weight: 6, min: 1, max: 1 },
     { type: "hammer", weight: 7, min: 1, max: 1 },
+    // doc 13 M4 — inland cabins/sheds are the vehicle-adjacent fuel tier.
+    { type: "fuel", weight: 6, min: 1, max: 1 },
   ],
   military: [
     { type: "rifle", weight: 9, min: 1, max: 1 },
@@ -505,6 +515,8 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
     { type: "first_aid_kit", weight: 8, min: 1, max: 1 },
     { type: "scrap", weight: 8, min: 2, max: 4 },
     { type: "canteen_empty", weight: 6, min: 1, max: 1 },
+    // doc 13 M4 — the compound motor pool: the richest fuel source (a full can).
+    { type: "fuel", weight: 9, min: 1, max: 2 },
   ],
 };
 

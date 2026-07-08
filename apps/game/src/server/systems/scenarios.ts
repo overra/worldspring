@@ -13,6 +13,8 @@ import craftingJson from "../../../scenarios/crafting.json";
 import physicsJson from "../../../scenarios/physics.json";
 import survivalJson from "../../../scenarios/survival.json";
 import treesJson from "../../../scenarios/trees.json";
+import vehiclesJson from "../../../scenarios/vehicles.json";
+import vehiclesRideJson from "../../../scenarios/vehicles_ride.json";
 import wearJson from "../../../scenarios/wear.json";
 
 /** The set used when no name is supplied (or an unknown one is). */
@@ -26,6 +28,8 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = Object.freeze({
   trees: parseScenario(treesJson),
   wear: parseScenario(wearJson),
   building: parseScenario(buildingJson),
+  vehicles: parseScenario(vehiclesJson),
+  vehicles_ride: parseScenario(vehiclesRideJson),
 });
 
 /** Every shipped set name — the M4 panel's set-switcher reads this. */

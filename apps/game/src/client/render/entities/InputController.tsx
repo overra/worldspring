@@ -18,9 +18,12 @@ import {
   doDemolish,
   doDoor,
   doDrop,
+  doEnterVehicle,
   doEquip,
+  doExitVehicle,
   doPickup,
   doPlace,
+  doRefuel,
   doUse,
 } from "@/client/net/connection";
 
@@ -153,6 +156,12 @@ export function InputController(): null {
           ui.openChat();
           return;
         case "KeyE": {
+          // doc 13 M4 — seated: E leaves the vehicle (the server places you
+          // beside it). Highest priority so you can always get out.
+          if (ui.vehicleSeat !== null) {
+            doExitVehicle();
+            return;
+          }
           // doc 06 M6 — an open crate panel closes on E (desktop's explicit
           // close; touch walks away instead).
           if (ui.container !== null) {
@@ -180,9 +189,20 @@ export function InputController(): null {
             else doDoor(doorId);
             return;
           }
-          // doc 06 M6 — last: open a nearby storage crate.
+          // doc 06 M6 — open a nearby storage crate.
           const crateId = clientWorld.promptCrateId;
-          if (crateId !== null) doContainerOpen(crateId);
+          if (crateId !== null) {
+            doContainerOpen(crateId);
+            return;
+          }
+          // doc 13 M4 — last: board a nearby vehicle. Take the driver seat if
+          // it's empty, else the passenger seat; the server rejects a full one.
+          const vehId = clientWorld.promptVehicleId;
+          if (vehId !== null) {
+            const seats = clientWorld.bodies.get(vehId)?.seats;
+            const seat = seats && seats[0] !== null ? 1 : 0;
+            doEnterVehicle(vehId, seat);
+          }
           return;
         }
         case "KeyL": {
@@ -237,6 +257,13 @@ export function InputController(): null {
           doUse(ui.selectedSlot);
           return;
         case "KeyR": {
+          // doc 13 M4 — near a vehicle with a jerry can in inventory, R refuels
+          // it (takes priority over reload only in that specific context).
+          const vehId = clientWorld.promptVehicleId;
+          if (vehId !== null && ui.inventory.some((s) => s?.type === "fuel")) {
+            doRefuel(vehId);
+            return;
+          }
           // Reload the equipped ranged weapon (doc 11 M3). The wire verb is the
           // existing {t:"use", slot} — startUse routes use-on-a-ranged-weapon to
           // the reload channel — so gate on "ranged selected" client-side: an

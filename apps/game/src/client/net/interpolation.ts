@@ -211,6 +211,10 @@ function slerpQuat(
 
 function interpolateBodies(a: BufferedSnap, b: BufferedSnap, t: number): void {
   const views = clientWorld.bodies;
+  // doc 13 M4 — rebuilt each frame from the vehicle bodies' seats so
+  // RemotePlayers can hide riders (their avatar rides the hull instead).
+  const seated = clientWorld.seatedPlayerIds;
+  seated.clear();
   for (const bb of b.bodies) {
     const ba = a.bodyById.get(bb.id) ?? bb;
     let view = views.get(bb.id);
@@ -222,6 +226,12 @@ function interpolateBodies(a: BufferedSnap, b: BufferedSnap, t: number): void {
     // FIRST snapshot a body appears in can predate the client hearing them
     // (interest-edge join order), so refresh cheaply every pass.
     if (bb.dims) view.dims = bb.dims;
+    // doc 13 M4 — vehicle seat/wreck state rides the wire body; collect riders.
+    if (bb.kind === "vehicle") {
+      view.seats = bb.seats;
+      view.wrecked = bb.wrecked === true;
+      if (bb.seats) for (const pid of bb.seats) if (pid !== null) seated.add(pid);
+    }
     view.asleep = bb.asleep === true;
     if (view.asleep) {
       // Settled bodies pin to the authoritative pose — no churn.

@@ -300,6 +300,27 @@ export function doContainerMove(id: number, from: number, to: number, dir: "in" 
   sendMsg({ t: "cMove", id, from, to, dir });
 }
 
+/** doc 13 M4 — board vehicle `id` at `seat` (0 driver, 1 passenger). */
+export function doEnterVehicle(id: number, seat: number): void {
+  sendMsg({ t: "enterVehicle", id, seat });
+}
+
+/** doc 13 M4 — leave the vehicle (server places you beside it). */
+export function doExitVehicle(): void {
+  sendMsg({ t: "exitVehicle" });
+}
+
+/** doc 13 M4 — driver control (server-authoritative; NOT predicted). Sent at the
+ * input cadence from NetSystem while seated as driver. */
+export function doDrive(throttle: number, steer: number, brake: number): void {
+  sendMsg({ t: "drive", throttle, steer, brake });
+}
+
+/** doc 13 M4 — refuel a nearby vehicle from a jerry can in inventory. */
+export function doRefuel(id: number): void {
+  sendMsg({ t: "refuel", id });
+}
+
 /** Send a proximity-chat line; a no-op when the socket is closed (sendMsg).
  * The input enforces CHAT_MAX_LENGTH already — the slice is paste-proofing. */
 export function sendChat(text: string): void {
@@ -585,6 +606,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   ui.setVitals(vitalsOf(msg.you));
   ui.setAction(msg.you.action); // doc 11 M2: cast-bar progress (render-only)
   ui.setRealm(msg.you.realm);
+  ui.setVehicleSeat(msg.you.seat ?? null); // doc 13 M4 (never seated on welcome)
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.you.hp > 0) {
     ui.setPhase("playing");
@@ -628,6 +650,7 @@ function onSnap(msg: SnapMsg): void {
 
   ui.setVitals(vitalsOf(msg.you));
   ui.setAction(msg.you.action); // doc 11 M2: cast-bar progress (render-only)
+  ui.setVehicleSeat(msg.you.seat ?? null); // doc 13 M4 seat + driver HUD readout
   ui.setPlayerCount(msg.count);
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
   if (msg.events.length > 0) {

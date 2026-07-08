@@ -33,6 +33,7 @@ import { Airdrops } from "./render/entities/Airdrops";
 import { Campfires } from "./render/entities/Campfires";
 import { Portals } from "./render/entities/Portals";
 import { PhysicsBodies } from "./render/entities/PhysicsBodies";
+import { Vehicles } from "./render/entities/Vehicles";
 import { BuildPreview } from "./render/entities/BuildPreview";
 import { EffectsLayer } from "./render/entities/EffectsLayer";
 
@@ -87,6 +88,7 @@ export function GameCanvas(): React.ReactElement {
           <Grass />
           <RainLayer />
           <PhysicsBodies />
+          <Vehicles />
         </>
       )}
       <RemotePlayers />

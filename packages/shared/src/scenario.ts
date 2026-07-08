@@ -54,6 +54,13 @@ export type Provision =
   /** Spawn `count` dynamic physics crates ahead of the player (doc 13).
    * Warn-noop when config.physics.enabled is false. */
   | { kind: "spawnBody"; body: "crate"; count: number }
+  // --- live in doc 13 M4 ---
+  /** Spawn ONE drivable buggy (full VehicleMeta: seats/fuel/hp) on open ground
+   * a few metres ahead of the player, so a testbed lands next to a ready-to-drive
+   * vehicle instead of trekking to a building-blocked worldgen spawn. `fuel`
+   * (optional) seeds the tank — omit for a full tank, 0 for an out-of-fuel rig.
+   * Warn-noop when config.physics.enabled is false. Testbed-only, never prod. */
+  | { kind: "spawnVehicle"; fuel?: number }
   // --- reserved for M5 (parsed-but-inert) ---
   | { kind: "spawnZombie"; count: number; military: boolean }
   | { kind: "spawnAnimal"; species: string; count: number }
@@ -259,6 +266,13 @@ function parseProvision(raw: unknown): Provision | null {
     case "spawnBody":
       // Only crates exist in doc 13 M1; unknown body strings clamp to crate.
       return { kind: "spawnBody", body: "crate", count: num(raw.count, 4, 1, 16, true) };
+    case "spawnVehicle": {
+      // fuel optional: absent ⇒ full tank at provision (testbed.ts clamps to
+      // VEHICLE_FUEL_MAX). Parse-clamp a loose upper bound here (scenario.ts has
+      // no runtime dep on constants.ts); the provisioner is the real authority.
+      const fuel = optVital(raw.fuel, 0, 100000);
+      return fuel === undefined ? { kind: "spawnVehicle" } : { kind: "spawnVehicle", fuel };
+    }
     // --- M5-reserved: parsed-but-inert ---
     case "spawnZombie":
       return { kind: "spawnZombie", count: num(raw.count, 1, 0, 999, true), military: bool(raw.military, false) };

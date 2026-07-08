@@ -168,9 +168,12 @@ export function RemotePlayers(): ReactElement {
     const players = clientWorld.players;
     pool.frame++;
 
-    // Release slots whose player left (Map tolerates delete-while-iterating).
+    // Release slots whose player left OR is now seated in a vehicle (doc 13 M4 —
+    // a rider's walking avatar is hidden; they ride the hull). Map tolerates
+    // delete-while-iterating.
+    const seated = clientWorld.seatedPlayerIds;
     for (const [id, idx] of pool.byId) {
-      if (players.has(id)) continue;
+      if (players.has(id) && !seated.has(id)) continue;
       pool.byId.delete(id);
       pool.free.push(idx);
       pool.slots[idx].rig.root.visible = false;
@@ -181,6 +184,7 @@ export function RemotePlayers(): ReactElement {
 
     for (const view of players.values()) {
       if (view.id === clientWorld.myId) continue; // belt and suspenders
+      if (seated.has(view.id)) continue; // doc 13 M4 — riders render on the hull
       let idx = pool.byId.get(view.id);
       if (idx === undefined) {
         idx = pool.free.pop();

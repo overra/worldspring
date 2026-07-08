@@ -87,6 +87,20 @@ export function killPlayer(state: GameState, victim: ServerPlayer, cause: string
   victim.vitals.hp = 0;
   victim.diedAt = state.time;
   victim.cmdQueue.length = 0;
+  // doc 13 M4 — a seated victim frees their seat (they're a corpse at the hull
+  // now). Inlined rather than importing systems/vehicles.ts to keep survival
+  // free of a vehicles↔survival import cycle (vehicles imports damagePlayer).
+  if (victim.seatedVehicle !== null) {
+    const meta = state.vehicleMeta.get(victim.seatedVehicle);
+    if (meta) {
+      for (let i = 0; i < meta.seats.length; i++) {
+        if (meta.seats[i] === victim.tokenHash) meta.seats[i] = null;
+      }
+      if (victim.seatIndex === 0) meta.input = { throttle: 0, steer: 0, brake: 0 };
+    }
+    victim.seatedVehicle = null;
+    victim.seatIndex = -1;
+  }
   const recap: DeathRecap = {
     by: cause,
     // Clamped: an unclean restart can roll game.time back below bornAt.

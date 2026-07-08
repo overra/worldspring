@@ -63,6 +63,7 @@ function freshGame() {
     airdropNextAt: 0,
     physics: freshPhysics(),
     felledTrees: new Set(),
+    vehicleMeta: new Map(),
   };
 }
 
@@ -106,6 +107,22 @@ function sampleGame() {
   // doc 13 M2 — felled tree indices round-trip with the snapshot.
   g.felledTrees.add(3);
   g.felledTrees.add(17);
+  // doc 13 M4 — a vehicle: the hull BODY rides the engineless physics buffer
+  // (serialize passes it through), its gameplay meta (fuel/hp/wrecked) rides the
+  // `vehicles` snapshot array. Seats are OCCUPIED here to prove they are CLEARED
+  // on restore (players are never seated across a restart, doc 13 §5). Body id 40
+  // stays under nextEntityId (42) so the id-counter assertion is unaffected.
+  g.physics.spawnBody(40, "vehicle", 20, 1, 30);
+  g.vehicleMeta.set(40, {
+    id: 40,
+    fuel: 42.5,
+    hp: 180,
+    wrecked: false,
+    seats: ["deadbeefcafe", null],
+    input: { throttle: 1, steer: 0, brake: 0 },
+    lastForward: 3,
+    ramCooldown: 0.2,
+  });
   return g;
 }
 
@@ -156,6 +173,17 @@ eq(
   "weather/airdrop scheduling mismatch",
 );
 eq([...loaded.felledTrees], [...orig.felledTrees], "felled trees mismatch (doc 13 M2)");
+
+// doc 13 M4 — vehicle meta round-trips fuel/hp/wrecked; seats are CLEARED (never
+// seated across a restart); and the hull body itself round-trips as kind
+// "vehicle" alongside the meta.
+const vm = loaded.vehicleMeta.get(40);
+if (!vm) fail("vehicle meta did not round-trip (id 40 missing)");
+eq([vm.fuel, vm.hp, vm.wrecked], [42.5, 180, false], "vehicle fuel/hp/wrecked mismatch (doc 13 M4)");
+eq(vm.seats, [null, null], "vehicle seats must be CLEARED on restore (doc 13 M4)");
+const vbody = loaded.physics.serialize().find((b) => b.id === 40);
+if (!vbody || vbody.kind !== "vehicle") fail("vehicle hull body did not round-trip as kind 'vehicle'");
+if (vbody.dims !== undefined) fail("restored vehicle body must stay dims-less (fixed-size)");
 
 // Empty table -> loadWorld returns false (caller stocks a fresh world).
 const empty = makeFakeSql();

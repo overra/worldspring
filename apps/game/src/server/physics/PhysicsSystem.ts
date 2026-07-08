@@ -92,6 +92,46 @@ const CRATE_HALF = 0.4;
  * MUST equal the shared pair (the client mesh + the server spawn lift read it). */
 const BARREL_HALF_XZ = 0.3;
 const BARREL_HALF_Y = 0.5;
+/** Vehicle hull half-extents (doc 13 M4). LOCAL mirror of shared VEHICLE_HALF_X/
+ * Y/Z (constants.ts) — the BARREL_HALF precedent keeps this module value-import-
+ * free of non-leaf shared modules for the strip-types replay harness. MUST equal
+ * the shared trio (the client mesh + server spawn lift read those). Local -Z is
+ * forward, so the hull is longer on Z (length) than wide on X (width). */
+const VEHICLE_HALF_X = 0.75;
+const VEHICLE_HALF_Y = 0.55;
+const VEHICLE_HALF_Z = 1.25;
+/**
+ * Driven-body controller tuning (doc 13 M4). Server-only, deterministic: the
+ * controller in `driveVehicle` reads ONLY the engine body state + the clamped
+ * driver input and applies impulses/torques with pure float math (mul/add/
+ * min/max/abs/sqrt — NO transcendentals, so it is bit-reproducible like the
+ * rest of the engine). Balance lives here (engine-adjacent) so the replay
+ * harness exercises the production controller, not a re-implementation — the
+ * TOPPLE_SPEED/BARREL_SHOVE precedent of keeping the impulse math beside the
+ * body. NOT folded into the HASHED replay scenario, so baseline b7036dc6 stands.
+ */
+/** Forward drive acceleration at full throttle (m/s²). */
+const VEHICLE_DRIVE_ACCEL = 11;
+/** Forward speed cap (m/s) — drive force cuts out past it. */
+const VEHICLE_MAX_SPEED = 15;
+/** Reverse speed cap (m/s). */
+const VEHICLE_MAX_REVERSE = 6;
+/** Braking deceleration at full brake (m/s²). Bounded so a normal brake never
+ * looks like a crash to the forward-speed-drop detector (constants.ts
+ * VEHICLE_CRASH_MIN_DROP sits above VEHICLE_BRAKE_ACCEL × tick dt). */
+const VEHICLE_BRAKE_ACCEL = 14;
+/** Fraction of LATERAL (sideways) velocity cancelled each tick — grip, so the
+ * hull corners instead of sliding like ice. 0 = ice, 1 = on rails. */
+const VEHICLE_GRIP = 0.85;
+/** Yaw steer acceleration (rad/s²) at full steer and full speed authority. */
+const VEHICLE_STEER_ACCEL = 3.4;
+/** Speed (m/s) at which steering reaches full authority (scales linearly to it,
+ * so a near-stationary hull barely turns — no pirouetting in place). */
+const VEHICLE_STEER_REF_SPEED = 5;
+/** Linear/angular damping baked onto the hull body so it coasts to rest and
+ * steering settles (deterministic — part of the engine step). */
+const VEHICLE_LINEAR_DAMPING = 0.35;
+const VEHICLE_ANGULAR_DAMPING = 2.2;
 /** Seconds a body must sleep before it counts as "settled" for eviction. */
 const SETTLED_AFTER_S = 2;
 /** Engine substeps per game tick. Rapier's solver is tuned for ~1/60s steps;
@@ -100,6 +140,39 @@ const SETTLED_AFTER_S = 2;
  * displacement exceeds the contact window). 4 substeps ≈ 16.7 ms each; cost
  * is 4× the M0 per-step number, still <1% of the tick at the body cap. */
 const PHYSICS_SUBSTEPS = 4;
+
+/** doc 13 M4 — post-step readout of a vehicle body for the driving system:
+ * position, forward unit vector on XZ (facing), horizontal speed (for ramming)
+ * and signed forward speed (for the crash detector). */
+export interface VehicleSensors {
+  x: number;
+  y: number;
+  z: number;
+  /** Forward unit vector, XZ only (the hull is upright — X/Z rotation locked). */
+  fx: number;
+  fz: number;
+  /** |horizontal velocity| (m/s). */
+  speed: number;
+  /** Signed forward speed vf = v·forward (m/s). */
+  forward: number;
+}
+
+/** Rotate vector (vx,vy,vz) by quaternion (qx,qy,qz,qw). Pure float math
+ * (mul/add only — NO transcendentals), so it is bit-deterministic alongside the
+ * WASM engine (doc 13 M4). v' = v + 2·qw·(q×v) + 2·q×(q×v). */
+function rotateByQuat(
+  qx: number, qy: number, qz: number, qw: number,
+  vx: number, vy: number, vz: number,
+): [number, number, number] {
+  const tx = 2 * (qy * vz - qz * vy);
+  const ty = 2 * (qz * vx - qx * vz);
+  const tz = 2 * (qx * vy - qy * vx);
+  return [
+    vx + qw * tx + (qy * tz - qz * ty),
+    vy + qw * ty + (qz * tx - qx * tz),
+    vz + qw * tz + (qx * ty - qy * tx),
+  ];
+}
 
 interface BodyRec {
   id: number;
@@ -312,6 +385,70 @@ export class PhysicsSystem {
   }
 
   /**
+   * doc 13 M4 — apply ONE tick of driver control to a "vehicle" body. The
+   * driven-body controller: forward/reverse drive along the hull's facing
+   * (throttle, speed-capped), braking opposing forward motion, lateral grip so
+   * it corners instead of ice-sliding, and speed-scaled yaw steering. Applied
+   * as impulses/torques ONCE per tick, right BEFORE step()'s substeps.
+   *
+   * Deterministic: reads ONLY the engine body state + the driver input, which
+   * the caller has already parse-clamped (throttle/steer ∈ [-1,1], brake ∈
+   * [0,1]) AND fuel-gated (throttle passed as 0 when the tank is dry). Pure
+   * float math, no transcendentals, no wall-clock. No-op for a non-vehicle id
+   * or when disabled; a fully-idle call on a near-stopped hull is skipped so a
+   * parked-but-occupied vehicle can still sleep (no wake-on-zero).
+   */
+  driveVehicle(id: number, throttle: number, steer: number, brake: number, dt: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec || rec.kind !== "vehicle") return;
+    const body = rec.body;
+    const q = body.rotation();
+    const v = body.linvel();
+    const mass = body.mass();
+    const [fx, fy, fz] = rotateByQuat(q.x, q.y, q.z, q.w, 0, 0, -1); // forward (-Z)
+    const [rx, , rz] = rotateByQuat(q.x, q.y, q.z, q.w, 1, 0, 0); // right (+X)
+    const vf = v.x * fx + v.y * fy + v.z * fz; // signed forward speed
+    const vr = v.x * rx + v.z * rz; // lateral (sideways) speed on XZ
+    const idle = throttle === 0 && steer === 0 && brake === 0;
+    if (idle && Math.abs(vf) < 0.05 && Math.abs(vr) < 0.05) return;
+
+    // Drive force along the hull's facing, capped at the speed limits.
+    let accel = 0;
+    if (throttle > 0 && vf < VEHICLE_MAX_SPEED) accel = throttle * VEHICLE_DRIVE_ACCEL;
+    else if (throttle < 0 && vf > -VEHICLE_MAX_REVERSE) accel = throttle * VEHICLE_DRIVE_ACCEL;
+    // Braking opposes forward motion (bounded, so it never reads as a crash).
+    if (brake > 0 && Math.abs(vf) > 1e-3) accel += (vf > 0 ? -1 : 1) * brake * VEHICLE_BRAKE_ACCEL;
+    const along = accel * mass * dt; // forward impulse magnitude
+    // Lateral grip: cancel a fraction of the sideways velocity this tick — an
+    // instantaneous velocity change (Δp = mass·Δv), so it is NOT dt-scaled.
+    const lat = -vr * VEHICLE_GRIP * mass;
+    body.applyImpulse({ x: fx * along + rx * lat, y: fy * along, z: fz * along + rz * lat }, true);
+    // Steering: yaw torque scaled by forward-speed authority (barely turns near
+    // standstill), inverted in reverse (steer a reversing car the natural way).
+    if (steer !== 0) {
+      const authority = Math.min(1, Math.abs(vf) / VEHICLE_STEER_REF_SPEED);
+      const dir = vf >= 0 ? 1 : -1;
+      const yawImpulse = -steer * VEHICLE_STEER_ACCEL * authority * dir * mass * dt;
+      body.applyTorqueImpulse({ x: 0, y: yawImpulse, z: 0 }, true);
+    }
+  }
+
+  /** doc 13 M4 — read a vehicle body's post-step pose/velocity (see
+   * VehicleSensors). Null for a non-vehicle id or before the engine attaches. */
+  vehicleSensors(id: number): VehicleSensors | null {
+    const rec = this.bodies.get(id);
+    if (!rec || rec.kind !== "vehicle") return null;
+    const body = rec.body;
+    const t = body.translation();
+    const q = body.rotation();
+    const v = body.linvel();
+    const [fx, , fz] = rotateByQuat(q.x, q.y, q.z, q.w, 0, 0, -1);
+    const speed = Math.sqrt(v.x * v.x + v.z * v.z);
+    const forward = v.x * fx + v.z * fz;
+    return { x: t.x, y: t.y, z: t.z, fx, fz, speed, forward };
+  }
+
+  /**
    * Mark a tree (by index in statics.trees) as felled: its STATIC collider is
    * removed from the physics world so the dynamic trunk (and future props)
    * stop colliding where it stood (doc 13 M2). Pre-attach calls just record
@@ -441,9 +578,20 @@ export class PhysicsSystem {
       .setRotation({ x: p.q[0], y: p.q[1], z: p.q[2], w: p.q[3] })
       .setLinvel(p.lv[0], p.lv[1], p.lv[2])
       .setAngvel({ x: p.av[0], y: p.av[1], z: p.av[2] });
+    // doc 13 M4 — the vehicle hull coasts and its steering settles: bake
+    // linear/angular damping onto the body (part of the deterministic step).
+    if (p.kind === "vehicle") {
+      desc.setLinearDamping(VEHICLE_LINEAR_DAMPING).setAngularDamping(VEHICLE_ANGULAR_DAMPING);
+    }
     // Restore asleep bodies asleep — no wake-storm on boot (doc 13 §4).
     if (p.asleep) desc.setCanSleep(true).sleeping = true;
     const body = this.world.createRigidBody(desc);
+    // doc 13 M4 — a ground buggy stays UPRIGHT: lock pitch/roll (X/Z rotation),
+    // leave only yaw (Y) free. This is the v1 no-rollover simplification (the
+    // "scope gravity" discipline — a flippable box getting stuck on its roof is
+    // exactly the kind of physics grief v1 avoids); it also makes the pose a
+    // pure yaw the client renders trivially and the crash detector reads cleanly.
+    if (p.kind === "vehicle") body.setEnabledRotations(false, true, false, false);
     // Half-extents per kind: trunks carry per-instance dims (doc 13 M2);
     // barrels are a fixed upright drum (doc 13 M3, dims-less); crates the M1
     // cube. A dims-carrying row always wins, so crates/pre-M2 rows still fall
@@ -456,15 +604,23 @@ export class PhysicsSystem {
       hx = BARREL_HALF_XZ;
       hy = BARREL_HALF_Y;
       hz = BARREL_HALF_XZ;
+    } else if (p.kind === "vehicle") {
+      hx = VEHICLE_HALF_X;
+      hy = VEHICLE_HALF_Y;
+      hz = VEHICLE_HALF_Z;
     } else {
       hx = hy = hz = CRATE_HALF;
     }
     const collider = engine.ColliderDesc.cuboid(hx, hy, hz);
     // Surface response per kind: trunks slide and stop (felled tree, doc 13
     // M2); barrels tumble a little then settle (the shove feel, doc 13 M3);
+    // the vehicle hull is LOW-friction so ground drag doesn't fight the drive
+    // force (an arcade "box car" — the manual lateral GRIP impulse in
+    // driveVehicle supplies cornering, not the collider friction, doc 13 M4);
     // crates keep the M1 default exactly.
     if (p.kind === "trunk") collider.setRestitution(0.05).setFriction(0.9);
     else if (p.kind === "barrel") collider.setRestitution(0.1).setFriction(0.6);
+    else if (p.kind === "vehicle") collider.setRestitution(0.1).setFriction(0.25);
     else collider.setRestitution(0.3).setFriction(0.8);
     this.world.createCollider(collider, body);
     const rec: BodyRec = {
@@ -487,9 +643,19 @@ export class PhysicsSystem {
    * yet, oldest-created. Runs after step and after spawns, so a lowered LIVE
    * bodyCap drains on the next tick. */
   private enforceCap(): void {
-    while (this.bodies.size > Math.max(0, this.cfg.bodyCap)) {
+    // doc 13 M4 — vehicles are cap-EXEMPT: they never count toward the cap and
+    // are never chosen as a victim. A handful spawn deterministically per island
+    // and they ARE the endgame retention feature — evicting an occupied (or just
+    // parked) buggy to make room for a shoved barrel would be a terrible trade,
+    // and enforceCap can't tell "occupied" from "recently driven" cheaply. The
+    // cap therefore governs only the transient population (crates/trunks/barrels).
+    const cap = Math.max(0, this.cfg.bodyCap);
+    let evictable = 0;
+    for (const rec of this.bodies.values()) if (rec.kind !== "vehicle") evictable++;
+    while (evictable > cap) {
       let victim: BodyRec | null = null;
       for (const rec of this.bodies.values()) {
+        if (rec.kind === "vehicle") continue;
         const settled = rec.sleptAt !== null && this.gameTime - rec.sleptAt >= SETTLED_AFTER_S;
         if (settled && (victim === null || (victim.sleptAt ?? Infinity) > (rec.sleptAt ?? Infinity))) {
           victim = rec;
@@ -497,11 +663,13 @@ export class PhysicsSystem {
       }
       if (!victim) {
         for (const rec of this.bodies.values()) {
+          if (rec.kind === "vehicle") continue;
           if (victim === null || rec.createdAt < victim.createdAt) victim = rec;
         }
       }
       if (!victim) return;
       this.removeBody(victim.id);
+      evictable--;
     }
   }
 }

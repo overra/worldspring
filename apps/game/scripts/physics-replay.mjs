@@ -231,6 +231,95 @@ const dt = 1 / 15;
   if (rollOk) check(true, "barrel break loot rolls valid server-side stacks (300 rolls, all in range)");
 }
 
+// --- 1.7 vehicles: driven-body controller (doc 13 M4) ------------------------
+// New assertions only — the hashed replay scenario (section 2) is UNTOUCHED, so
+// the committed baseline stands (no re-baseline). The controller
+// (PhysicsSystem.driveVehicle) + sensors are exercised directly; determinism is
+// pinned here by a run-twice reproducibility check (the barrel-shove precedent),
+// NOT by the global hash. A vehicle is a fixed-size, dims-less "vehicle" body
+// with its rotation locked upright (only yaw free).
+{
+  const poseOf = (sys, id) => [...sys.poses()].find((b) => b.id === id);
+
+  // a) Fixed-size dims-less "vehicle" body settles UPRIGHT on flat ground at
+  //    ~VEHICLE_HALF_Y (0.55), carrying NO dims on the wire.
+  const sysA = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysA.attachEngine(RAPIER, dt);
+  sysA.spawnBody(1, "vehicle", -100, 4, -100); // flat 0, clear of the plateaus
+  for (let i = 0; i < 300; i++) sysA.step(dt, i * dt);
+  const settled = poseOf(sysA, 1);
+  check(settled !== undefined && Math.abs(settled.y - 0.55) < 0.35, `vehicle settles upright at ~0.55 (y=${settled?.y.toFixed(2)})`);
+  check(settled !== undefined && settled.dims === undefined, "vehicle pose carries NO dims (fixed-size wire shape)");
+
+  // b) DRIVE forward: a throttle-1 sequence moves the hull and the result is
+  //    REPRODUCIBLE to <1e-6 (the controller is deterministic — no wall-clock,
+  //    no transcendentals, reads only body state + clamped input).
+  const runDrive = () => {
+    const sys = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+    sys.attachEngine(RAPIER, dt);
+    sys.spawnBody(1, "vehicle", -100, 0.9, -100);
+    for (let i = 0; i < 60; i++) sys.step(dt, i * dt); // settle
+    const start = poseOf(sys, 1);
+    for (let i = 60; i < 260; i++) {
+      sys.driveVehicle(1, 1, 0, 0, dt); // full throttle, no steer/brake
+      sys.step(dt, i * dt);
+    }
+    return { start, end: poseOf(sys, 1), sensors: sys.vehicleSensors(1) };
+  };
+  const drv1 = runDrive();
+  const moved = Math.hypot(drv1.end.x - drv1.start.x, drv1.end.z - drv1.start.z);
+  check(moved > 3, `drive-forward moved the vehicle (${moved.toFixed(2)} m > 3)`);
+  check(drv1.sensors.speed > 2, `vehicle reached driving speed (${drv1.sensors.speed.toFixed(2)} m/s)`);
+  const drv2 = runDrive();
+  check(
+    Math.abs(drv2.end.x - drv1.end.x) < 1e-6 && Math.abs(drv2.end.z - drv1.end.z) < 1e-6,
+    `drive is reproducible (Δx=${Math.abs(drv2.end.x - drv1.end.x).toExponential(1)})`,
+  );
+
+  // c) STEER changes the PATH: full throttle + full steer ends somewhere clearly
+  //    different from driving straight (the hull turned).
+  const runSteer = (steer) => {
+    const sys = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+    sys.attachEngine(RAPIER, dt);
+    sys.spawnBody(1, "vehicle", -100, 0.9, -100);
+    for (let i = 0; i < 60; i++) sys.step(dt, i * dt);
+    for (let i = 60; i < 210; i++) {
+      sys.driveVehicle(1, 1, steer, 0, dt);
+      sys.step(dt, i * dt);
+    }
+    return sys.vehicleSensors(1);
+  };
+  const straight = runSteer(0);
+  const turned = runSteer(1);
+  const pathDiff = Math.hypot(straight.x - turned.x, straight.z - turned.z);
+  check(pathDiff > 2, `steering changed the path (Δpos=${pathDiff.toFixed(2)} m)`);
+
+  // d) BODY-CAP EXEMPTION: a tiny cap flooded with barrels must NOT evict the
+  //    vehicle, and the transient barrels stay capped.
+  const sysD = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 3 });
+  sysD.attachEngine(RAPIER, dt);
+  sysD.spawnBody(1, "vehicle", -80, 1, -80);
+  for (let i = 0; i < 10; i++) sysD.spawnBody(10 + i, "barrel", -60 + i * 2, 3, -60);
+  for (let s = 0; s < 300; s++) sysD.step(dt, s * dt);
+  check([...sysD.poses()].some((b) => b.id === 1 && b.kind === "vehicle"), "vehicle survives cap pressure (cap-exempt)");
+  const barrelsLeft = [...sysD.poses()].filter((b) => b.kind === "barrel").length;
+  check(barrelsLeft <= 3, `transient barrels still capped at 3 (${barrelsLeft} ≤ 3, vehicle uncounted)`);
+
+  // e) RESTORE round-trip preserves the vehicle body (kind, dims-less, pose).
+  const sysE = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysE.attachEngine(RAPIER, dt);
+  sysE.spawnBody(1, "vehicle", -100, 0.9, -100);
+  for (let i = 0; i < 200; i++) sysE.step(dt, i * dt);
+  const persistedV = sysE.serialize();
+  const vrow = persistedV.find((b) => b.id === 1);
+  check(vrow?.kind === "vehicle" && vrow.dims === undefined, "vehicle serializes as kind 'vehicle' with no dims");
+  const sysE2 = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysE2.attachEngine(RAPIER, dt);
+  sysE2.restore(persistedV);
+  const rv = [...sysE2.poses()].find((b) => b.id === 1);
+  check(rv?.kind === "vehicle" && Math.abs((rv?.y ?? NaN) - (vrow?.y ?? NaN)) < 0.01, "restore rebuilds the vehicle at its persisted pose");
+}
+
 // --- 2. replay determinism ---------------------------------------------------
 {
   const sys = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 24 });

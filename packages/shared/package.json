@@ -24,6 +24,7 @@
     "./signedCookie": "./src/signedCookie.ts",
     "./structures": "./src/structures.ts",
     "./text": "./src/text.ts",
+    "./vehicles": "./src/vehicles.ts",
     "./version": "./src/version.ts",
     "./world": "./src/world.ts"
   },
