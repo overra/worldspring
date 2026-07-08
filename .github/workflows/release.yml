@@ -110,6 +110,10 @@ jobs:
           printf '{ "version": "%s" }\n' "$VERSION" > latest.json
           npx wrangler@4.99.0 r2 object put "$R2_BUCKET/releases/latest.json" --file latest.json --content-type application/json --remote
 
+      # Idempotent update-or-create: duplicate tag events happen (a tag
+      # delete+re-push fired two queued runs on 2026-07-08 and the second died
+      # here after a successful R2 publish). If the release exists, replace its
+      # notes and assets instead of failing.
       - name: Mirror as GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,11 +124,22 @@ jobs:
           if [ "$WIPES" = "true" ]; then
             NOTES="$NOTES"$'\n\n'"⚠️ **This release wipes worlds** (SCHEMA_VERSION bump — characters + world reset, leaderboards survive)."
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            "worldspring-$GITHUB_REF_NAME-artifact.tar.gz" \
-            artifact/meta.json \
-            --title "Worldspring $GITHUB_REF_NAME" \
-            --notes "$NOTES"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release exists — updating notes + clobbering assets"
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "Worldspring $GITHUB_REF_NAME" \
+              --notes "$NOTES"
+            gh release upload "$GITHUB_REF_NAME" \
+              "worldspring-$GITHUB_REF_NAME-artifact.tar.gz" \
+              artifact/meta.json \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "worldspring-$GITHUB_REF_NAME-artifact.tar.gz" \
+              artifact/meta.json \
+              --title "Worldspring $GITHUB_REF_NAME" \
+              --notes "$NOTES"
+          fi
 
       - name: Summary
         run: |
