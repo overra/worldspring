@@ -52,6 +52,10 @@ describe("crate piece kind (doc 06 M6)", () => {
     expect(Object.keys(PIECE_DEFS).length).toBe(7);
   });
 
+  it("rejects a scrap-tier crate (wood-only v1, parser parity)", () => {
+    expect(canPlace(world, { kind: "crate", tier: 1, gx: BGX, gz: BGZ })).toBe("kind");
+  });
+
   it("derives ZERO collision boxes (non-colliding, campfire precedent)", () => {
     const crate: StructurePiece = {
       id: 1,

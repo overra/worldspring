@@ -643,8 +643,11 @@ export function canPlace(
   t: PlaceTarget,
   occupants?: Iterable<{ x: number; y: number; z: number }>,
 ): PlaceRejection | null {
-  // Kind whitelist (anything future is not placeable here).
+  // Kind whitelist (anything future is not placeable here). Crates are
+  // wood-only in v1 (PIECE_DEFS hp [200, 200]) — parity with the parser, so
+  // a scrap-tier crate ghost can never read green.
   if (!PLACEABLE_KINDS.includes(t.kind)) return "kind";
+  if (t.kind === "crate" && t.tier !== 0) return "kind";
   if (!Number.isInteger(t.gx) || !Number.isInteger(t.gz)) return "bounds";
   const isEdgePiece = t.kind !== "foundation" && t.kind !== "crate";
   if (isEdgePiece && t.edge !== 0 && t.edge !== 2) return "bounds";

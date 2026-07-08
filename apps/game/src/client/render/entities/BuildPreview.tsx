@@ -132,7 +132,9 @@ export function BuildPreview(): ReactElement {
     }
 
     const kind = PLACEABLE_KINDS[buildState.kindIndex % PLACEABLE_KINDS.length];
-    const tier = buildState.tier;
+    // Crates are wood-only in v1: pin the tier so the T toggle can't build a
+    // scrap-crate target the parser (and canPlace) reject.
+    const tier = kind === "crate" ? 0 : buildState.tier;
 
     // Aim: intersect the look ray with the feet plane; clamp to a sane band.
     const me = clientWorld.me;
