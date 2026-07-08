@@ -7,6 +7,10 @@ import starlight from "@astrojs/starlight";
 // `export const prerender = false`: the marketing landing + Starlight docs
 // prerender; the server-directory pages and /api/v1/* run on the Worker.
 export default defineConfig({
+  // Canonical origin (doc 01 open Q1, resolved 2026-07-07): the apex custom
+  // domain on the worldspring-web Worker (wrangler.jsonc `routes`). Drives
+  // sitemap/canonical-URL generation; also the future OAuth client URL origin.
+  site: "https://worldspring.games",
   adapter: cloudflare({
     // v13 wires local bindings (D1, etc.) for `astro dev` automatically via
     // @cloudflare/vite-plugin — there's no `platformProxy` option (that was v12).

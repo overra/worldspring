@@ -9,9 +9,9 @@
     {
       "binding": "DB",
       "database_name": "worldspring-directory",
-      // SAME database as apps/web (D1 is account-level, keyed by id). Paste the
-      // id that `wrangler d1 create worldspring-directory` returned for apps/web.
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      // SAME database as apps/web (D1 is account-level, keyed by id) — created
+      // 2026-07-07; the id matches apps/web/wrangler.jsonc.
+      "database_id": "cde769c2-c346-4ca9-914b-9b60ecb4a0dc"
     }
   ],
   "observability": { "enabled": true }
