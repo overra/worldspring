@@ -16,7 +16,9 @@
 > - The release pipeline (doc 01 M2) is now committed: `.github/workflows/release.yml`
 >   + `scripts/build-artifact.mjs`. Its asset-hash + multipart-metadata assumptions are
 >   exactly what this spike validates — run the spike before trusting a first real tag.
-
+>
+> ---
+>
 > Produced by the `wave0-next-milestones` workflow. This milestone **cannot run autonomously** —
 > it needs a throwaway Cloudflare account + credentials and makes side-effectful API calls (create an
 > OAuth client, upload a Worker, force-delete it). Run the harness one phase at a time. The milestone's

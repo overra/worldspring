@@ -244,13 +244,21 @@ async function buildManifest(dir) {
   async function walk(d) { for (const e of await readdir(d, { withFileTypes: true })) {
     const p = join(d, e.name); if (e.isDirectory()) await walk(p); else files.push(p); } }
   await walk(dir);
-  // Honor .assetsignore (exact names) like wrangler does; the file itself never ships.
-  const ignore = new Set([".assetsignore"]);
-  try { for (const l of (await readFile(join(dir, ".assetsignore"), "utf8")).split("\n")) if (l.trim()) ignore.add(l.trim()); } catch {}
+  // Honor .assetsignore like wrangler does; the file itself never ships. Same
+  // matcher semantics as build-artifact.mjs ignoreMatcher (kept in sync by
+  // hand — build-artifact runs its pipeline at import, so it can't be imported):
+  // skip comments/blanks, `dir/` prefixes, `*.ext` globs, exact names.
+  const lines = await readFile(join(dir, ".assetsignore"), "utf8").then((s) => s.split("\n")).catch(() => []);
+  const rules = lines.map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  const ignored = (relPath) => relPath === ".assetsignore" || rules.some((r) => {
+    if (r.endsWith("/")) return relPath.startsWith(r) || relPath.includes("/" + r);
+    if (r.startsWith("*.")) return relPath.endsWith(r.slice(1));
+    return relPath === r || relPath.endsWith("/" + r);
+  });
   const map = {}; const byHash = {};
   for (const f of files) {
     const rel = relative(dir, f).split("\\").join("/");
-    if (ignore.has(rel) || ignore.has(rel.split("/").pop())) continue;
+    if (ignored(rel)) continue;
     const buf = await readFile(f);
     const ext = extname(f).slice(1);
     const hash = assetHash(buf, ext);

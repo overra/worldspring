@@ -58,6 +58,17 @@ const assetHash = (buf, ext) =>
   createHash("sha256").update(buf.toString("base64") + ext).digest("hex").slice(0, 32);
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 
+// Read + parse JSON, routing BOTH failure modes through die() so error output
+// stays consistent (a raw SyntaxError would bypass the FAIL prefix).
+async function readJson(path, what) {
+  const text = await readFile(path, "utf8").catch(() => die(`cannot read ${what} at ${path}`));
+  try {
+    return JSON.parse(text);
+  } catch {
+    return die(`${what} at ${path} is not valid JSON`);
+  }
+}
+
 const CONTENT_TYPES = {
   html: "text/html", js: "text/javascript", mjs: "text/javascript", css: "text/css",
   json: "application/json", txt: "text/plain", md: "text/markdown", xml: "application/xml",
@@ -111,11 +122,13 @@ async function runGates() {
 const { bundle, protocolVersion, schemaVersion } = await runGates();
 log(`gates passed — PROTOCOL_VERSION=${protocolVersion} SCHEMA_VERSION=${schemaVersion} GAME_VERSION=${VERSION}`);
 
-// wipesWorld: schemaVersion bumped vs the previous release (doc 01 §3/§7). No
-// previous meta (first release / R2 unreachable) → false, loudly.
+// wipesWorld: schemaVersion CHANGED vs the previous release (doc 01 §3/§7) —
+// inequality on purpose, so a downgrade/rollback release warns exactly like a
+// bump (either direction trips the server's wipe-on-mismatch). No previous
+// meta (first release / R2 unreachable) → false, loudly.
 let wipesWorld = false;
 if (args["prev-meta"]) {
-  const prev = JSON.parse(await readFile(args["prev-meta"], "utf8").catch(() => die(`cannot read --prev-meta ${args["prev-meta"]}`)));
+  const prev = await readJson(args["prev-meta"], "--prev-meta");
   if (typeof prev.schemaVersion !== "number") die("--prev-meta has no numeric schemaVersion");
   wipesWorld = schemaVersion !== prev.schemaVersion;
   log(`prev release v${prev.version} schemaVersion=${prev.schemaVersion} → wipesWorld=${wipesWorld}`);
@@ -150,7 +163,7 @@ if (Object.keys(assetManifest).length === 0) die(`no assets found under ${ASSET_
 // official instance keeps its own 100% default because IT deploys via wrangler,
 // not via this artifact). Per-deploy fields (vars, secrets, tags, annotations,
 // migrations, assets.jwt) are merged in by the deployer at §5 step 6.
-const gen = JSON.parse(await readFile(GEN_CONFIG, "utf8").catch(() => die(`generated config missing at ${GEN_CONFIG}`)));
+const gen = await readJson(GEN_CONFIG, "generated wrangler config");
 if (gen.main !== "index.js") die(`generated config main is "${gen.main}" — expected index.js (vite plugin output changed?)`);
 const metadataTemplate = {
   main_module: "index.js",
