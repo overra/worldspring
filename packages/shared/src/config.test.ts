@@ -445,10 +445,18 @@ describe("tierParamsOf / worldParamsOf", () => {
 // =============================================================================
 
 describe("worldFingerprintOf / parseWorldFingerprint", () => {
-  it("default world stringifies to the canonical v1 form (with gen:)", () => {
-    expect(worldFingerprintOf(DEFAULT_CONFIG.world)).toBe(
-      `v1|seed:${WORLD_SEED}|size:standard|water:0|gen:${WORLDGEN_VERSION}`,
-    );
+  it("default world stringifies to the canonical v1 form (gen omitted at 1)", () => {
+    // ROLLBACK-SAFETY PIN: while WORLDGEN_VERSION === 1 the fingerprint MUST
+    // be the 4-part form (byte-identical to what every pre-doc-07 binary
+    // writes and reads). An eagerly-written `|gen:1` suffix would be
+    // unreadable to a rollback binary and turn a routine revert into a
+    // production wipe. The 5-part form appears only once WORLDGEN_VERSION >= 2
+    // (doc 07 M5). absent gen == 1 on every parse path, so nothing is lost.
+    const expected =
+      (WORLDGEN_VERSION as number) >= 2
+        ? `v1|seed:${WORLD_SEED}|size:standard|water:0|gen:${WORLDGEN_VERSION}`
+        : `v1|seed:${WORLD_SEED}|size:standard|water:0`;
+    expect(worldFingerprintOf(DEFAULT_CONFIG.world)).toBe(expected);
   });
 
   it("parses a legacy 4-part (pre-gen) fingerprint — absent gen == 1", () => {

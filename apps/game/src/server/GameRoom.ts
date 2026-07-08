@@ -12,6 +12,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  SIZE_TIERS,
   parseWorldFingerprint,
   resolveServerConfig,
   summarizeRules,
@@ -660,9 +661,9 @@ export class GameRoom extends DurableObject<Env> {
         `[config] world size ${world.size} != tier "${this.config.world.sizeTier}" size ` +
           `${tierParamsOf(this.config.world.sizeTier).size}; coercing config to match the generated world`,
       );
-      const match = (["standard", "large", "huge"] as const).find(
-        (t) => tierParamsOf(t).size === world.size,
-      );
+      // Iterate SIZE_TIERS (not a literal list) so a future tier addition or
+      // rename keeps this reverse lookup self-updating.
+      const match = SIZE_TIERS.find((t) => tierParamsOf(t).size === world.size);
       if (match) this.config.world.sizeTier = match;
     }
     const game = createGameState(world, this.config);

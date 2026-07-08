@@ -441,7 +441,9 @@ const WIPE_SCHEDULES: readonly WipeSchedule[] = [
   "biweekly",
   "monthly",
 ];
-const SIZE_TIERS: readonly WorldSizeTier[] = ["standard", "large", "huge"];
+/** The tier value set, exported so consumers (e.g. GameRoom's size reverse
+ * lookup) never duplicate the literal list. */
+export const SIZE_TIERS: readonly WorldSizeTier[] = ["standard", "large", "huge"];
 const MAP_ACQUIRES: readonly MapAcquire[] = ["spawn", "loot", "none"];
 const MAP_REVEALS: readonly MapReveal[] = ["full", "explored"];
 
@@ -564,6 +566,11 @@ function clampInto(
   // coercion is gone) — createWorld is size-parameterized and the tier is
   // WIPE-class via worldFingerprintOf, so initSchema's fail-closed gate guards
   // persisted state against a tier change exactly like a seed change.
+  // OPERATIONAL CAVEAT: client bundles built BEFORE this change still send the
+  // same PROTOCOL_VERSION but coerce large/huge -> standard here, so they pass
+  // the join gate against a tier'd server and silently desync. Flipping a live
+  // server to a non-standard tier is only safe after a PROTOCOL_VERSION bump
+  // ships post-M2 (doc 07 §1 runbook caveat).
 
   let waterFeatures = base.world.waterFeatures;
   if (rw.waterFeatures !== undefined) {
@@ -916,16 +923,24 @@ export function effectiveGameHour(cfg: TimeConfig, gameTimeS: number): number {
 
 /**
  * Canonical string of the WIPE-class world fields: `v1|seed:1337|size:standard|
- * water:0|gen:1`. Round-trippable with parseWorldFingerprint. Persistence
- * compares this instead of the bare world_seed, and the fail-closed refusal path
- * boots the world FROM the stored string. `gen:` is WORLDGEN_VERSION (doc 07
- * M1) — a formula-change counter, absent in pre-M1 stored strings (absent ==
- * 1; persistence adopts-in-place, never wipes, on that difference). NOTE: this
- * is the config wipe identity, NOT the worldgen determinism hash
+ * water:0` (plus `|gen:N` once WORLDGEN_VERSION >= 2). Round-trippable with
+ * parseWorldFingerprint. Persistence compares this instead of the bare
+ * world_seed, and the fail-closed refusal path boots the world FROM the stored
+ * string. `gen:` is WORLDGEN_VERSION (doc 07 M1) — a formula-change counter;
+ * absent == 1 on EVERY parse path, so the suffix is OMITTED while the running
+ * version is 1. That omission is load-bearing rollback safety: a stored
+ * `...|gen:1` string is unreadable to every pre-doc-07 binary (their 4-part
+ * fingerprint regex + string equality both fail), so eagerly writing the
+ * 5-part form would turn a routine revert of the doc 07 deploy into a
+ * production wipe on both the sanctioned and fail-closed paths. The first
+ * 5-part writer must be the first actual gen bump (doc 07 M5), by which time
+ * no gen-unaware binary is a plausible rollback target. NOTE: this is the
+ * config wipe identity, NOT the worldgen determinism hash
  * (scripts/fingerprint.mjs) — they are unrelated; do not conflate them.
  */
 export function worldFingerprintOf(world: WorldConfig): string {
-  return `v1|seed:${world.seed}|size:${world.sizeTier}|water:${world.waterFeatures ? 1 : 0}|gen:${WORLDGEN_VERSION}`;
+  const base = `v1|seed:${world.seed}|size:${world.sizeTier}|water:${world.waterFeatures ? 1 : 0}`;
+  return (WORLDGEN_VERSION as number) >= 2 ? `${base}|gen:${WORLDGEN_VERSION}` : base;
 }
 
 /** Parse a fingerprint string back to a WorldConfig, or null if it is not a

@@ -27,6 +27,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "fingerprint": "node scripts/fingerprint.mjs src",
+    "fill-rates": "node scripts/fill-rates.mjs src",
     "map:render": "node scripts/map-render.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
