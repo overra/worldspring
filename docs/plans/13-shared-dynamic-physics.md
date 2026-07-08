@@ -136,10 +136,14 @@ fixed-dt substeps accumulated from game time so replay is exact. Cost controls:
 
 ### 4. Persistence + determinism harness
 
-- Awake-body poses + body registry serialize into the existing single-row world
-  snapshot (`SCHEMA_VERSION` bump). Engine-native `snapshot()` bytes are NOT persisted
-  across versions (engine upgrades would break them) — we persist our own
-  `BodyDesc + Pose` list and rebuild the world on restore.
+- The body registry serializes into the existing single-row world snapshot
+  (`SCHEMA_VERSION` bump): for EVERY registered body, `BodyDesc + Pose +
+  linear/angular velocity + asleep flag` — velocities so momentum resumes
+  (a crate mid-arc keeps flying after a DO restart), the sleep flag so settled
+  stacks restore asleep instead of causing a wake-storm cost spike and pose
+  jitter on boot. Engine-native `snapshot()` bytes are NOT persisted across
+  versions (engine upgrades would break them) — we rebuild the world from our
+  own serialization on restore.
 - CI harness (extends the fingerprint discipline): a scripted scenario (N bodies, K
   impulses, M steps) runs on Linux CI and hashes the final poses; the same scenario
   runs in the M0 spike across macOS/browser/workerd. Any hash drift on engine upgrade
@@ -197,9 +201,16 @@ reason to exist.
 - Existing worlds: M1's `SCHEMA_VERSION` bump wipes dynamic-world state via the
   sanctioned doc 04 path (characters keep the standard rules; leaderboard survives).
 - Protocol: two bumps total (M1 bodies, M4 vehicle input), each two-sided-gated.
-- Presets/config: body cap + physics on/off land in `ServerConfig` as a LIVE-class
-  group (a "no physics" preset stays possible for potato servers); doc 04's
-  fingerprint classes decide WIPE vs LIVE per field at M1.
+- Presets/config: body cap + physics on/off land in `ServerConfig` as a
+  LIVE-class group (a "no physics" preset stays possible for potato servers).
+  LIVE is deliberate and safe HERE: physics is server-authoritative and
+  outside the client determinism contract (clients never step it), and the CI
+  replay harness pins its own scenario constants rather than reading
+  `ServerConfig` — so a cap change alters future gameplay (like zombie
+  density does), never replay validity or client agreement. Explicit
+  lowered-cap semantics: bodies over the new cap evict oldest-settled-first
+  on the next tick, same policy as normal cap pressure. Doc 04's fingerprint
+  classes still get the final WIPE-vs-LIVE call per field at M1.
 - The deadcoast preset and all shipped gameplay behave identically with zero dynamic
   bodies spawned.
 
@@ -252,12 +263,13 @@ Rapier `@dimforge/rapier3d-compat` **0.19.3**, scenario v1, seed 1337,
 | Browser (Chromium, preview harness) | arm64 | `d060ce23` |
 | **workerd DEPLOYED (real Cloudflare)** | prod | `d060ce23` |
 
-**Cost: physics is in the tick's noise floor.** Node avg ms/step —
-25 bodies: 0.025–0.04, 50: 0.035–0.064, 100: 0.059–0.09, 200: 0.116–0.178
-(arm64 native → x86 emulated range). Deployed workerd wall-clock agrees
-(≤0.2 ms/step at 200 bodies; below network-jitter resolution at 25). At the
-proposed 64-body cap that is **< 0.3% of the 66.7 ms tick**. The M1 fallback
-(half-rate stepping) will not be needed.
+**Cost: physics is in the tick's noise floor.** Node avg ms/step, measured
+around the step loop only (setup/hash/free excluded) — 25 bodies: 0.021–0.033,
+50: 0.031–0.057, 100: 0.054–0.084, 200: 0.107–0.184 (arm64 native → x86
+emulated range). Deployed workerd wall-clock agrees (≤0.2 ms/step at 200
+bodies; below network-jitter resolution at 25). At the proposed 64-body cap
+that is **< 0.3% of the 66.7 ms tick**. The M1 fallback (half-rate stepping)
+will not be needed.
 
 **Platform finding (load-bearing for M1):** workerd **disallows WebAssembly
 compilation from bytes** ("Wasm code generation disallowed by embedder"), so

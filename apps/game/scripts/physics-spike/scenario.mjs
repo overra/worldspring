@@ -67,8 +67,15 @@ export function runScenario(RAPIER, { bodies = 100, steps = 1000, seed = 1337 } 
   }
 
   // Step, with a scripted impulse burst every 60 steps (round-robin target).
+  // Timing brackets ONLY the step loop (setup/hash/free excluded) — timing
+  // never feeds the sim, so it cannot affect the hash. On workerd the clock is
+  // frozen during execution and this reads 0; callers there measure externally.
+  const now = globalThis.performance?.now?.bind(globalThis.performance) ?? Date.now;
+  const t0 = now();
   for (let s = 0; s < steps; s++) {
-    if (s > 0 && s % 60 === 0) {
+    // Guard: bodies=0 is a legal degenerate run (worker probes use it as a
+    // setup-cost baseline) — never index an empty handles array.
+    if (s > 0 && s % 60 === 0 && handles.length > 0) {
       const body = handles[(s / 60) % handles.length | 0];
       body.applyImpulse(
         { x: Math.fround((rand() - 0.5) * 6), y: Math.fround(rand() * 4), z: Math.fround((rand() - 0.5) * 6) },
@@ -77,6 +84,7 @@ export function runScenario(RAPIER, { bodies = 100, steps = 1000, seed = 1337 } 
     }
     world.step();
   }
+  const stepMsTotal = now() - t0;
 
   // Hash every pose, bit-exact through Float32.
   const out = new Float32Array(handles.length * 7);
@@ -86,5 +94,5 @@ export function runScenario(RAPIER, { bodies = 100, steps = 1000, seed = 1337 } 
   });
   const hash = fnv1a(new Uint8Array(out.buffer));
   world.free();
-  return { scenarioVersion: SCENARIO_VERSION, bodies, steps, dt, seed, hash };
+  return { scenarioVersion: SCENARIO_VERSION, bodies, steps, dt, seed, hash, stepMsTotal };
 }

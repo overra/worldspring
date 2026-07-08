@@ -28,8 +28,10 @@ export default {
     try {
       ready ??= RAPIER.init();
       await ready;
-      const bodies = Number(url.searchParams.get("bodies") ?? 100);
-      const steps = Number(url.searchParams.get("steps") ?? 1000);
+      // `||` not `??`: an empty param (`?bodies=`) yields "", which `??` would
+      // pass through as Number("") === 0 instead of the default.
+      const bodies = Number(url.searchParams.get("bodies") || 100);
+      const steps = Number(url.searchParams.get("steps") || 1000);
       return Response.json({ runtime: "workerd", ...runScenario(RAPIER, { bodies, steps }) });
     } catch (e) {
       // The likely failure: workerd disallowing WebAssembly compilation from
