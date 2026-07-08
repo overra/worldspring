@@ -1,0 +1,172 @@
+---
+// /servers/:id — the shareable per-server detail page (doc 02 §8, M5). SSR:
+// renders one live listing's full card from D1 (loadServerDetail →
+// shapeServerDetail). A real 404 for unknown or non-`live` ids — the same
+// no-existence-oracle posture as /join/:id and the report page (hidden, banned,
+// pending, and unreachable rows are not browsable). NO server secrets
+// (token_hash/challenge_hash/ip_hash) are selected, let alone rendered
+// (doc 02 §7). All listing text is untrusted operator content; Astro {expr}
+// auto-escapes it.
+export const prerender = false;
+import { env } from "cloudflare:workers";
+import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
+import { GAME_VERSION } from "@worldspring/shared/version";
+import { loadServerDetail } from "../../../lib/listing";
+
+const db = (env as unknown as { DB: D1Database }).DB;
+const now = Date.now();
+const id = Astro.params.id ?? "";
+
+let detail: Awaited<ReturnType<typeof loadServerDetail>> = null;
+try {
+  detail = await loadServerDetail(db, id, now, PROTOCOL_VERSION);
+} catch (err) {
+  // A D1 failure renders 404, same as /join and /report — never a 500 that
+  // leaks a DB error, and no existence oracle for moderated rows.
+  console.error("[servers/:id] detail lookup failed — rendering 404:", err);
+}
+if (!detail) {
+  return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
+}
+const s = detail.view;
+
+// Doc 02 §11: HTML cached 60 s. No per-visitor content on this page.
+Astro.response.headers.set("cache-control", "public, max-age=60");
+
+const isoDay = (ms: number): string => new Date(ms).toISOString().slice(0, 10);
+
+/** Coarse "time since" for the last-probe honesty line (Factorio precedent). */
+function ago(ms: number | null): string {
+  if (ms === null) return "never";
+  const s = Math.max(0, Math.floor((now - ms) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+
+// 20-day daily uptime strip (doc 02 §8): one cell per day, oldest → newest.
+const todayDay = Math.floor(now / 86400_000);
+const ratioByDay = new Map<number, number>();
+for (const d of detail.dailyUptime) ratioByDay.set(d.day, d.ratio);
+const strip = Array.from({ length: 20 }, (_, i) => {
+  const day = todayDay - 19 + i;
+  const ratio = ratioByDay.get(day);
+  return { day, ratio: ratio ?? null };
+});
+function stripColor(ratio: number | null): string {
+  if (ratio === null) return "#8883"; // no data
+  if (ratio > 0.99) return "#3c3";
+  if (ratio >= 0.5) return "#dc3";
+  if (ratio > 0) return "#e84";
+  return "#c33";
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{s.name} — Worldspring server</title>
+    <meta name="description" content={s.motd || `${s.name} — a community Worldspring server at ${s.host}`} />
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 46rem; padding: 0 1rem; }
+      .official { border-left: 4px solid #c9a227; padding-left: 0.9rem; }
+      h1 { margin-bottom: 0.25rem; }
+      .badge { font-size: 0.7em; border: 1px solid #8886; border-radius: 4px; padding: 0.1em 0.4em; margin-left: 0.4em; vertical-align: middle; white-space: nowrap; }
+      .badge.gold { border-color: #c9a227; color: #c9a227; }
+      .dot { display: inline-block; width: 0.55em; height: 0.55em; border-radius: 50%; margin-right: 0.4em; }
+      .dot.active { background: #3c3; }
+      .dot.idle { background: #999; }
+      .status { color: #666; margin: 0.25rem 0 1rem; }
+      .motd { font-size: 1.05em; margin: 1rem 0; }
+      .host { font-size: 1.1rem; font-weight: 600; word-break: break-all; background: #8881; border-radius: 6px; padding: 0.4rem 0.6rem; display: inline-block; }
+      dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.2rem; margin: 1.25rem 0; }
+      dt { color: #888; }
+      dd { margin: 0; }
+      .strip { display: flex; gap: 2px; margin-top: 0.35rem; }
+      .strip span { width: 0.7rem; height: 1rem; border-radius: 2px; }
+      .actions { display: flex; gap: 1rem; align-items: center; margin: 1.75rem 0 1rem; }
+      .join { display: inline-block; font-size: 1.05rem; font-weight: 600; padding: 0.55rem 1.3rem; border: 1px solid #8886; border-radius: 6px; text-decoration: none; }
+      .report { color: #888; }
+      .footer { margin-top: 2rem; font-size: 0.9em; color: #888; }
+      .ping { color: #888; }
+    </style>
+  </head>
+  <body>
+    <main class={s.official ? "official" : undefined}>
+      <h1>
+        {s.name}
+        {s.official && <span class="badge gold">Official</span>}
+        {s.outdated && <span class="badge" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>}
+      </h1>
+      <p class="status">
+        <span class={`dot ${s.activeNow ? "active" : "idle"}`} />
+        {s.activeNow ? "Active now" : "Idle — wakes on join"} · {s.players}/{s.maxPlayers} players
+      </p>
+
+      {s.motd && <p class="motd">{s.motd}</p>}
+
+      <p><span class="host">{s.host}</span></p>
+
+      <dl>
+        <dt>Preset</dt>
+        <dd>{s.preset}</dd>
+
+        <dt>Version</dt>
+        <dd>
+          {s.version || "unknown"}
+          {s.protocol !== null && <> · protocol {s.protocol}</>}
+          {s.outdated && <> (latest is {GAME_VERSION}, protocol {PROTOCOL_VERSION})</>}
+        </dd>
+
+        <dt>Region</dt>
+        <dd>
+          {/* Compare case-insensitively: regionOf upper-cases an unmapped colo, so a
+              stored lower/mixed-case code must not render twice as "ZZZ (zzz)". */}
+          {s.region ?? "unknown"}{s.colo && s.region?.toUpperCase() !== s.colo.toUpperCase() ? ` (${s.colo})` : ""} ·
+          {/* Default "—" (matches the list page): if JS is off / ping.js fails, this
+              degrades honestly instead of a stuck "measuring…" that never resolves. */}
+          {" "}<span class="ping" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">—</span>
+        </dd>
+
+        <dt>Uptime (20d)</dt>
+        <dd>
+          {s.uptimePct === null ? "no probe data yet" : `${s.uptimePct}%`}
+          <div class="strip" title="probe uptime, one cell per day (oldest → newest)">
+            {strip.map((c) => (
+              <span
+                style={`background:${stripColor(c.ratio)}`}
+                title={`${isoDay(c.day * 86400_000)}: ${c.ratio === null ? "no data" : `${Math.round(c.ratio * 100)}%`}`}
+              />
+            ))}
+          </div>
+        </dd>
+
+        <dt>Listed since</dt>
+        <dd>{isoDay(s.createdAt)} ({s.ageDays} {s.ageDays === 1 ? "day" : "days"})</dd>
+
+        <dt>Last checked</dt>
+        <dd>{ago(s.lastProbeAt)}</dd>
+      </dl>
+
+      <div class="actions">
+        {
+          s.joinExternal ? (
+            <a class="join" href={s.joinHref} target="_blank" rel="noopener noreferrer">Join {s.host} &rarr;</a>
+          ) : (
+            <a class="join" href={s.joinHref} data-server-id={s.id} data-join-url={s.joinUrl}>Join &rarr;</a>
+          )
+        }
+        {!s.official && <a class="report" href={`/servers/${s.id}/report`}>Report this server</a>}
+      </div>
+
+      <p class="footer">
+        <a href="/servers">&larr; All servers</a> · <a href="/policy/">Listing policy</a>
+      </p>
+    </main>
+
+    <script src="/ping.js" defer is:inline></script>
+  </body>
+</html>

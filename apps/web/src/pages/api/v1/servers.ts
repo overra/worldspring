@@ -6,8 +6,12 @@ import {
   mintServerToken,
   normalizeServerUrl,
   probeServerInfo,
-  score,
 } from "@worldspring/shared/directory";
+import {
+  applyBrowse,
+  canonicalListCacheUrl,
+  parseBrowseParams,
+} from "@worldspring/shared/browse";
 import { sanitizeListingText, SERVER_MOTD_MAX } from "@worldspring/shared/text";
 import {
   attemptAndCheckLimit,
@@ -17,13 +21,19 @@ import {
   jsonResponse,
   readJsonBody,
 } from "../../../lib/db";
+import { loadRankedList } from "../../../lib/listing";
 import { listingNameOf } from "../../../lib/sanitize";
 
 export const prerender = false;
 
 const REGISTER_LIMIT_PER_HOUR = 5; // doc 02 §4
 const BODY_MAX_BYTES = 4 * 1024; // doc 02 §4 general cap
-const LIST_MAX_ROWS = 500; // doc 02 §4
+// doc 02 §11: 30 s edge TTL. `max-age` doubles as the caches.default freshness
+// window (the Cache API honors Cache-Control). `stale-while-revalidate=120` is
+// ADVISORY-ONLY here: caches.default performs NO background revalidation, so once
+// max-age lapses a hit is a plain MISS that rebuilds from D1 — the SWR token only
+// informs browsers / downstream shared caches, none of which this Worker revalidates.
+const LIST_CACHE_CONTROL = "public, max-age=30, stale-while-revalidate=120";
 
 /**
  * Begin registration: body `{ url }`, no auth, 5/h/IP via the `attempts`
@@ -111,91 +121,76 @@ export const POST: APIRoute = async ({ request }) => {
   );
 };
 
-interface ListRow {
-  id: string;
-  url: string;
-  name: string;
-  motd: string;
-  preset: string | null;
-  version: string | null;
-  protocol: number | null;
-  players: number;
-  players_max: number;
-  colo: string | null;
-  source: string;
-  created_at: number;
-  last_heartbeat_at: number | null;
-}
-
-/** The list: all `live` servers, ranked by the doc 02 §8 score, ≤500 rows.
- * Official row pinned first and excluded from ranking. */
-export const GET: APIRoute = async () => {
+/**
+ * The public ranked list (doc 02 §4/§8/§11): all `live` servers, official
+ * pinned first, filtered/sorted/paginated PURELY by query params
+ * (`preset`/`sort`/`page`/`pageSize`) so every view is a cacheable URL.
+ *
+ * Edge caching (doc 02 §11): the response is stored in `caches.default` keyed
+ * on a CANONICAL per-query URL — param order and junk params don't fragment the
+ * cache, but different filters get different entries. A cache HIT within the
+ * 30 s TTL returns the SAME `generatedAt` (the acceptance assertion). Only the
+ * 200 success path is ever cached; a D1 failure returns an uncached empty list
+ * so a blip can't freeze an empty list at the edge for the full TTL.
+ *
+ * `caches.default` is per-colo (not replicated), so this costs ~2 D1 reads per
+ * 30 s per colo-with-traffic, not globally.
+ */
+export const GET: APIRoute = async ({ request, locals }) => {
   const { DB } = directoryEnv();
   const now = Date.now();
 
-  const [serversRes, uptimeRes] = await DB.batch<Record<string, unknown>>([
-    DB.prepare(
-      `SELECT id, url, name, motd, preset, version, protocol, players, players_max,
-              colo, source, created_at, last_heartbeat_at
-       FROM servers WHERE status = 'live' LIMIT ?`,
-    ).bind(LIST_MAX_ROWS),
-    DB.prepare(
-      // 20-day uptime ratio from probe history (doc 02 §8). Excludes
-      // 'verify' rows: that route is unauthenticated, so counting them would
-      // let anyone farm the 0–8 uptime score term (see migration 0002).
-      "SELECT server_id, AVG(ok) AS ratio FROM probes WHERE at > ? AND source != 'verify' GROUP BY server_id",
-    ).bind(now - 20 * 86400_000),
-  ]);
-
-  const uptimeBy = new Map<string, number>();
-  for (const r of uptimeRes.results as Array<{ server_id: string; ratio: number }>) {
-    uptimeBy.set(r.server_id, Number(r.ratio ?? 0));
+  // Canonical cache key (query params included). String key is coerced to a
+  // Request by the Cache API — the adapter's own image endpoint keys the same way.
+  const cacheKey = canonicalListCacheUrl(request.url);
+  // `caches.default` is a Workers extension; under Astro's DOM lib the global
+  // `CacheStorage` type lacks it, so reach it through a cast (repo idiom for
+  // env, too). Guarded so any non-workerd context degrades to a direct read.
+  const cache =
+    typeof caches !== "undefined" ? (caches as unknown as { default: Cache }).default : undefined;
+  if (cache) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit; // same generatedAt for every hit within TTL
   }
 
-  const rows = serversRes.results as unknown as ListRow[];
-  const listed = rows.map((r) => {
-    const uptimeRatio20d = uptimeBy.get(r.id) ?? 0;
-    return {
-      id: r.id,
-      name: r.name,
-      motd: r.motd,
-      joinUrl: r.url, // normalized https origin, pinned at registration
-      preset: r.preset,
-      version: r.version,
-      protocol: r.protocol,
-      // Displayed players clamped to players_max (doc 02 §7).
-      players: Math.min(r.players, r.players_max),
-      maxPlayers: r.players_max,
-      colo: r.colo,
-      official: r.source === "official",
-      // "active now" vs "idle — wakes on join" (doc 02 §6/§8).
-      activeNow: r.last_heartbeat_at !== null && now - r.last_heartbeat_at < 5 * 60_000,
-      uptimeRatio20d,
-      createdAt: r.created_at,
-      score: score(
-        {
-          players: Math.min(r.players, r.players_max),
-          players_max: r.players_max,
-          protocol: r.protocol,
-          created_at: r.created_at,
-          uptimeRatio20d,
-        },
-        PROTOCOL_VERSION,
-        now,
-      ),
-    };
-  });
+  let list;
+  try {
+    list = await loadRankedList(DB, now, PROTOCOL_VERSION);
+  } catch (err) {
+    // Never cache a failure (would replay an empty list as fresh for the TTL).
+    console.error("[servers] list build failed — uncached empty response:", err);
+    return jsonResponse({ generatedAt: now, total: 0, page: 1, pageCount: 1, pageSize: 0, servers: [] });
+  }
 
-  listed.sort((a, b) => {
-    if (a.official !== b.official) return a.official ? -1 : 1; // pinned
-    return b.score - a.score;
-  });
+  const params = parseBrowseParams(new URL(request.url).searchParams);
+  const paged = applyBrowse(list, params);
 
-  return jsonResponse(
-    { generatedAt: now, servers: listed },
+  const response = jsonResponse(
+    {
+      // Response-BUILD time (identical for every cache hit within the TTL — the M5
+      // acceptance assertion). NOTE: this is NOT a data-freshness watermark and
+      // cannot detect a dead cron/prober — it is always ~now even if probes stopped
+      // hours ago. The §Threatens cron-staleness monitor needs a real data watermark
+      // (e.g. MAX(last_probe_at) over live rows), deferred to launch wiring (M8).
+      generatedAt: now,
+      total: paged.total,
+      page: paged.page,
+      pageCount: paged.pageCount,
+      pageSize: paged.pageSize,
+      servers: paged.rows,
+    },
     200,
-    // Doc 02 §11: 30 s cache with stale-while-revalidate. (caches.default
-    // per-colo wiring is the M5 browse milestone; headers suffice for M3.)
-    { "cache-control": "public, max-age=30, stale-while-revalidate=120" },
+    { "cache-control": LIST_CACHE_CONTROL },
   );
+
+  if (cache) {
+    // Populate the cache off the response path (doc/CF best practice:
+    // ctx.waitUntil does not block the response). No cfContext (some dev
+    // contexts) → fire-and-forget; a missed put is just a future cache miss.
+    const put = cache.put(cacheKey, response.clone());
+    const cfContext = (locals as { cfContext?: ExecutionContext }).cfContext;
+    if (cfContext) cfContext.waitUntil(put);
+    else void put.catch((err: unknown) => console.error("[servers] cache put failed:", err));
+  }
+  return response;
 };
