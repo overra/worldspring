@@ -544,6 +544,6 @@ describe("physics config", () => {
   it("is LIVE-class: physics overrides never taint the world fingerprint", () => {
     const a = resolveServerConfig({ preset: "deadcoast" }).config;
     const b = resolveServerConfig({ preset: "deadcoast", overrides: { physics: { enabled: false, bodyCap: 8 } } }).config;
-    expect(worldFingerprintOf(a)).toBe(worldFingerprintOf(b));
+    expect(worldFingerprintOf(a.world)).toBe(worldFingerprintOf(b.world));
   });
 });
