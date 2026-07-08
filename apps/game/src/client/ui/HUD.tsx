@@ -35,7 +35,9 @@ const USABLE_KINDS: ReadonlySet<ItemKind> = new Set<ItemKind>([
   "heal",
   "placeable",
   "tool", // added M1: canteen fill/boil/drink, fishing rod, torch-equip parity with F key
-  "wear", // added M6: USE on a jacket/backpack wears it (F-key parity; server routes to wearItem)
+  // "wear" is deliberately NOT here: wear items get the dedicated WEAR button
+  // below (doc 05 §7). F-key USE still wears — the server's useItem routes
+  // kind:"wear" to wearItem — but the panel shows one button, not two.
 ]);
 
 function formatClock(hours: number): string {
@@ -333,7 +335,7 @@ function InventoryRow({ slot, stack }: InventoryRowProps): ReactElement {
             WEAR
           </button>
         )}
-        {USABLE_KINDS.has(def.kind) && def.kind !== "wear" && (
+        {USABLE_KINDS.has(def.kind) && (
           <button className="inv-btn" onClick={() => doUse(slot)}>
             USE
           </button>

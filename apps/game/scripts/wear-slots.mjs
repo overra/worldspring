@@ -198,15 +198,26 @@ console.log("\nwear / unwear (swap semantics + wire mirror):");
   check(lastNotice(state) === "no room in inventory", "…with the reject notice");
   check(state.loot.size === 0, "…and nothing dropped to the ground");
 
-  // Mid-cast: wear/unwear are refused (mutation-point rule).
+  // Mid-cast: wear/unwear are refused (mutation-point rule) WITH feedback —
+  // a silent no-op makes the WEAR/REMOVE buttons look broken during a channel.
   player.inventory[1] = null;
   player.action = { kind: "use", slot: 0, arg: 0, totalS: 1, remainingS: 1 };
   sys.unwearItem(state, player, "body");
   check(player.worn.body !== null, "unwear mid-cast is refused");
+  check(lastNotice(state) === "finish your current action first", "…with a busy notice");
   sys.wearItem(state, player, 4);
   check(player.worn.body?.type === "padded_jacket" && player.inventory[4]?.type === "wood",
     "wear mid-cast is refused");
+  check(lastNotice(state) === "finish your current action first", "…with a busy notice");
   player.action = null;
+
+  // Per-stack fields survive the wear→unwear round trip (whole-stack placement,
+  // the takeStack/pickupLoot rule): a future mag-style field must not vanish.
+  player.inventory[1] = null;
+  player.worn.body.durability = 42;
+  sys.unwearItem(state, player, "body");
+  const returned = player.inventory.find((s) => s?.type === "padded_jacket");
+  check(returned?.durability === 42, "unwear preserves extra per-stack fields");
 }
 
 console.log("\nuse-path parity ({t:\"use\"} on a wear item wears it):");

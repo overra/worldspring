@@ -9,14 +9,13 @@
         { "type": "backpack", "count": 1 },
         { "type": "beans", "count": 3 },
         { "type": "water_bottle", "count": 2 },
-        { "type": "cloth", "count": 8 },
-        { "type": "wood", "count": 8 }
+        { "type": "cloth", "count": 8 }
       ]
     },
     { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 34 }
   ],
   "checklist": [
-    "Spawn on the beach with a full 8/8 inventory: flashlight, bandage, Padded Jacket, Canvas Backpack, beans, water, cloth, wood.",
+    "Spawn on the beach with a full 8/8 inventory: flashlight, bandage, map, Padded Jacket, Canvas Backpack, beans, water, cloth.",
     "Open Tab — an EQUIPMENT section shows 'body: —' and 'back: —'; the jacket and backpack rows show a WEAR button.",
     "WEAR the Padded Jacket — it moves to 'body:' and its inventory slot frees up.",
     "WEAR the Canvas Backpack — it moves to 'back:' and a PACK section with 4 empty rows (slots 9-12) appears.",

@@ -1009,13 +1009,18 @@ export function equipSlot(state: GameState, player: ServerPlayer, slot: number):
  * extends the inventory with `extraSlots` null pack slots; a pack-for-pack swap
  * is length-invariant in M6 (both shipped packs are extraSlots:4) and a
  * hypothetical SMALLER future pack is rejected rather than truncating occupied
- * slots. Rejected silently mid-cast: wear mutates inventory[slot] while
+ * slots. Rejected with a notice mid-cast: wear mutates inventory[slot] while
  * player.action.slot may point at it (the dropSlot mutation-point rule,
  * simplified to startUse's one-action-at-a-time posture).
  */
 export function wearItem(state: GameState, player: ServerPlayer, slot: number): void {
   if (!player.alive) return;
-  if (player.action !== null) return; // never mutate slots under an active cast
+  if (player.action !== null) {
+    // Never mutate slots under an active cast — but say so, or the WEAR button
+    // looks broken during a long channel (e.g. a 5s reload).
+    sendTo(state, player.id, { t: "notice", msg: "finish your current action first" });
+    return;
+  }
   if (slot < 0 || slot >= player.inventory.length) return;
   const stack = player.inventory[slot];
   if (!stack) return;
@@ -1055,7 +1060,12 @@ export function wearItem(state: GameState, player: ServerPlayer, slot: number): 
  */
 export function unwearItem(state: GameState, player: ServerPlayer, ws: WearSlot): void {
   if (!player.alive) return;
-  if (player.action !== null) return; // truncation could pull action.slot out from under a cast
+  if (player.action !== null) {
+    // Truncation could pull action.slot out from under a cast; refuse with
+    // feedback (same rationale as wearItem's mid-cast notice).
+    sendTo(state, player.id, { t: "notice", msg: "finish your current action first" });
+    return;
+  }
   const worn = player.worn[ws];
   if (!worn) return;
 
@@ -1069,22 +1079,27 @@ export function unwearItem(state: GameState, player: ServerPlayer, ws: WearSlot)
     }
     const prevLen = player.inventory.length;
     player.inventory.length = INVENTORY_SLOTS; // truncate FIRST (see above)
-    const leftover = addToInventory(player.inventory, worn.type, worn.count);
-    if (leftover > 0) {
+    // Whole-stack placement (not addToInventory reconstruction): wearItem,
+    // persistence, and corpse spawn all move the full ItemStack, so unwear
+    // must too or a future per-stack field (mag-style) would vanish here —
+    // the takeStack/pickupLoot lesson from doc 11 M3.
+    const empty = player.inventory.findIndex((s) => s === null);
+    if (empty === -1) {
       // Hotbar full: re-extend to the worn capacity and reject — the pack
-      // stays worn, nothing is lost. (Wear items stack 1, so leftover > 0
-      // means nothing was added.)
+      // stays worn, nothing is lost.
       while (player.inventory.length < prevLen) player.inventory.push(null);
       sendTo(state, player.id, { t: "notice", msg: "no room in inventory" });
       return;
     }
+    player.inventory[empty] = worn;
     player.worn.back = null;
   } else {
-    const leftover = addToInventory(player.inventory, worn.type, worn.count);
-    if (leftover > 0) {
+    const empty = player.inventory.findIndex((s) => s === null);
+    if (empty === -1) {
       sendTo(state, player.id, { t: "notice", msg: "no room in inventory" });
       return;
     }
+    player.inventory[empty] = worn; // whole stack — see the back branch note
     player.worn.body = null;
   }
   sendInventory(state, player);
