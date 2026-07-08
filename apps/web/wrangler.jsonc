@@ -23,5 +23,16 @@
       "database_id": "cde769c2-c346-4ca9-914b-9b60ecb4a0dc"
     }
   ],
+  "kv_namespaces": [
+    {
+      // Session storage for the @astrojs/cloudflare adapter's cloudflareKVBinding
+      // driver (binding name is the adapter's default "SESSION"). Pinned to the
+      // namespace wrangler's experimental provisioning auto-created on the first
+      // prod deploy (2026-07-07, "worldspring-web-session") so deploys are
+      // reproducible from any machine/CI instead of resolving server-side.
+      "binding": "SESSION",
+      "id": "84d06c79d6874d66b4a736e32bec1d1a"
+    }
+  ],
   "observability": { "enabled": true }
 }
