@@ -1,0 +1,68 @@
+---
+// /login?next=<path> (doc 01 M4). One page, two modes:
+//  - DISABLED (any OAuth secret unset — prod until issue #66): a friendly
+//    200 info page. No redirect, no cookie.
+//  - ENABLED: mint nonce + PKCE verifier, set the signed ws_oauth_state
+//    cookie, 302 to Cloudflare's authorize endpoint (S256 only).
+import {
+  authEnv,
+  buildAuthorizeUrl,
+  logAuthDisabledOnce,
+  mintState,
+  STATE_COOKIE,
+  STATE_MAX_AGE_S,
+} from "../lib/auth";
+
+export const prerender = false;
+
+const { OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY } = authEnv();
+
+if (OAUTH_CLIENT_ID && OAUTH_CLIENT_SECRET && SESSION_HMAC_KEY) {
+  const { cookieValue, nonce, challenge } = await mintState(
+    SESSION_HMAC_KEY,
+    Astro.url.searchParams.get("next"),
+  );
+  // NOTE: `astro check` reports ts(6133) "authorizeUrl never read" here — a
+  // false positive: the compiler's TSX transform drops frontmatter `return`
+  // expressions, so locals consumed only by the return look unused.
+  const authorizeUrl = buildAuthorizeUrl(OAUTH_CLIENT_ID, nonce, challenge);
+  Astro.cookies.set(STATE_COOKIE, cookieValue, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: STATE_MAX_AGE_S,
+  });
+  return Astro.redirect(authorizeUrl, 302);
+}
+
+logAuthDisabledOnce();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in — Worldspring</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sign-in isn't configured yet</h1>
+      <p>
+        Signing in with a Cloudflare account will let you deploy and manage
+        your own Worldspring server from here. It's not switched on yet —
+        check back soon.
+      </p>
+      <p>
+        In the meantime you can <a href="https://play.worldspring.games">play now</a>,
+        <a href="/servers">browse servers</a>, or
+        <a href="/servers/register">register a server you already host</a>.
+      </p>
+      <p><a href="/">&larr; Back home</a></p>
+    </main>
+  </body>
+</html>

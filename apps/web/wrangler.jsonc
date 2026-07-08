@@ -34,5 +34,9 @@
       "id": "84d06c79d6874d66b4a736e32bec1d1a"
     }
   ],
+  // OAuth (doc 01 M4) reads three OPTIONAL runtime secrets — OAUTH_CLIENT_ID,
+  // OAUTH_CLIENT_SECRET, SESSION_HMAC_KEY (set via `wrangler secret put`,
+  // issue #66). Secrets never go in this file (the REPORT_SALT precedent);
+  // while unset, /login renders an info page and /oauth/callback 404s.
   "observability": { "enabled": true }
 }

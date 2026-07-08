@@ -1,0 +1,55 @@
+---
+// /account (doc 01 M4). Minimal signed-in page: the id_token `sub` plus the
+// read-only account list captured at the one-time discovery. No session (or
+// disabled mode) → bounce to /login, which either starts the flow or renders
+// the "not configured" page.
+import { authEnv, readSession, SESSION_COOKIE } from "../lib/auth";
+
+export const prerender = false;
+
+const { SESSION_HMAC_KEY } = authEnv();
+const session = SESSION_HMAC_KEY
+  ? await readSession(SESSION_HMAC_KEY, Astro.cookies.get(SESSION_COOKIE)?.value)
+  : null;
+if (!session) return Astro.redirect("/login?next=/account", 302);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Account — Worldspring</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
+      code { background: #8881; padding: 0.1rem 0.3rem; word-break: break-all; }
+      li { margin: 0.25rem 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Your account</h1>
+      <p>Signed in as <code>{session.sub}</code>.</p>
+
+      <h2>Cloudflare accounts</h2>
+      {
+        session.accounts.length > 0 ? (
+          <ul>
+            {session.accounts.map((a) => (
+              <li>
+                {a.name} <code>{a.id}</code>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No accounts were discovered at sign-in.</p>
+        )
+      }
+      <p>
+        Deploying your own server from here lands in a later milestone — this
+        page only proves sign-in and account discovery.
+      </p>
+      <p><a href="/logout">Sign out</a> · <a href="/">Home</a></p>
+    </main>
+  </body>
+</html>
