@@ -425,6 +425,13 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   clientWorld.felledTrees.clear();
   for (const idx of msg.felled ?? []) clientWorld.felledTrees.add(idx);
   clientWorld.felledVersion++;
+  // Wholesale reseed marker: on an in-place reconnect (phase "reconnecting",
+  // no resetClientWorld, AudioSystem stays mounted) the set goes populated →
+  // populated in this one synchronous step, so the audio layer can't infer
+  // the reseed from set contents — this counter is its explicit signal to
+  // absorb the new baseline silently instead of playing a tree_fall chorus
+  // for everything felled while we were away.
+  clientWorld.felledSeedVersion++;
   clientWorld.myId = msg.id;
   setMeFrom(msg.you);
   clientWorld.me.yaw = 0;

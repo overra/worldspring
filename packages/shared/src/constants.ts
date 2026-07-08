@@ -157,6 +157,10 @@ export const DROPPED_LOOT_TTL_S = 600; // player-dropped items despawn after thi
 export const TREE_CHOPS_TO_FELL = 3;
 /** Wood granted per landed chop (inventory overflow drops at the feet). */
 export const TREE_WOOD_PER_CHOP = 1;
+/** Height above tree.groundY where a landed chop's "hit" flash is emitted
+ * (server trees.ts). The client audio layer matches this exact point to tell
+ * an axe-on-wood thunk apart from bullet/flesh impacts near a trunk. */
+export const TREE_CHOP_FLASH_HEIGHT = 1.2;
 /** Bonus wood dropped where the felled trunk comes to REST and despawns. */
 export const TRUNK_WOOD_BONUS = 2;
 /** Seconds a settled (sleeping) trunk lies around before despawning to loot. */

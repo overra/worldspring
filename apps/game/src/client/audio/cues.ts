@@ -25,6 +25,23 @@ export function cueSound(name: SfxName): void {
   pending.push({ name, at: performance.now() });
 }
 
+// An empty-mag pull opens the server's auto-reload, but the reload only shows
+// up in the snapshot-mirrored channelAction after RTT + a 15 Hz snap
+// (~100–150 ms) — so the call sites' "suppress while reloading" check can't
+// see it yet, and rapid pulls in that window would each click on top of the
+// imminent reload_start. One latch shared by desktop + touch (they never fire
+// together); repeat pulls inside it stay silent.
+const DRY_FIRE_LATCH_MS = 250;
+let dryFireLastAt = Number.NEGATIVE_INFINITY;
+
+/** Play the dry-fire click, at most once per latch window. */
+export function cueDryFire(): void {
+  const now = performance.now();
+  if (now - dryFireLastAt < DRY_FIRE_LATCH_MS) return;
+  dryFireLastAt = now;
+  cueSound("dry_fire");
+}
+
 /** Called by the audio engine on mount/unmount. Passing a sink drains any
  * fresh queued cues into it; passing null detaches (cues queue again). */
 export function registerCueSink(next: CueSink | null): void {

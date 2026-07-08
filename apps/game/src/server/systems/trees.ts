@@ -19,6 +19,7 @@ import {
   DROPPED_LOOT_TTL_S,
   MELEE_HALF_ANGLE_RAD,
   MELEE_RANGE,
+  TREE_CHOP_FLASH_HEIGHT,
   TREE_CHOPS_TO_FELL,
   TREE_WOOD_PER_CHOP,
   TRUNK_SETTLE_TTL_S,
@@ -101,7 +102,12 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
   if (hitIndex === -1 || !hitTree) return false;
 
   // Impact flash on the trunk at chest height (the melee-hit feedback).
-  queueEvent(state, { e: "hit", x: hitTree.x, y: hitTree.groundY + 1.2, z: hitTree.z }, hitTree.x, hitTree.z);
+  queueEvent(
+    state,
+    { e: "hit", x: hitTree.x, y: hitTree.groundY + TREE_CHOP_FLASH_HEIGHT, z: hitTree.z },
+    hitTree.x,
+    hitTree.z,
+  );
 
   // Wood per chop; overflow falls at the tree's base.
   const leftover = addToInventory(player.inventory, "wood", TREE_WOOD_PER_CHOP);

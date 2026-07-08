@@ -14,7 +14,7 @@ import { registerCueSink } from "@/client/audio/cues";
 import { clientWorld, debugStats, drainAudioEvents, type ZombieView } from "@/client/runtime";
 import { useSettingsStore } from "@/client/state/settings";
 import { useUIStore } from "@/client/state/store";
-import { TEMP_SHIVER } from "@worldspring/shared/constants";
+import { TEMP_SHIVER, TREE_CHOP_FLASH_HEIGHT } from "@worldspring/shared/constants";
 import { distSq2D } from "@worldspring/shared/math";
 import type { GameEvent, WireFire, ZombieState } from "@worldspring/shared/protocol";
 
@@ -94,14 +94,19 @@ const CRATE_THUD_VOLUME = 0.9;
 const CRATE_THUD_REF_DISTANCE = 25; // audible far across the island
 const TREE_FALL_VOLUME = 0.9;
 const TREE_FALL_REF_DISTANCE = 20; // a toppling tree carries (crate_thud precedent)
-// Chop "hit" events are emitted at exactly the trunk axis (server trees.ts) —
-// the wood test only needs the trunk radius plus wire-rounding slack.
+// Chop "hit" events are emitted at exactly the standing trunk's axis at
+// groundY + TREE_CHOP_FLASH_HEIGHT (server trees.ts), round2-quantized on the
+// wire — so the wood test matches that exact POINT, not the trunk disc.
+// Bullets never collide with trees (raycastStatics skips them), so a shot's
+// terrain/flesh impact that merely lands near a trunk must stay a thud.
 const TREE_HIT_QUERY_RADIUS = 2;
-const TREE_HIT_EPS_SQ = 0.04;
+const TREE_HIT_AXIS_EPS_SQ = 0.0025; // 5 cm — round2 wire error is ≤ 0.005/axis
+const TREE_HIT_Y_EPS = 0.25;
 const RELOAD_VOLUME = 0.6;
-// A completed reload's final snap leaves remainingS just above 0 (snap
-// cadence); anything larger on exit means the channel was interrupted.
-const RELOAD_FINISH_MAX_REMAINING_S = 0.25;
+// A completed reload's final snap leaves remainingS ≤ one 15 Hz tick (~0.067s
+// + round2); anything larger on exit means the channel was interrupted
+// (damage, slot swap, death) and the "mag seated" snap must stay silent.
+const RELOAD_FINISH_MAX_REMAINING_S = 0.1;
 const WAVES_VOLUME = 0.45;
 const WAVES_FULL_BELOW = 1.5;
 const WAVES_SILENT_ABOVE = 6;
@@ -162,9 +167,11 @@ interface Engine {
   dropPrevFalling: Map<number, boolean>;
   /** Last consumed clientWorld.felledVersion (-1 = never observed). */
   felledPrevVersion: number;
-  /** True once heardFelled mirrors the current connection's felled set —
-   * pre-join history (and post-reconnect reseeds) must not play crashes. */
-  felledSynced: boolean;
+  /** Last consumed clientWorld.felledSeedVersion (-1 = never observed). A
+   * bump means the set was rebuilt wholesale by a welcome/reset — mirror it
+   * silently, so pre-join history and trees felled while dropped (in-place
+   * reconnects never route through resetClientWorld) don't play a chorus. */
+  felledSeedPrev: number;
   /** Felled tree indices already accounted for (heard or silently seeded). */
   heardFelled: Set<number>;
   shotLastPlayed: Map<ShotWeapon, { t: number; x: number; y: number; z: number }>;
@@ -224,7 +231,7 @@ function createEngine(): Engine {
     zombieAttackLastAt: new Map(),
     dropPrevFalling: new Map(),
     felledPrevVersion: -1,
-    felledSynced: false,
+    felledSeedPrev: -1,
     heardFelled: new Set(),
     shotLastPlayed: new Map(),
     lcg: 0x2f6e2b1,
@@ -348,14 +355,17 @@ function fleshNear(x: number, y: number, z: number): boolean {
 }
 
 // Axe chops arrive as plain "hit" events emitted at exactly the standing
-// trunk's axis (server trees.ts) — so a hit point sitting on a still-standing
-// tree is a chop and thunks wood instead of flesh/dirt. Pure client-side
-// inference, no wire change; a whiffed chop stays a plain swing.
-function hitStandingTree(x: number, z: number): boolean {
+// trunk's axis, TREE_CHOP_FLASH_HEIGHT above its ground (server trees.ts) —
+// so a hit point sitting on that exact spot is a chop and thunks wood instead
+// of flesh/dirt. Pure client-side inference, no wire change; a whiffed chop
+// stays a plain swing, and a bullet's terrain impact inside the trunk disc
+// (rays pass through trees) misses both the axis and the flash height.
+function hitStandingTree(x: number, y: number, z: number): boolean {
   const world = clientWorld.world;
   if (!world) return false;
   for (const tree of world.queryStatics(x, z, TREE_HIT_QUERY_RADIUS).trees) {
-    if (distSq2D(tree.x, tree.z, x, z) > tree.r * tree.r + TREE_HIT_EPS_SQ) continue;
+    if (distSq2D(tree.x, tree.z, x, z) > TREE_HIT_AXIS_EPS_SQ) continue;
+    if (Math.abs(y - (tree.groundY + TREE_CHOP_FLASH_HEIGHT)) > TREE_HIT_Y_EPS) continue;
     // queryStatics returns references into world.trees (the server chop
     // idiom) — indexOf recovers the wire index. O(TREE_COUNT), hit-rate only.
     const index = world.trees.indexOf(tree);
@@ -411,7 +421,7 @@ function processEvents(engine: Engine, events: GameEvent[], cam: THREE.Vector3, 
         break;
       }
       case "hit": {
-        const name: SfxName = hitStandingTree(ev.x, ev.z)
+        const name: SfxName = hitStandingTree(ev.x, ev.y, ev.z)
           ? "axe_wood"
           : fleshNear(ev.x, ev.y, ev.z)
             ? "hit_flesh"
@@ -602,26 +612,27 @@ function updateAirdrops(engine: Engine): void {
 // frame the standing tree vanishes and the dynamic trunk appears.
 
 function updateFelledTrees(engine: Engine): void {
-  if (engine.felledPrevVersion === clientWorld.felledVersion) return;
-  const first = engine.felledPrevVersion === -1;
-  engine.felledPrevVersion = clientWorld.felledVersion;
-
-  const felled = clientWorld.felledTrees;
-  if (felled.size === 0) {
-    // Empty on first sight = genuinely nothing felled (live from here).
-    // Empty later = a reconnect reset wiped the set — stay muted until the
-    // welcome reseeds, so trees felled before/while away never chorus.
+  // A welcome (initial join OR in-place reconnect) or resetClientWorld
+  // rebuilt the whole set — mirror it silently. In-place reconnects go
+  // populated → populated in one synchronous felledVersion bump with the
+  // engine still mounted, so the reseed can never be inferred from the set's
+  // contents; felledSeedVersion is the explicit signal. Only per-snap deltas
+  // AFTER the reseed are live crashes.
+  if (engine.felledSeedPrev !== clientWorld.felledSeedVersion) {
+    engine.felledSeedPrev = clientWorld.felledSeedVersion;
+    engine.felledPrevVersion = clientWorld.felledVersion;
     engine.heardFelled.clear();
-    engine.felledSynced = first;
+    for (const index of clientWorld.felledTrees) engine.heardFelled.add(index);
     return;
   }
+  if (engine.felledPrevVersion === clientWorld.felledVersion) return;
+  engine.felledPrevVersion = clientWorld.felledVersion;
 
   const world = clientWorld.world;
-  const live = engine.felledSynced && !first;
-  for (const index of felled) {
+  for (const index of clientWorld.felledTrees) {
     if (engine.heardFelled.has(index)) continue;
     engine.heardFelled.add(index);
-    if (!live || !world) continue; // pre-join history seeds silently
+    if (!world) continue;
     const tree = world.trees[index];
     if (!tree) continue;
     playPositional(
@@ -634,7 +645,6 @@ function updateFelledTrees(engine: Engine): void {
       TREE_FALL_REF_DISTANCE,
     );
   }
-  engine.felledSynced = true;
 }
 
 // --- Ambience (non-positional gain-faded loops) ---
@@ -726,7 +736,7 @@ function silenceEngine(engine: Engine): void {
   engine.zombieAttackLastAt.clear();
   engine.dropPrevFalling.clear();
   engine.felledPrevVersion = -1;
-  engine.felledSynced = false;
+  engine.felledSeedPrev = -1;
   engine.heardFelled.clear();
   engine.shotLastPlayed.clear();
 }

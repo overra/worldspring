@@ -208,6 +208,11 @@ export interface ClientWorldState {
   /** Bumped whenever felledTrees changes (and on reset) so the per-frame
    * Trees check is one integer compare, not a Set diff. */
   felledVersion: number;
+  /** Bumped whenever felledTrees is REBUILT wholesale (welcome reseed — join
+   * or in-place reconnect — and resetClientWorld) rather than grown by a
+   * per-snap delta. The audio layer mirrors a reseed silently: history and
+   * trees felled while dropped must never play a crash chorus. */
+  felledSeedVersion: number;
 }
 
 export const clientWorld: ClientWorldState = {
@@ -234,6 +239,7 @@ export const clientWorld: ClientWorldState = {
   explored: null,
   felledTrees: new Set(),
   felledVersion: 0,
+  felledSeedVersion: 0,
 };
 
 // Dev-only debug handle: lets tooling (and curious humans) drive input and
@@ -298,4 +304,5 @@ export function resetClientWorld(): void {
   clientWorld.explored = null;
   clientWorld.felledTrees.clear();
   clientWorld.felledVersion++;
+  clientWorld.felledSeedVersion++;
 }
