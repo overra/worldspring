@@ -29,6 +29,7 @@ import {
   type StructurePiece,
 } from "@worldspring/shared/structures";
 import { buildState, clientWorld, inputState } from "@/client/runtime";
+import { crateRenderBox } from "@/client/render/world/Structures";
 import { useUIStore } from "@/client/state/store";
 
 /** Aim distances: how far ahead the ghost snaps when looking level/down. */
@@ -45,12 +46,19 @@ function countOfType(inv: ReadonlyArray<{ type: string; count: number } | null>,
   return n;
 }
 
-/** Snap the aim point to a PlaceTarget: cell address for foundations, the
- * nearest canonical edge of the aimed cell for edge pieces. */
+/** Snap the aim point to a PlaceTarget: cell address for foundations, free
+ * position INSIDE the aimed cell for crates (round2 mirrors the wire, then
+ * clamped so rounding can't push it across the cell boundary), the nearest
+ * canonical edge of the aimed cell for edge pieces. */
 function snapTarget(kind: (typeof PLACEABLE_KINDS)[number], tier: 0 | 1, ax: number, az: number): PlaceTarget {
   const gx = Math.floor(ax / BUILD_CELL);
   const gz = Math.floor(az / BUILD_CELL);
   if (kind === "foundation") return { kind, tier, gx, gz };
+  if (kind === "crate") {
+    const clampIn = (v: number, g: number): number =>
+      Math.min(g * BUILD_CELL + BUILD_CELL - 0.05, Math.max(g * BUILD_CELL + 0.05, Math.round(v * 100) / 100));
+    return { kind, tier, gx, gz, x: clampIn(ax, gx), z: clampIn(az, gz) };
+  }
   // Fractional position inside the cell picks the nearest of the 4 edges,
   // canonicalized: -Z → edge 0 of (gx, gz-1); -X → edge 2 of (gx-1, gz).
   const u = ax / BUILD_CELL - gx;
@@ -183,13 +191,17 @@ export function BuildPreview(): ReactElement {
       gx: target.gx,
       gz: target.gz,
       ...(target.edge !== undefined ? { edge: target.edge } : {}),
+      ...(target.x !== undefined && target.z !== undefined
+        ? { x: target.x, z: target.z }
+        : {}),
       floorY,
       hp: 0,
       ...(kind === "door" || kind === "gate" ? { open: false } : {}),
     };
-    const boxes = pieceAabbs(candidate);
+    // Crates derive zero collision boxes — ghost the render box instead.
+    const boxes = kind === "crate" ? [crateRenderBox(candidate)] : pieceAabbs(candidate);
 
-    const key = `${kind}|${tier}|${target.gx}|${target.gz}|${target.edge ?? "-"}|${floorY}`;
+    const key = `${kind}|${tier}|${target.gx}|${target.gz}|${target.edge ?? "-"}|${target.x ?? "-"}|${target.z ?? "-"}|${floorY}`;
     if (builtKey.current !== key) {
       builtKey.current = key;
       root.clear();

@@ -319,15 +319,37 @@ export interface OutboundMsg {
 /**
  * doc 06 — SERVER-ONLY per-piece extension, kept BESIDE the shared
  * world.structures index (keyed by the same piece id) so secrets never enter
- * shared code or the wire. The follow-up slice's code/contents/authorized
- * fields land here too. Persisted with the world snapshot; toWirePiece
- * (systems/structures.ts) is the only wire path and never reads this map.
+ * shared code or the wire. Persisted with the world snapshot; toWirePiece
+ * (systems/structures.ts) is the only wire path and copies NOTHING from this
+ * map except the derived `locked` boolean.
  */
 export interface StructureMeta {
   /** Placer's tokenHash — ownership key, stable like character rows. */
   ownerHash: string;
-  /** Date.now() at placement — decay (follow-up) uses wall-clock. */
+  /** Date.now() at placement — decay uses wall-clock. */
   placedAtMs: number;
+  /** Door/gate 4-digit code, or null = unlocked (doc 06 M5). */
+  code: string | null;
+  /** tokenHashes granted via tryCode — cap 16, FIFO eviction (doc 06 M5). */
+  authorized: string[];
+  /** Crates only: fixed CRATE_SLOTS-length array. Slot indices are STABLE
+   * identifiers — removal nulls a slot, never compacts — which is what makes
+   * server-serialized concurrent cMove loss-free (doc 06 M6). Null for every
+   * non-crate kind. */
+  contents: (ItemStack | null)[] | null;
+}
+
+/** doc 06 M5 — per-DOOR global brute-force budget (transient; a DO restart
+ * resets it by design). NEVER keyed per-identity: identities are free to
+ * mint, so only a shared scarce thing (the door) can hold a budget. */
+export interface DoorBackoff {
+  /** Consecutive failed tryCodes (any identity combined) since the last
+   * success/lockout. */
+  fails: number;
+  /** Game-time until which ALL tryCode on this door is rejected. */
+  lockedUntil: number;
+  /** Duration of the NEXT lockout — doubles per lockout, capped. */
+  backoff: number;
 }
 
 export interface GameState {
@@ -365,9 +387,24 @@ export interface GameState {
   /** Server-auth dynamic physics (doc 13) — engine attaches async in the DO;
    * a no-op shell in harnesses/tests that never attach one. */
   physics: PhysicsSystem;
-  /** doc 06 — server-only piece meta (ownership) beside world.structures,
-   * same id space. Every mutation path keeps the two maps in lockstep. */
+  /** doc 06 — server-only piece meta (ownership/locks/contents) beside
+   * world.structures, same id space. Every mutation path keeps the two maps
+   * in lockstep. */
   structureMeta: Map<number, StructureMeta>;
+  /** doc 06 M5 — per-door brute-force budgets. Transient, never persisted. */
+  doorBackoff: Map<number, DoorBackoff>;
+  /** doc 06 M5 — per-identity tryCode anti-mash (tokenHash → last try game
+   * time). UX throttle ONLY — Sybil-bypassable, so never a security control.
+   * Transient. */
+  codeTryAt: Map<string, number>;
+  /** doc 06 M7 — tokenHash → last game-time an entry with that hash existed
+   * in game.players (maintained on the tick). The offline-shield grace reads
+   * this: ownerOnline holds for RAID_OFFLINE_GRACE_S after the entry leaves.
+   * Transient. */
+  ownerPresence: Map<string, number>;
+  /** doc 06 M7 — game-time of the next decay sweep (5 game-minute cadence;
+   * the boot sweep runs in ensureGame). Transient. */
+  decayNextAt: number;
   /** doc 13 M2 — indices (into world.trees) of felled trees. Persisted with
    * the world snapshot; mirrored into PhysicsSystem (static-collider
    * exclusion) and to clients (welcome.felled + the per-tick delta below). */
@@ -419,6 +456,10 @@ export function createGameState(
     // non-leaf modules (strip-types harness constraint).
     physics: new PhysicsSystem(world, config.physics, pieceAabbs),
     structureMeta: new Map(),
+    doorBackoff: new Map(),
+    codeTryAt: new Map(),
+    ownerPresence: new Map(),
+    decayNextAt: 0,
     felledTrees: new Set(),
     felledDelta: [],
     treeChops: new Map(),

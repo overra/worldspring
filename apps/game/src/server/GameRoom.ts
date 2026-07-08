@@ -30,6 +30,7 @@ import {
   CHAT_COOLDOWN_S,
   CHAT_MAX_LENGTH,
   CHAT_RADIUS,
+  DECAY_SWEEP_INTERVAL_S,
   INPUT_BUDGET_CAP_S,
   INTEREST_RADIUS,
   LOOT_INTEREST_RADIUS,
@@ -72,6 +73,7 @@ import {
   captureBookmark,
   clearPendingRecap,
   initSchema,
+  lastSeenMs,
   loadCharacter,
   loadWorld,
   markCharacterDead,
@@ -116,7 +118,18 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
-import { handleDemolish, handleDoor, handlePlace, structuresFullMsgs } from "./systems/structures";
+import {
+  handleContainerMove,
+  handleContainerOpen,
+  handleDemolish,
+  handleDoor,
+  handlePlace,
+  handleSetCode,
+  handleTryCode,
+  structuresFullMsgs,
+  sweepDecay,
+  tickStructures,
+} from "./systems/structures";
 import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
@@ -594,6 +607,18 @@ export class GameRoom extends DurableObject<Env> {
       case "door":
         handleDoor(game, player, msg.id);
         break;
+      case "setCode":
+        handleSetCode(game, player, msg.id, msg.code);
+        break;
+      case "tryCode":
+        handleTryCode(game, player, msg.id, msg.code);
+        break;
+      case "cOpen":
+        handleContainerOpen(game, player, msg.id);
+        break;
+      case "cMove":
+        handleContainerMove(game, player, msg);
+        break;
       case "respawn":
         // doc 06 griefing policy: "respawn is always available" is layer 2 of
         // the walling-in mitigation. Until structure damage lands (milestone
@@ -694,6 +719,12 @@ export class GameRoom extends DurableObject<Env> {
     // Zombies and deer are never persisted — they always spawn fresh.
     spawnInitialZombies(game);
     spawnInitialDeer(game);
+    // doc 06 M7 — boot decay sweep: an abandoned base disappears the first
+    // time anyone wakes the room past the window (idle-server gaps). Runs
+    // AFTER loadWorld restored the pieces; the tick's tickStructures owns the
+    // 5-game-minute cadence from here.
+    sweepDecay(game, (hash) => lastSeenMs(this.ctx.storage.sql, hash));
+    game.decayNextAt = game.time + DECAY_SWEEP_INTERVAL_S;
     this.game = game;
     this.lastSaveTime = game.time;
     // doc 13 — attach the physics engine asynchronously (wasm init). Ticks
@@ -1223,6 +1254,9 @@ export class GameRoom extends DurableObject<Env> {
     // Fog-of-war: reveal cells around each player's just-updated position
     // (no-op unless map.reveal === "explored").
     markExploration(game);
+    // doc 06 M7 — stamp owner presence (the offline-shield grace window reads
+    // it) BEFORE attacks resolve, and run the decay sweep on its cadence.
+    tickStructures(game, (hash) => lastSeenMs(this.ctx.storage.sql, hash));
     // Channeled actions (doc 11) advance HERE — load-bearing ordering: this MUST
     // run AFTER applyQueuedInputs (so it reads THIS tick's freshly-computed
     // movedThisTick for the move-cancel rule, which applyQueuedInputs resets to

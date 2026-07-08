@@ -95,7 +95,14 @@ const DT = 1 / 15;
 
 function makeState() {
   return {
-    world: { raycastStatics: () => null, groundHeight: () => 0, heightAt: () => 0 },
+    // structures.raycastPiece: doc 06 M7 — fireRanged probes for per-pellet
+    // piece attribution; an empty index never attributes.
+    world: {
+      raycastStatics: () => null,
+      groundHeight: () => 0,
+      heightAt: () => 0,
+      structures: { raycastPiece: () => null },
+    },
     config: { pvp: { enabled: false, fullLoot: true }, map: { reveal: "full" } },
     time: 0,
     tick: 0,

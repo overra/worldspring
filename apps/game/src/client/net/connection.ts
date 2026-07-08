@@ -11,7 +11,7 @@ import { clampConfig, effectiveGameHour, worldParamsOf } from "@worldspring/shar
 import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import type { ClientMsg, ServerMsg, Vitals, WearSlot, YouState } from "@worldspring/shared/protocol";
+import type { ClientMsg, ServerMsg, Vitals, WearSlot, WirePiece, YouState } from "@worldspring/shared/protocol";
 import type { PlaceTarget } from "@worldspring/shared/structures";
 import { createWorld } from "@worldspring/shared/world";
 import { clientWorld, resetClientWorld } from "@/client/runtime";
@@ -178,6 +178,8 @@ export function disconnect(): void {
   ui.setRealm("overworld");
   ui.closeChat();
   ui.clearChatLog(); // stale chatOpen would pop the input open on the next join
+  ui.setCodePad(null); // doc 06 — overlays never survive a session
+  ui.setContainer(null);
   if (ui.phase !== "menu") ui.setPhase("menu");
 }
 
@@ -243,7 +245,8 @@ export function doRespawn(): void {
 
 /** doc 06 — request a structure placement at a snapped grid address. The
  * server re-validates everything; the ghost's shared canPlace makes a
- * rejection rare (occupancy races aside). */
+ * rejection rare (occupancy races aside). Crates carry their free in-cell
+ * position (x/z). */
 export function doPlace(target: PlaceTarget): void {
   sendMsg({
     t: "place",
@@ -252,6 +255,9 @@ export function doPlace(target: PlaceTarget): void {
     gx: target.gx,
     gz: target.gz,
     ...(target.edge !== undefined ? { edge: target.edge } : {}),
+    ...(target.x !== undefined && target.z !== undefined
+      ? { x: target.x, z: target.z }
+      : {}),
   });
 }
 
@@ -264,6 +270,26 @@ export function doDemolish(id: number): void {
  * a door swing is acceptable (doc 06:174). */
 export function doDoor(id: number): void {
   sendMsg({ t: "door", id });
+}
+
+/** doc 06 M5 — owner: set/change a door code ("" removes the lock). */
+export function doSetCode(id: number, code: string): void {
+  sendMsg({ t: "setCode", id, code });
+}
+
+/** doc 06 M5 — try a 4-digit code on a locked door (the code-pad submit). */
+export function doTryCode(id: number, code: string): void {
+  sendMsg({ t: "tryCode", id, code });
+}
+
+/** doc 06 M6 — request a crate's contents; the server replies `cont`. */
+export function doContainerOpen(id: number): void {
+  sendMsg({ t: "cOpen", id });
+}
+
+/** doc 06 M6 — move one whole stack between inventory and a crate slot. */
+export function doContainerMove(id: number, from: number, to: number, dir: "in" | "out"): void {
+  sendMsg({ t: "cMove", id, from, to, dir });
 }
 
 /** Send a proximity-chat line; a no-op when the socket is closed (sendMsg).
@@ -386,6 +412,8 @@ function handleMessage(data: unknown): void {
       ui.setDeathCause(msg.by);
       ui.setRecap(msg.recap);
       ui.closeChat(); // a half-typed line must not sit over the death screen
+      ui.setCodePad(null); // doc 06 — no overlays over the death screen
+      ui.setContainer(null);
       ui.setPhase("dead"); // socket stays open; respawn reuses it
       return;
     case "notice":
@@ -410,12 +438,38 @@ function handleMessage(data: unknown): void {
     }
     case "sRemove": {
       clientWorld.world?.structures.remove(msg.id);
+      clientWorld.unlockedDoors.delete(msg.id);
+      // The piece under an open pad/panel is gone (demolished/destroyed).
+      if (ui.codePad?.id === msg.id) ui.setCodePad(null);
+      if (ui.container?.id === msg.id) ui.setContainer(null);
       clientWorld.structuresVersion++;
       return;
     }
     case "sState": {
-      if (msg.open !== undefined) clientWorld.world?.structures.setOpen(msg.id, msg.open);
+      const idx = clientWorld.world?.structures;
+      if (msg.open !== undefined) idx?.setOpen(msg.id, msg.open);
+      // hp (damage-tier tint, M7) + locked (code pad prompt, M5) ride the
+      // stored record — the index stores wire records verbatim.
+      const piece = idx?.pieces.get(msg.id) as WirePiece | undefined;
+      if (piece) {
+        if (msg.hp !== undefined) piece.hp = msg.hp;
+        if (msg.locked !== undefined) piece.locked = msg.locked;
+      }
+      // A lock set/changed revokes everyone — drop the UX cache entry.
+      if (msg.locked === true) clientWorld.unlockedDoors.delete(msg.id);
+      // The door we were code-padding swung open (our tryCode was accepted,
+      // or an authorized toggle landed): remember it and drop the pad.
+      if (msg.open === true && ui.codePad?.id === msg.id && ui.codePad.mode === "try") {
+        clientWorld.unlockedDoors.add(msg.id);
+        ui.setCodePad(null);
+      }
       clientWorld.structuresVersion++;
+      return;
+    }
+    case "cont": {
+      // doc 06 M6 — authoritative crate view: opens the panel on a cOpen
+      // reply, refreshes it after every cMove.
+      ui.setContainer({ id: msg.id, slots: msg.slots });
       return;
     }
     case "pong":

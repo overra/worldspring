@@ -21,7 +21,7 @@
 // (positions/inventories from an old world layout would be nonsense) but the
 // leaderboard survives — finished lives stay comparable across wipes.
 
-import { LEADERBOARD_MAX, WORLDGEN_VERSION } from "@worldspring/shared/constants";
+import { CRATE_SLOTS, LEADERBOARD_MAX, WORLDGEN_VERSION } from "@worldspring/shared/constants";
 import type { WipeSchedule } from "@worldspring/shared/config";
 import { encodeExplored } from "@worldspring/shared/fog";
 import type { ItemStack } from "@worldspring/shared/items";
@@ -417,10 +417,19 @@ interface WorldSnapshot {
   structures: PersistedStructure[];
 }
 
-/** A persisted piece: the wire/shared record + server-only ownership. */
+/** A persisted piece: the wire/shared record + server-only meta. The doc 06
+ * M5/M6 fields (code/authorized/contents) are ADDITIVE-optional: pre-lock
+ * snapshots lack them and normalize to unlocked/empty on load — no
+ * SCHEMA_VERSION bump; old saves load clean. */
 export interface PersistedStructure extends StructurePiece {
   ownerHash: string;
   placedAtMs: number;
+  /** Door/gate 4-digit code; null/absent = unlocked. */
+  code?: string | null;
+  /** tokenHashes granted via tryCode (cap 16). */
+  authorized?: string[];
+  /** Crates only: fixed CRATE_SLOTS-length slot array. */
+  contents?: (ItemStack | null)[] | null;
 }
 
 /**
@@ -446,6 +455,13 @@ function serializeStructures(game: GameState): PersistedStructure[] {
       ...piece,
       ownerHash: meta?.ownerHash ?? "",
       placedAtMs: meta?.placedAtMs ?? 0,
+      // doc 06 M5/M6 — locks + crate contents ride the same blob so items
+      // moving between a player and a crate snapshot atomically with the
+      // character rows (the persistAll no-dupe invariant). Omit-when-empty
+      // keeps pre-lock pieces byte-identical.
+      ...(meta?.code != null ? { code: meta.code } : {}),
+      ...(meta?.authorized && meta.authorized.length > 0 ? { authorized: meta.authorized } : {}),
+      ...(meta?.contents ? { contents: meta.contents } : {}),
     });
   }
   return out;
@@ -497,6 +513,37 @@ export function pruneStaleCharacters(sql: SqlStorage): void {
 /** A snapshot entity is only hydratable if it carries a finite numeric id. */
 function hasNumericId(v: unknown): v is { id: number } {
   return typeof v === "object" && v !== null && Number.isFinite((v as { id?: unknown }).id);
+}
+
+/**
+ * Normalize a persisted crate contents array to the fixed CRATE_SLOTS shape
+ * (doc 06 M6): always full length (slot indices are stable identifiers), each
+ * slot either a shape-valid stack or null. Garbage slots degrade to null
+ * rather than rejecting the crate — the same per-entry posture as the piece
+ * loop. Pre-crate snapshots (absent field) come out empty.
+ */
+function normalizeContents(raw: unknown): (ItemStack | null)[] {
+  const src = Array.isArray(raw) ? raw : [];
+  const out: (ItemStack | null)[] = [];
+  for (let i = 0; i < CRATE_SLOTS; i++) {
+    const v = src[i] as Partial<ItemStack> | null | undefined;
+    if (
+      v &&
+      typeof v === "object" &&
+      typeof v.type === "string" &&
+      Number.isFinite(v.count) &&
+      (v.count as number) > 0
+    ) {
+      out.push({
+        type: v.type as ItemStack["type"],
+        count: Math.floor(v.count as number),
+        ...(Number.isFinite(v.mag) ? { mag: v.mag as number } : {}),
+      });
+    } else {
+      out.push(null);
+    }
+  }
+  return out;
 }
 
 /**
@@ -606,6 +653,10 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
       gx: raw.gx as number,
       gz: raw.gz as number,
       ...(isEdgeKind ? { edge: raw.edge as 0 | 2 } : {}),
+      // A crate's free position (doc 06 M6) — both coords or neither.
+      ...(raw.kind === "crate" && Number.isFinite(raw.x) && Number.isFinite(raw.z)
+        ? { x: raw.x as number, z: raw.z as number }
+        : {}),
       floorY: raw.floorY as number,
       hp: Number.isFinite(raw.hp) ? (raw.hp as number) : 0,
       ...(raw.kind === "door" || raw.kind === "gate" ? { open: raw.open === true } : {}),
@@ -614,6 +665,18 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     game.structureMeta.set(piece.id, {
       ownerHash: typeof raw.ownerHash === "string" ? raw.ownerHash : "",
       placedAtMs: Number.isFinite(raw.placedAtMs) ? (raw.placedAtMs as number) : 0,
+      // doc 06 M5/M6 — ADDITIVE fields: pre-lock snapshots lack them and
+      // normalize to unlocked / no grants / (crates) an empty slot array.
+      code:
+        (raw.kind === "door" || raw.kind === "gate") &&
+        typeof raw.code === "string" &&
+        /^\d{4}$/.test(raw.code)
+          ? raw.code
+          : null,
+      authorized: Array.isArray(raw.authorized)
+        ? raw.authorized.filter((h): h is string => typeof h === "string").slice(0, 16)
+        : [],
+      contents: raw.kind === "crate" ? normalizeContents(raw.contents) : null,
     });
     maxId = Math.max(maxId, piece.id);
   }
@@ -678,6 +741,23 @@ export function saveCharacter(sql: SqlStorage, player: ServerPlayer, gameTime: n
     JSON.stringify(state),
     Date.now(),
   );
+}
+
+/**
+ * doc 06 M7 — wall-clock ms this token's character row was last written
+ * (characters.updated_at, maintained on every save), or null when no row
+ * exists (pruned after 30 days ⇒ the decay sweep treats the owner as
+ * decayed). One indexed point read; called per distinct owner per sweep.
+ */
+export function lastSeenMs(sql: SqlStorage, tokenHash: string): number | null {
+  const rows = sql
+    .exec<{ updated_at: number }>(
+      "SELECT updated_at FROM characters WHERE token_hash = ?",
+      tokenHash,
+    )
+    .toArray();
+  if (rows.length === 0) return null;
+  return Number.isFinite(rows[0].updated_at) ? rows[0].updated_at : null;
 }
 
 /** Load a character row by token hash, or null when none exists. */

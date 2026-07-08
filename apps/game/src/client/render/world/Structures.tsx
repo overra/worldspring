@@ -14,7 +14,7 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { BUILD_CELL, BUILD_WALL_THICKNESS } from "@worldspring/shared/constants";
-import { pieceAabbs, type StructurePiece } from "@worldspring/shared/structures";
+import { PIECE_DEFS, pieceAabbs, pieceCenter, type StructurePiece } from "@worldspring/shared/structures";
 import type { Aabb } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
 
@@ -31,6 +31,36 @@ const BUCKET_COLORS: Record<BucketKey, string> = {
  * in structures.ts — render-only, never collision). */
 const OPEN_DOOR_HEIGHT = 2.2;
 const OPEN_GATE_HEIGHT = 2.6;
+
+/** Crate render dims (doc 06 M6) — RENDER-ONLY: crates derive zero collision
+ * boxes (open Q1 / campfire precedent), so the visual box is synthesized. */
+const CRATE_SIZE = 0.9;
+const CRATE_HEIGHT = 0.7;
+
+/** Render box for a crate at its free position (or cell center). */
+export function crateRenderBox(piece: StructurePiece): Aabb {
+  const [cx, cz] = pieceCenter(piece);
+  const h = CRATE_SIZE / 2;
+  return {
+    minX: cx - h,
+    maxX: cx + h,
+    minZ: cz - h,
+    maxZ: cz + h,
+    y0: piece.floorY,
+    y1: piece.floorY + CRATE_HEIGHT,
+  };
+}
+
+/** Damage tint multiplier from remaining hp (doc 06 M7): cracks at ≥50%
+ * damage, heavy at ≥80% — instanced per-box via setColorAt. */
+function damageTint(piece: StructurePiece): number {
+  const maxHp = PIECE_DEFS[piece.kind].hp[piece.tier];
+  if (maxHp <= 0) return 1;
+  const dmg = 1 - piece.hp / maxHp;
+  if (dmg >= 0.8) return 0.45;
+  if (dmg >= 0.5) return 0.7;
+  return 1;
+}
 
 /** Render-only panel for an OPEN door/gate: swung 90° to hug the hinge-side
  * jamb, sticking into the +Z/+X neighbor cell. Zero collision by design. */
@@ -59,6 +89,13 @@ function bucketOf(piece: StructurePiece): BucketKey {
 }
 
 const dummy = new THREE.Object3D();
+const tintColor = new THREE.Color();
+
+/** One instanced box + its damage tint (1 = pristine). */
+interface RenderBox {
+  box: Aabb;
+  tint: number;
+}
 
 function buildMeshes(
   geometry: THREE.BoxGeometry,
@@ -69,13 +106,16 @@ function buildMeshes(
   const meshes: THREE.InstancedMesh[] = [];
   if (!world) return { group, meshes };
 
-  const buckets: Record<BucketKey, Aabb[]> = { wood: [], scrap: [], woodDoor: [], scrapDoor: [] };
+  const buckets: Record<BucketKey, RenderBox[]> = { wood: [], scrap: [], woodDoor: [], scrapDoor: [] };
   for (const piece of world.structures.pieces.values()) {
     const key = bucketOf(piece);
-    for (const box of pieceAabbs(piece)) buckets[key].push(box);
+    const tint = damageTint(piece);
+    for (const box of pieceAabbs(piece)) buckets[key].push({ box, tint });
+    // Crates derive zero collision boxes — synthesize the render box.
+    if (piece.kind === "crate") buckets[key].push({ box: crateRenderBox(piece), tint });
     if ((piece.kind === "door" || piece.kind === "gate") && piece.open === true) {
       const panel = openPanelBox(piece);
-      if (panel) buckets[key].push(panel);
+      if (panel) buckets[key].push({ box: panel, tint });
     }
   }
 
@@ -86,7 +126,7 @@ function buildMeshes(
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;
-    boxes.forEach((box, slot) => {
+    boxes.forEach(({ box, tint }, slot) => {
       dummy.position.set(
         (box.minX + box.maxX) / 2,
         (box.y0 + box.y1) / 2,
@@ -96,8 +136,12 @@ function buildMeshes(
       dummy.scale.set(box.maxX - box.minX, box.y1 - box.y0, box.maxZ - box.minZ);
       dummy.updateMatrix();
       mesh.setMatrixAt(slot, dummy.matrix);
+      // Damage tiers (doc 06 M7): per-instance darkening multiplies the
+      // bucket material color (white = untouched).
+      mesh.setColorAt(slot, tintColor.setScalar(tint));
     });
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     group.add(mesh);
     meshes.push(mesh);
   }

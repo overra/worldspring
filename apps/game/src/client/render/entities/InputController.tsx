@@ -8,11 +8,13 @@ import { BUILD_RANGE, PLAYER_EYE_HEIGHT } from "@worldspring/shared/constants";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { lookDir } from "@worldspring/shared/math";
 import { PLACEABLE_KINDS } from "@worldspring/shared/structures";
+import type { WirePiece } from "@worldspring/shared/protocol";
 import { buildState, clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
 import {
   doAttack,
+  doContainerOpen,
   doDemolish,
   doDoor,
   doDrop,
@@ -76,6 +78,10 @@ export function InputController(): null {
       // The input's own keydown handles Enter/Escape and stops propagation;
       // this gate covers keys when focus strays from the input.
       if (ui.chatOpen) return;
+
+      // doc 06 M5 — the code pad owns the keyboard the same way (digits /
+      // Backspace / Enter / Escape are handled by the pad component).
+      if (ui.codePad !== null) return;
 
       if (e.code === "Tab") {
         e.preventDefault();
@@ -147,14 +153,46 @@ export function InputController(): null {
           ui.openChat();
           return;
         case "KeyE": {
+          // doc 06 M6 — an open crate panel closes on E (desktop's explicit
+          // close; touch walks away instead).
+          if (ui.container !== null) {
+            ui.setContainer(null);
+            return;
+          }
           const lootId = clientWorld.promptLootId;
           if (lootId !== null) {
             doPickup(lootId);
             return;
           }
-          // doc 06 — no loot in range: E toggles a nearby door/gate.
+          // doc 06 — no loot in range: E works a nearby door/gate. A locked
+          // door we have no cached grant for opens the CODE PAD instead of
+          // wasting a round-trip on a rejected toggle (doc 06 M5 UI outline);
+          // owners/authorized who came through the pad once are cached in
+          // unlockedDoors and toggle directly from then on.
           const doorId = clientWorld.promptDoorId;
-          if (doorId !== null) doDoor(doorId);
+          if (doorId !== null) {
+            const piece = clientWorld.world?.structures.pieces.get(doorId) as
+              | WirePiece
+              | undefined;
+            const needsCode =
+              piece?.locked === true && !clientWorld.unlockedDoors.has(doorId);
+            if (needsCode) useUIStore.getState().setCodePad({ id: doorId, mode: "try" });
+            else doDoor(doorId);
+            return;
+          }
+          // doc 06 M6 — last: open a nearby storage crate.
+          const crateId = clientWorld.promptCrateId;
+          if (crateId !== null) doContainerOpen(crateId);
+          return;
+        }
+        case "KeyL": {
+          // doc 06 M5 — lock affordance on the aimed/near door: opens the
+          // set-code pad (owner-only server-side; non-owners get the notice).
+          // NOT F — F is the established use-item key and overloading it
+          // collides with consuming items while facing a door (the same
+          // rationale that put demolish on X instead of E).
+          const lockDoorId = clientWorld.promptDoorId;
+          if (lockDoorId !== null) ui.setCodePad({ id: lockDoorId, mode: "set" });
           return;
         }
         case "KeyQ":
@@ -310,7 +348,17 @@ export function InputController(): null {
       // before exitLock runs.
       if (!wasLocked || inputState.touchMode) return;
       const ui = useUIStore.getState();
-      if (ui.phase !== "playing" || ui.invOpen || ui.mapOpen || ui.menuOpen || ui.chatOpen) return;
+      if (
+        ui.phase !== "playing" ||
+        ui.invOpen ||
+        ui.mapOpen ||
+        ui.menuOpen ||
+        ui.chatOpen ||
+        ui.codePad !== null ||
+        ui.container !== null
+      ) {
+        return;
+      }
       ui.setMenuOpen(true);
     };
 
@@ -344,6 +392,14 @@ export function InputController(): null {
         clearMovementKeys();
         exitLock();
       }
+      // doc 06 — code pad + crate panel both need clicks (the pad's digits,
+      // the panel's move buttons). The crate panel deliberately does NOT
+      // clear movement: on touch, walking away is its close gesture.
+      if (state.codePad !== null && prev.codePad === null) {
+        clearMovementKeys();
+        exitLock();
+      }
+      if (state.container !== null && prev.container === null) exitLock();
       if (state.phase === "dead" && prev.phase !== "dead") exitLock();
 
       // Re-lock when a blocking UI closes mid-play. Zustand notifies
@@ -355,13 +411,17 @@ export function InputController(): null {
       const mapClosed = !state.mapOpen && prev.mapOpen;
       const menuClosed = !state.menuOpen && prev.menuOpen;
       const chatClosed = !state.chatOpen && prev.chatOpen;
+      const padClosed = state.codePad === null && prev.codePad !== null;
+      const contClosed = state.container === null && prev.container !== null;
       if (
-        (invClosed || mapClosed || menuClosed || chatClosed) &&
+        (invClosed || mapClosed || menuClosed || chatClosed || padClosed || contClosed) &&
         state.phase === "playing" &&
         !state.invOpen &&
         !state.mapOpen &&
         !state.menuOpen &&
         !state.chatOpen &&
+        state.codePad === null &&
+        state.container === null &&
         !inputState.touchMode
       ) {
         requestLock();
