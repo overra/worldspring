@@ -116,6 +116,7 @@ import {
   type GameState,
   type ServerPlayer,
 } from "./systems/state";
+import { handleDemolish, handleDoor, handlePlace, structuresFullMsgs } from "./systems/structures";
 import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
@@ -584,6 +585,15 @@ export class GameRoom extends DurableObject<Env> {
       case "drop":
         dropSlot(game, player, msg.slot);
         break;
+      case "place":
+        handlePlace(game, player, msg);
+        break;
+      case "demolish":
+        handleDemolish(game, player, msg.id);
+        break;
+      case "door":
+        handleDoor(game, player, msg.id);
+        break;
       case "respawn":
         if (!player.alive && game.time - player.diedAt >= this.config.session.respawnDelayS) {
           respawnPlayer(game, player);
@@ -923,6 +933,11 @@ export class GameRoom extends DurableObject<Env> {
       // static forest on join. Omitted while none are felled (additive optional).
       felled: game.felledTrees.size > 0 ? [...game.felledTrees] : undefined,
     });
+    // doc 06 — the FULL structure set, synchronously after welcome on the
+    // same socket (socket ordering ⇒ it precedes any tick snapshot or delta).
+    // Every welcome path needs this: the client rebuilds its world (and an
+    // empty structure index) from scratch on every welcome.
+    for (const msg of structuresFullMsgs(game)) this.send(ws, msg);
   }
 
   private dropSocket(ws: WebSocket): void {

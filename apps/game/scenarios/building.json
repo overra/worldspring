@@ -1,0 +1,30 @@
+{
+  "name": "building",
+  "provision": [
+    { "kind": "position", "zone": "inland", "face": "inland" },
+    {
+      "kind": "loadout",
+      "items": [
+        { "type": "hammer", "count": 1 },
+        { "type": "axe", "count": 1 },
+        { "type": "wood", "count": 40 },
+        { "type": "scrap", "count": 8 }
+      ]
+    },
+    { "kind": "vitals", "hp": 100, "food": 100, "water": 100, "temp": 37 },
+    { "kind": "clearCooldowns", "which": ["attack"] }
+  ],
+  "checklist": [
+    "doc 06 — equip the hammer (slot 1): the build panel appears with [Q] piece / [T] tier hints and a ghost snaps to the 3m grid ahead of you.",
+    "Aim at open ground: the foundation ghost is GREEN; click to place — 8 wood is deducted and the slab appears (walk onto it: you step up).",
+    "Cycle to wall with Q: edges of the foundation cell highlight; place walls on three sides, a doorway on the fourth, then cycle to door and place it in the doorway.",
+    "Walk into a wall: you are blocked (no rubber-banding — prediction matches the server). Walk under the doorway header: you pass.",
+    "Press E at the closed door: it opens (anyone can — locks are a later slice); walk through, E again to close. A trunk/crate shoved at an OPEN doorway rolls through.",
+    "Try to place inside a town or the military compound: the ghost turns RED with 'building is not allowed here'.",
+    "Ask a friend to stand in the target cell: the ghost/server rejects with 'someone is in the way'.",
+    "Aim at your own wall and HOLD X ~0.6s: it demolishes (no refund). A foundation with walls attached refuses until they're removed.",
+    "Toggle tier with T: scrap pieces cost scrap (8 in the kit — enough for one door); place one and note the grey tint.",
+    "Rejoin (or restart the preview after ~20s): every piece is still there with the same collision — structures persist with the world snapshot.",
+    "Without the hammer equipped, clicking swings/attacks as before — build mode only captures the click while the hammer is held."
+  ]
+}

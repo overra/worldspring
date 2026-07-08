@@ -23,6 +23,7 @@ import type {
 } from "@worldspring/shared/protocol";
 import type { ExploredGrid } from "@worldspring/shared/fog";
 import type { ItemType } from "@worldspring/shared/items";
+import type { PieceTier, PlaceRejection, PlaceTarget } from "@worldspring/shared/structures";
 import type { World } from "@worldspring/shared/world";
 
 export interface InputState {
@@ -189,6 +190,9 @@ export interface ClientWorldState {
   renderGameTime: number;
   /** Loot/corpse/crate id in pickup range (shared id space; prompt + E key). */
   promptLootId: number | null;
+  /** doc 06 — door/gate piece id in interact range (E toggles). Only set
+   * while no loot prompt wins; null otherwise. */
+  promptDoorId: number | null;
   /** VFX queue: net layer pushes, render effects drain via drainEvents(). */
   events: GameEvent[];
   /** Same events, separate queue for the audio engine (drainAudioEvents). */
@@ -208,6 +212,9 @@ export interface ClientWorldState {
   /** Bumped whenever felledTrees changes (and on reset) so the per-frame
    * Trees check is one integer compare, not a Set diff. */
   felledVersion: number;
+  /** doc 06 — bumped on every structure mutation (sFull/sAdd/sRemove/sState
+   * and world rebuild) so renderers re-stamp on an integer compare. */
+  structuresVersion: number;
 }
 
 export const clientWorld: ClientWorldState = {
@@ -227,6 +234,7 @@ export const clientWorld: ClientWorldState = {
   weather: 0,
   renderGameTime: 0,
   promptLootId: null,
+  promptDoorId: null,
   events: [],
   audioEvents: [],
   world: null,
@@ -234,6 +242,34 @@ export const clientWorld: ClientWorldState = {
   explored: null,
   felledTrees: new Set(),
   felledVersion: 0,
+  structuresVersion: 0,
+};
+
+// --- Build mode (doc 06) ---
+// Written by the BuildPreview frame loop (target/validity) and by
+// InputController (kind/tier cycling, place clicks read `target`). Kept out
+// of React state — the target changes at look rate.
+
+export interface BuildRuntimeState {
+  /** True while the hammer is equipped in live play (BuildPreview maintains it). */
+  active: boolean;
+  /** Index into PLACEABLE_KINDS — the selected piece kind. */
+  kindIndex: number;
+  tier: PieceTier;
+  /** The snapped grid address under the crosshair, or null. */
+  target: PlaceTarget | null;
+  /** canPlace === null AND local resources suffice — the ghost is green. */
+  valid: boolean;
+  rejection: PlaceRejection | null;
+}
+
+export const buildState: BuildRuntimeState = {
+  active: false,
+  kindIndex: 0,
+  tier: 0,
+  target: null,
+  valid: false,
+  rejection: null,
 };
 
 // Dev-only debug handle: lets tooling (and curious humans) drive input and
@@ -298,4 +334,10 @@ export function resetClientWorld(): void {
   clientWorld.explored = null;
   clientWorld.felledTrees.clear();
   clientWorld.felledVersion++;
+  clientWorld.promptDoorId = null;
+  clientWorld.structuresVersion++;
+  buildState.active = false;
+  buildState.target = null;
+  buildState.valid = false;
+  buildState.rejection = null;
 }

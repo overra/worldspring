@@ -44,7 +44,10 @@ const PACK_LEN = INVENTORY_SLOTS + PACK_EXTRA; // 12
 // --- 1. wire ------------------------------------------------------------------
 console.log("protocol (doc 05 M6 wire):");
 {
-  check(PROTOCOL_VERSION === 8, `PROTOCOL_VERSION bumped to 8 (got ${PROTOCOL_VERSION})`);
+  // >= 8: M6 took the bump to 8; later docs keep bumping (doc 06 → 9) and
+  // must not break this harness — the exact current value is pinned by the
+  // newest feature's own harness (structures.mjs).
+  check(PROTOCOL_VERSION >= 8, `PROTOCOL_VERSION at least 8 (got ${PROTOCOL_VERSION})`);
   const wear = parseClientMsg(JSON.stringify({ t: "wear", slot: 3.7 }));
   check(wear?.t === "wear" && wear.slot === 3, "wear parses, slot coerced |0");
   check(parseClientMsg(JSON.stringify({ t: "wear", slot: "x" })) === null, "wear with non-numeric slot is malformed");
