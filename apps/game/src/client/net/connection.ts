@@ -12,7 +12,7 @@ import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
 import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import type { ClientMsg, ServerMsg, Vitals, YouState } from "@worldspring/shared/protocol";
+import type { ClientMsg, ServerMsg, Vitals, WearSlot, YouState } from "@worldspring/shared/protocol";
 import { createWorld } from "@worldspring/shared/world";
 import { clientWorld, resetClientWorld } from "@/client/runtime";
 import { cueSound } from "@/client/audio/cues";
@@ -217,6 +217,17 @@ export function doCraft(recipe: number): void {
   sendMsg({ t: "craft", recipe });
 }
 
+/** Wear the kind:"wear" item in `slot` (doc 05 M6); confirmed via inv.worn. */
+export function doWear(slot: number): void {
+  sendMsg({ t: "wear", slot });
+}
+
+/** Remove the worn item in `ws` (doc 05 M6); the server rejects with a notice
+ * when it doesn't fit — never silently dropped. */
+export function doUnwear(ws: WearSlot): void {
+  sendMsg({ t: "unwear", ws });
+}
+
 export function doPickup(id: number): void {
   sendMsg({ t: "pickup", id });
   cueSound("pickup");
@@ -341,7 +352,7 @@ function handleMessage(data: unknown): void {
       onSnap(msg);
       return;
     case "inv":
-      ui.setInventory(msg.slots, msg.selected);
+      ui.setInventory(msg.slots, msg.selected, msg.worn);
       return;
     case "chat":
       ui.pushChat(msg.name, msg.text);
@@ -437,7 +448,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // Set unconditionally: null CLEARS any recap left over from a previous
   // session (die -> leave -> rejoin must not show a stale LAST LIFE toast).
   ui.setRecap(msg.recap);
-  ui.setInventory(msg.inv, msg.selected);
+  ui.setInventory(msg.inv, msg.selected, msg.worn);
   ui.setVitals(vitalsOf(msg.you));
   ui.setAction(msg.you.action); // doc 11 M2: cast-bar progress (render-only)
   ui.setRealm(msg.you.realm);

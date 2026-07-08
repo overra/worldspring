@@ -103,6 +103,9 @@ import {
   stepPortals,
   STRIP_TEXT_RE,
   tickActiveActions,
+  unwearItem,
+  wearItem,
+  wornWire,
 } from "./systems/players";
 import {
   capturePosHistory,
@@ -564,6 +567,12 @@ export class GameRoom extends DurableObject<Env> {
       case "craft":
         craftItem(game, player, msg.recipe);
         break;
+      case "wear":
+        wearItem(game, player, msg.slot);
+        break;
+      case "unwear":
+        unwearItem(game, player, msg.ws);
+        break;
       case "equip":
         equipSlot(game, player, msg.slot);
         break;
@@ -842,6 +851,13 @@ export class GameRoom extends DurableObject<Env> {
     // a second rejoin takes path 1/2 and never this branch (restore-once).
     if (!game.config.pvp.fullLoot && saved?.alive === false) {
       player.inventory = saved.state.inventory.map((stack) => (stack ? { ...stack } : null));
+      // doc 05 M6 — keep-inventory keeps worn symmetrically: the dead row was
+      // saved with worn intact (spawnPlayerCorpse strips it only under
+      // fullLoot), and a 12-length pack-extended inventory needs its worn.back.
+      player.worn = {
+        body: saved.state.worn?.body ? { ...saved.state.worn.body } : null,
+        back: saved.state.worn?.back ? { ...saved.state.worn.back } : null,
+      };
       player.selectedSlot = saved.state.selectedSlot;
     }
     // doc 10 M1: on a preview only (env.TESTBED), seed this fresh life so a
@@ -877,6 +893,11 @@ export class GameRoom extends DurableObject<Env> {
       you: this.youState(player),
       inv: player.inventory.map((stack) => (stack ? { ...stack } : null)),
       selected: player.selectedSlot,
+      // doc 05 M6 — worn equipment mirrors inv.worn: no inv message follows a
+      // join, so a rejoining client needs it here or EQUIPMENT renders empty
+      // until the first inventory mutation. Additive optional (no extra bump —
+      // the wear/unwear messages already took 7 → 8).
+      worn: wornWire(player),
       resumed,
       recap,
       // Additive optional field (doc 04 §4): the whole resolved config. The

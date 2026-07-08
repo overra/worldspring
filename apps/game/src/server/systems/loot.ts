@@ -175,6 +175,15 @@ export function spawnPlayerCorpse(state: GameState, player: ServerPlayer): void 
       // fired-empty weapon must not be scavenged back full.
       if (stack) contents.push({ ...stack });
     }
+    // doc 05 M6 — worn equipment rides the corpse as plain stacks (scavenging
+    // a backpack back is free) and the wearer is stripped BEFORE the 8-length
+    // inventory reset below, which is only correct once the pack is gone.
+    // Keep-inventory (fullLoot=false) keeps worn + pack slots symmetrically —
+    // touch worn ONLY inside this branch. `?.` tolerates untyped .mjs fixtures
+    // that predate the field.
+    if (player.worn?.body) contents.push({ ...player.worn.body });
+    if (player.worn?.back) contents.push({ ...player.worn.back });
+    player.worn = { body: null, back: null };
     player.inventory = Array.from({ length: INVENTORY_SLOTS }, () => null);
   }
   const { x, z, yaw } = player.core;

@@ -23,6 +23,7 @@ import {
   WATER_DECAY_PER_S,
 } from "@worldspring/shared/constants";
 import { effectiveGameHour } from "@worldspring/shared/config";
+import { ITEM_DEFS } from "@worldspring/shared/items";
 import { distSq2D } from "@worldspring/shared/math";
 import type { DeathRecap } from "@worldspring/shared/protocol";
 import type { World } from "@worldspring/shared/world";
@@ -149,14 +150,23 @@ export function tickSurvival(state: GameState, dt: number): void {
       raining && !fireNear && !insideBuilding(state.world, player.core.x, player.core.z);
     // Both cold-fall terms scale by temperatureSeverity (0 disables cold); the
     // warm-up term is never scaled. fall stays in temp/s before * dt.
+    // doc 05 M6 — a worn jacket negates `insulation` of EVERY fall term (rain
+    // and cold night alike); warm-up is unchanged. `?.` on worn tolerates the
+    // untyped .mjs harness fixtures that predate the field (the config.map
+    // precedent); absent/undefined → 0 insulation, the right default.
+    const wornBody = player.worn?.body;
+    const insulate = 1 - (wornBody ? (ITEM_DEFS[wornBody.type]?.wear?.insulation ?? 0) : 0);
     if (rainExposed) {
       let fall = RAIN_TEMP_FALL_PER_S * state.weather;
       if (!ambientWarm) fall += TEMP_FALL_PER_S;
-      v.temp = Math.max(TEMP_MIN, v.temp - fall * survival.temperatureSeverity * dt);
+      v.temp = Math.max(TEMP_MIN, v.temp - fall * insulate * survival.temperatureSeverity * dt);
     } else if (ambientWarm || fireNear) {
       v.temp = Math.min(TEMP_NORMAL, v.temp + TEMP_RISE_PER_S * dt);
     } else {
-      v.temp = Math.max(TEMP_MIN, v.temp - TEMP_FALL_PER_S * survival.temperatureSeverity * dt);
+      v.temp = Math.max(
+        TEMP_MIN,
+        v.temp - TEMP_FALL_PER_S * insulate * survival.temperatureSeverity * dt,
+      );
     }
 
     // Drains. Each can kill; stop processing the player once dead.

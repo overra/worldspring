@@ -52,7 +52,11 @@ import type { ItemStack, ItemType } from "./items";
 // client holding inventory ammo pulls the trigger and gets silence from an
 // empty mag it cannot see. The `mag` field on `inv` stacks is additive-only
 // (fog/felled posture) — the bump fires on the semantics clause. So 6 → 7.
-export const PROTOCOL_VERSION: number = 7;
+// doc 05 M6: NEW ClientMsg shapes `{t:"wear"}` / `{t:"unwear"}` grow the wire
+// vocabulary (doc 03's shape clause — the exact rule that forced 2 → 3 for
+// `craft`). The additive `worn?` field on inv/welcome would NOT bump on its
+// own (fog/felled posture); the new messages do. So 7 → 8.
+export const PROTOCOL_VERSION: number = 8;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -73,6 +77,19 @@ export type ChannelKind = "cook" | "use" | "reload" | "craft" | "fish";
  * WirePortal (the realm a portal leads to).
  */
 export type Realm = "overworld" | "red";
+
+/** The two wearable-equipment slots (doc 05 M6): body (jacket — insulation)
+ * and back (backpack — extra inventory slots). Shared so the server's
+ * `ServerPlayer.worn`, the wire (`inv.worn` / `welcome.worn` / `{t:"unwear"}`)
+ * and the client store all reference ONE definition. */
+export type WearSlot = "body" | "back";
+
+/** Worn-equipment state carried on inv/welcome (doc 05 M6). Additive optional
+ * on both messages — absent reads as nothing worn. */
+export interface WornState {
+  body: ItemStack | null;
+  back: ItemStack | null;
+}
 
 // --- Sim state shared by prediction (client) and authority (server) ---
 
@@ -127,6 +144,12 @@ export type ClientMsg =
   | { t: "use"; slot: number }
   /** Craft RECIPES[recipe] — server validates inputs/tool/station (doc 05 M2). */
   | { t: "craft"; recipe: number }
+  /** Wear the `kind:"wear"` item in inventory `slot` (doc 05 M6): swaps with
+   * the current occupant of its wear slot. Server validates kind/bounds. */
+  | { t: "wear"; slot: number }
+  /** Remove the worn item in `ws` back into the inventory (doc 05 M6);
+   * rejected with a notice when nothing fits — never silently dropped. */
+  | { t: "unwear"; ws: WearSlot }
   | { t: "equip"; slot: number }
   | { t: "pickup"; id: number }
   | { t: "drop"; slot: number }
@@ -336,6 +359,11 @@ export type ServerMsg =
       you: YouState;
       inv: (ItemStack | null)[];
       selected: number;
+      /** doc 05 M6 — worn equipment, mirroring `inv.worn`: welcome carries the
+       * inventory directly and no inv message follows a join, so without this a
+       * rejoining client would render empty EQUIPMENT until the first inventory
+       * mutation. Additive optional (absent = nothing worn). */
+      worn?: WornState;
       /** True when this join restored a persisted living character. */
       resumed: boolean;
       /** Set when the character died while its owner was offline. */
@@ -388,7 +416,10 @@ export type ServerMsg =
        * empty. Additive optional → no PROTOCOL_VERSION bump. */
       felled?: number[];
     }
-  | { t: "inv"; slots: (ItemStack | null)[]; selected: number }
+  /** `worn` (doc 05 M6): the equipped body/back items. Additive optional —
+   * `slots` length is INVENTORY_SLOTS, or INVENTORY_SLOTS + extraSlots while
+   * a backpack is worn (pack slots render under the Tab panel's PACK divider). */
+  | { t: "inv"; slots: (ItemStack | null)[]; selected: number; worn?: WornState }
   /** Proximity chat line — delivered only to players within CHAT_RADIUS. */
   | { t: "chat"; name: string; text: string }
   | { t: "death"; by: string; recap: DeathRecap }
@@ -479,6 +510,12 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
     case "craft":
       // recipe is a RECIPES index; range/identity checked in craftItem.
       return isFiniteNum(m.recipe) ? { t: "craft", recipe: m.recipe | 0 } : null;
+    case "wear":
+      // slot bounds + kind check live in wearItem (the authority).
+      return isFiniteNum(m.slot) ? { t: "wear", slot: m.slot | 0 } : null;
+    case "unwear":
+      // ws is validated to the two WearSlot literals — anything else is malformed.
+      return m.ws === "body" || m.ws === "back" ? { t: "unwear", ws: m.ws } : null;
     case "equip":
       return isFiniteNum(m.slot) ? { t: "equip", slot: m.slot | 0 } : null;
     case "pickup":
