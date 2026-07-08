@@ -93,6 +93,9 @@ console.log("protocol (doc 06 wire):");
   check(parseClientMsg(JSON.stringify({ t: "place", kind: "crate", tier: 0, gx: 0, gz: 0 })) === null, "crate is NOT placeable this slice");
   check(parseClientMsg(JSON.stringify({ t: "place", kind: "wall", tier: 2, gx: 0, gz: 0 })) === null, "tier outside 0|1 is malformed");
   check(parseClientMsg(JSON.stringify({ t: "place", kind: "wall", tier: 0, gx: 0, gz: 0, edge: 1 })) === null, "non-canonical edge is malformed");
+  // review: a foundation with an attached edge would shift pieceCenter 1.5m
+  // and shave every center-based server check — malformed on the wire.
+  check(parseClientMsg(JSON.stringify({ t: "place", kind: "foundation", tier: 0, gx: 0, gz: 0, edge: 0 })) === null, "foundation with edge is malformed");
   const far = parseClientMsg(JSON.stringify({ t: "place", kind: "foundation", tier: 0, gx: 99999, gz: -99999 }));
   check(far?.t === "place" && far.gx === 534 && far.gz === -534, "gx/gz clamped to the max-tier bound");
   check(parseClientMsg(JSON.stringify({ t: "demolish", id: 7.2 }))?.id === 7, "demolish parses, id |0");
@@ -122,6 +125,7 @@ console.log(`  (buildable cell at gx=${BGX}, gz=${BGZ})`);
 {
   // Rejection classes.
   check(canPlace(world, { kind: "crate", tier: 0, gx: BGX, gz: BGZ }) === "kind", "crate rejected: kind");
+  check(canPlace(world, { kind: "foundation", tier: 0, gx: BGX, gz: BGZ, edge: 0 }) === "bounds", "foundation with stray edge rejected: bounds (defense-in-depth)");
   check(canPlace(world, { kind: "foundation", tier: 0, gx: 200, gz: 0 }) === "bounds", "out-of-bounds cell rejected: bounds");
   check(canPlace(world, { kind: "wall", tier: 0, gx: BGX, gz: BGZ, edge: 0 }) === "no-foundation", "wall without foundation: no-foundation");
   check(canPlace(world, { kind: "door", tier: 0, gx: BGX, gz: BGZ, edge: 0 }) === "no-doorway", "door without doorway: no-doorway");
@@ -440,6 +444,23 @@ function makePlayer(state, id, tokenHash, x, z, inventory) {
   const removes = state.outbox.filter((o) => o.msg.t === "sRemove").map((o) => o.msg.id);
   check(removes.includes(doorwayId) && removes.includes(doorId), "both sRemove broadcasts sent");
 
+  // review: anchor-owner demolish rights — a foreign wall on YOUR foundation
+  // must not pin it forever (demolish is otherwise owner-only, and structure
+  // damage + decay are follow-up slices).
+  const griefer = makePlayer(state, "p4", "hash4", px, pz, [
+    { type: "hammer", count: 1 },
+    { type: "wood", count: 8 },
+  ]);
+  sys.handlePlace(state, griefer, { kind: "wall", tier: 0, gx: BGX, gz: BGZ, edge: 2 });
+  const grieferWallId = state.nextEntityId - 1;
+  check(state.world.structures.pieces.get(grieferWallId)?.kind === "wall", "foreign wall anchors to another player's foundation");
+  sys.handleDemolish(state, player, foundationId);
+  check(state.world.structures.pieces.has(foundationId), "foundation with the foreign wall still refuses demolish (sole anchor)");
+  sys.handleDemolish(state, raider, grieferWallId);
+  check(state.world.structures.pieces.has(grieferWallId), "unrelated player cannot demolish the foreign wall");
+  sys.handleDemolish(state, player, grieferWallId);
+  check(!state.world.structures.pieces.has(grieferWallId), "foundation owner demolishes a foreign wall anchored to their slab");
+
   sys.handleDemolish(state, player, foundationId);
   check(!state.world.structures.pieces.has(foundationId), "bare foundation demolishes");
 
@@ -560,14 +581,28 @@ const persistBase = () => ({
   g3.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
   check(loadWorld(oldFake.sql, g3) === true && g3.world.structures.pieces.size === 0, "pre-structures snapshot loads clean (no pieces)");
 
-  // Garbage entries are skipped per-entry, not fatal.
+  // Garbage entries are skipped per-entry, not fatal. review: an edge-kind
+  // piece with a corrupt/missing edge would restore as an invisible,
+  // collisionless phantom (zero AABBs, no occupancy, un-aimable) that still
+  // counts toward every cap — skip it; a cell piece with a stray edge would
+  // shift pieceCenter 1.5m — strip the edge instead.
   const dirtyFake = makeFakeSql();
   const dirty = JSON.parse(fake.payload());
-  dirty.structures.push(null, { id: "x" }, { id: 99, kind: "nonsense", gx: 0, gz: 0, floorY: 0 });
+  dirty.structures.push(
+    null,
+    { id: "x" },
+    { id: 99, kind: "nonsense", gx: 0, gz: 0, floorY: 0 },
+    { id: 98, kind: "wall", tier: 0, gx: 0, gz: 0, floorY: 1, hp: 400 }, // edge missing
+    { id: 97, kind: "wall", tier: 0, gx: 0, gz: 0, edge: 1, floorY: 1, hp: 400 }, // edge corrupt
+    { id: 96, kind: "foundation", tier: 0, gx: 30, gz: 30, edge: 0, floorY: 1, hp: 600 }, // stray edge
+  );
   dirtyFake.sql.exec("INSERT INTO world_state (kind, payload) VALUES ('snapshot', ?)", JSON.stringify(dirty));
   const g4 = persistBase();
   g4.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
-  check(loadWorld(dirtyFake.sql, g4) === true && g4.world.structures.pieces.size === 2, "garbage structure entries skipped, good ones kept");
+  check(loadWorld(dirtyFake.sql, g4) === true && g4.world.structures.pieces.size === 3, "garbage structure entries skipped, good ones kept");
+  check(!g4.world.structures.pieces.has(98) && !g4.world.structures.pieces.has(97), "edge-kind entries without a canonical edge are skipped (no phantoms)");
+  const strayFoundation = g4.world.structures.pieces.get(96);
+  check(strayFoundation?.kind === "foundation" && strayFoundation.edge === undefined, "stray edge on a cell piece is stripped on restore");
 }
 
 check(WORLD_PIECE_CAP === 3000, "WORLD_PIECE_CAP pinned at 3000 (doc 06 math)");

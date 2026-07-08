@@ -190,11 +190,44 @@ function cellEdges(gx: number, gz: number): Array<[number, number, 0 | 2]> {
   ];
 }
 
+/** The two cells an edge borders (shared structures.ts edgeCells mirror). */
+function edgeBorderCells(gx: number, gz: number, edge: 0 | 2): Array<[number, number]> {
+  return edge === 0
+    ? [
+        [gx, gz],
+        [gx, gz + 1],
+      ]
+    : [
+        [gx, gz],
+        [gx + 1, gz],
+      ];
+}
+
 /**
- * Owner-only demolish (hold-X client-side). A foundation whose edge pieces
- * would be left UNANCHORED (no foundation on the far side) is rejected —
- * no orphan-wall bookkeeping (doc 06:207). Demolishing a doorway cascades
- * its attached door. No refund (doc open Q4).
+ * Does the player own a foundation this edge piece anchors to? Anchoring has
+ * no ownership requirement (canPlace is shared and ownership-blind), so
+ * without this a 6-wood enemy wall on your foundation's open edge would block
+ * your foundation demolish FOREVER (demolish is otherwise owner-only, and
+ * structure damage + decay are follow-up slices). The anchor owner therefore
+ * gets demolish rights over foreign attachments on their foundation.
+ */
+function ownsAnchorFoundation(game: GameState, player: ServerPlayer, piece: StructurePiece): boolean {
+  if (piece.edge === undefined) return false;
+  const index = game.world.structures;
+  for (const [cgx, cgz] of edgeBorderCells(piece.gx, piece.gz, piece.edge)) {
+    const cell = index.cellPiece(cgx, cgz);
+    if (!cell || cell.kind !== "foundation") continue;
+    if (game.structureMeta.get(cell.id)?.ownerHash === player.tokenHash) return true;
+  }
+  return false;
+}
+
+/**
+ * Owner demolish (hold-X client-side) — "owner" is the piece's placer OR the
+ * owner of a foundation the piece anchors to (see ownsAnchorFoundation). A
+ * foundation whose edge pieces would be left UNANCHORED (no foundation on the
+ * far side) is rejected — no orphan-wall bookkeeping (doc 06:207).
+ * Demolishing a doorway cascades its attached door. No refund (doc open Q4).
  */
 export function handleDemolish(game: GameState, player: ServerPlayer, id: number): void {
   if (!actionAllowed(game, player)) return;
@@ -202,7 +235,7 @@ export function handleDemolish(game: GameState, player: ServerPlayer, id: number
   const piece = index.pieces.get(id);
   const meta = game.structureMeta.get(id);
   if (!piece || !meta) return;
-  if (meta.ownerHash !== player.tokenHash) {
+  if (meta.ownerHash !== player.tokenHash && !ownsAnchorFoundation(game, player, piece)) {
     notice(game, player, "You can only demolish your own structures");
     return;
   }

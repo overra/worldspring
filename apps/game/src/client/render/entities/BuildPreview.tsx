@@ -13,8 +13,8 @@ import { useEffect, useMemo, useRef } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { BUILD_CELL, PLAYER_EYE_HEIGHT } from "@worldspring/shared/constants";
-import { lookDir } from "@worldspring/shared/math";
+import { BUILD_CELL, BUILD_RANGE, PLAYER_EYE_HEIGHT } from "@worldspring/shared/constants";
+import { distSq2D, lookDir } from "@worldspring/shared/math";
 import type { Aabb } from "@worldspring/shared/math";
 import {
   PIECE_DEFS,
@@ -22,6 +22,7 @@ import {
   PLACE_REJECTION_TEXT,
   canPlace,
   pieceAabbs,
+  pieceCenter,
   quantizeFloorY,
   targetFloorY,
   type PlaceTarget,
@@ -147,12 +148,20 @@ export function BuildPreview(): ReactElement {
     const material = tier === 1 ? "scrap" : "wood";
     const cost = PIECE_DEFS[kind].cost;
     const haveResources = countOfType(ui.inventory, material) >= cost;
+    // Mirror the server's BUILD_RANGE gate (handlePlace checks the piece
+    // CENTER, not the aim point): the aim band reaches 5.2m and grid snapping
+    // can push a cell center ~2.1m further — without this a green ghost at
+    // max reach turns into a server "Too far away" rejection.
+    const [pcx, pcz] = pieceCenter(target);
+    const inRange = distSq2D(me.x, me.z, pcx, pcz) <= BUILD_RANGE * BUILD_RANGE;
     buildState.rejection = rejection;
-    buildState.valid = rejection === null && haveResources;
+    buildState.valid = rejection === null && haveResources && inRange;
 
     // HUD mirror — only on change (store writes are React renders).
-    const status =
-      rejection !== null
+    // Range first: it's the server's first geometric check (handlePlace).
+    const status = !inRange
+      ? "too far away"
+      : rejection !== null
         ? PLACE_REJECTION_TEXT[rejection]
         : haveResources
           ? null

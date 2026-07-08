@@ -606,6 +606,11 @@ export function canPlace(
   if (!Number.isInteger(t.gx) || !Number.isInteger(t.gz)) return "bounds";
   const isEdgePiece = t.kind !== "foundation";
   if (isEdgePiece && t.edge !== 0 && t.edge !== 2) return "bounds";
+  // A cell piece must not carry an edge: pieceCenter would shift 1.5m and
+  // every center-based check below (zones, density — and the server's
+  // BUILD_RANGE) would be evaluated at the wrong point. The parser rejects
+  // this on the wire; this guard covers every other path.
+  if (!isEdgePiece && t.edge !== undefined) return "bounds";
 
   // Bounds: the whole footprint inside ±world.size * 0.48.
   const half = world.size * 0.48;

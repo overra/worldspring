@@ -592,6 +592,10 @@ export function parseClientMsg(data: unknown): ClientMsg | null {
       let edge: 0 | 2 | undefined;
       if (m.edge !== undefined) {
         if (m.edge !== 0 && m.edge !== 2) return null;
+        // A foundation is a CELL piece — an attached edge would shift
+        // pieceCenter 1.5m and shave every center-based server check
+        // (no-build margins, BUILD_RANGE, density). Malformed, reject.
+        if (m.kind === "foundation") return null;
         edge = m.edge;
       }
       return { t: "place", kind: m.kind as PieceKind, tier: m.tier, gx, gz, edge };

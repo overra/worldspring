@@ -591,13 +591,21 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     if (typeof raw.kind !== "string" || !PIECE_KINDS.has(raw.kind)) continue;
     if (!Number.isInteger(raw.gx) || !Number.isInteger(raw.gz)) continue;
     if (!Number.isFinite(raw.floorY)) continue;
+    // Edge-kind pieces (wall/doorway/window/door/gate) MUST carry a canonical
+    // edge — restoring one without it would mint an invisible, collisionless
+    // phantom (pieceAabbs returns [], no edge occupancy) that still counts
+    // toward every cap and can never be aimed at to demolish. Skip the entry
+    // instead (the placement invariant). Cell pieces (foundation/crate) must
+    // NOT carry one — a stray edge would shift pieceCenter 1.5m; strip it.
+    const isEdgeKind = raw.kind !== "foundation" && raw.kind !== "crate";
+    if (isEdgeKind && raw.edge !== 0 && raw.edge !== 2) continue;
     const piece: StructurePiece = {
       id: raw.id,
       kind: raw.kind as PieceKind,
       tier: raw.tier === 1 ? 1 : 0,
       gx: raw.gx as number,
       gz: raw.gz as number,
-      ...(raw.edge === 0 || raw.edge === 2 ? { edge: raw.edge } : {}),
+      ...(isEdgeKind ? { edge: raw.edge as 0 | 2 } : {}),
       floorY: raw.floorY as number,
       hp: Number.isFinite(raw.hp) ? (raw.hp as number) : 0,
       ...(raw.kind === "door" || raw.kind === "gate" ? { open: raw.open === true } : {}),

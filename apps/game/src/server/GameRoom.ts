@@ -121,7 +121,7 @@ import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } fro
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
-import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
+import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -595,6 +595,17 @@ export class GameRoom extends DurableObject<Env> {
         handleDoor(game, player, msg.id);
         break;
       case "respawn":
+        // doc 06 griefing policy: "respawn is always available" is layer 2 of
+        // the walling-in mitigation. Until structure damage lands (milestone
+        // 7's FIST_STRUCT_DMG), a respawn request from a LIVING player is a
+        // give-up: die in place (body + inventory stay), then the normal
+        // death→respawn flow applies. Without this, a walled-in player's only
+        // exit is waiting out starvation.
+        if (player.alive) {
+          killPlayer(game, player, "gave up");
+          this.persistAll(game);
+          break;
+        }
         if (!player.alive && game.time - player.diedAt >= this.config.session.respawnDelayS) {
           respawnPlayer(game, player);
           // Persist the new life right away (atomically with the world):

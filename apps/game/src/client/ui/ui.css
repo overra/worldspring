@@ -874,6 +874,13 @@
   .hud-ammo-hint {
     display: none;
   }
+
+  /* [Q]/[T]/[LMB]/[hold X] are keyboard prompts — meaningless on touch.
+     Touch places via the ATTACK button (build mode captures the tap);
+     kind/tier cycling and demolish are a touch-UI follow-up (doc 08). */
+  .hud-build-hints {
+    display: none;
+  }
 }
 
 @media (max-width: 768px) {
