@@ -416,6 +416,11 @@ export interface GameState {
    * partially-chopped tree "heals" across a room restart, matching doc 05's
    * transient-cooldown posture for tree state. */
   treeChops: Map<number, number>;
+  /** doc 13 M3 — transient per-barrel melee-hit counters (physics body id →
+   * hits). A barrel breaks open at BARREL_HITS_TO_BREAK. Never persisted (the
+   * treeChops posture): a partly-shoved barrel "heals" across a room restart,
+   * while its shoved POSE rides the persisted `bodies` snapshot like any body. */
+  propHits: Map<number, number>;
   /**
    * Lag-compensation ring of recent end-of-tick positions, oldest first.
    * Bounded by capturePosHistory to LAG_COMP_MAX_REWIND_S + slack — at 15Hz
@@ -463,6 +468,7 @@ export function createGameState(
     felledTrees: new Set(),
     felledDelta: [],
     treeChops: new Map(),
+    propHits: new Map(),
     posHistory: [],
   };
 }

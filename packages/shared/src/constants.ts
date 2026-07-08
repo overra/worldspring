@@ -295,6 +295,21 @@ export const MAP_REVEAL_DEFAULT = "full" as const;
  *  (config.physics.bodyCap); M0 measured <0.3% of tick at this value. */
 export const PHYSICS_BODY_CAP = 64;
 
+// --- Physics props: barrels (doc 13 M3) ---
+// Barrels are a FIXED-size dynamic BodyKind ("barrel") — a spawnable loot prop
+// you shove and eventually break. Half-extents drive both the server collider
+// and the client mesh; PhysicsSystem.ts keeps a LOCAL mirror of these two (the
+// CRATE_HALF↔CRATE_SIZE precedent — it stays value-import-free for the
+// strip-types replay harness), so the two constants below are the shared truth
+// the mirror must equal.
+/** Barrel collider half-extent on X/Z (a ~0.6 m-wide upright drum). */
+export const BARREL_HALF_XZ = 0.3;
+/** Barrel collider half-extent on Y (a ~1.0 m-tall drum). */
+export const BARREL_HALF_Y = 0.5;
+/** Melee swings on a barrel before it breaks open (each swing also shoves it —
+ *  the doc 13 M3 marquee interaction). Transient like tree chops. */
+export const BARREL_HITS_TO_BREAK = 3;
+
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */
 export const SERVER_INFO_CACHE_TTL_S = 15;

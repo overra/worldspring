@@ -134,6 +134,7 @@ import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } fro
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
+import { spawnInitialProps } from "./systems/props";
 import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
@@ -715,7 +716,14 @@ export class GameRoom extends DurableObject<Env> {
     const game = createGameState(world, this.config);
     // loadWorld hydrates loot/corpses/fires/respawn timers and restores
     // game.time/tick from meta; a fresh database stocks the world instead.
-    if (!loadWorld(this.ctx.storage.sql, game)) stockInitialLoot(game);
+    if (!loadWorld(this.ctx.storage.sql, game)) {
+      stockInitialLoot(game);
+      // doc 13 M3 — fresh world only: spawn the deterministic barrels (buffer
+      // in PhysicsSystem until the async engine attach materializes them). A
+      // RESTORED world rebuilds barrels from the persisted `bodies` snapshot
+      // instead, so this never double-spawns (the stockInitialLoot precedent).
+      spawnInitialProps(game);
+    }
     // Zombies and deer are never persisted — they always spawn fresh.
     spawnInitialZombies(game);
     spawnInitialDeer(game);

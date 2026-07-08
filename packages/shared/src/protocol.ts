@@ -289,8 +289,10 @@ export interface WirePortal {
 
 /** Kinds of server-auth dynamic physics body (doc 13). Wire-enum GROWTH is
  * additive-safe (clients render unknown kinds as the fallback crate mesh).
- * "trunk" (doc 13 M2) is a felled tree — additive growth, no version bump. */
-export type BodyKind = "crate" | "trunk";
+ * "trunk" (doc 13 M2) is a felled tree; "barrel" (doc 13 M3) is a spawnable,
+ * shovable loot prop — each an additive growth, no PROTOCOL_VERSION bump (the
+ * trunk precedent: a new BodyKind value alone never bumped, see doc 13 M2). */
+export type BodyKind = "crate" | "trunk" | "barrel";
 
 /**
  * A dynamic physics body pose (doc 13 M1). Server-authoritative — clients
