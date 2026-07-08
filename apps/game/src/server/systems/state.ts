@@ -337,6 +337,17 @@ export interface GameState {
   /** Server-auth dynamic physics (doc 13) — engine attaches async in the DO;
    * a no-op shell in harnesses/tests that never attach one. */
   physics: PhysicsSystem;
+  /** doc 13 M2 — indices (into world.trees) of felled trees. Persisted with
+   * the world snapshot; mirrored into PhysicsSystem (static-collider
+   * exclusion) and to clients (welcome.felled + the per-tick delta below). */
+  felledTrees: Set<number>;
+  /** Transient: trees felled THIS tick — shipped as snap.felled to every
+   * connected client, then cleared at end of tick (the events pattern). */
+  felledDelta: number[];
+  /** Transient per-tree axe-hit counters (doc 13 M2). Never persisted — a
+   * partially-chopped tree "heals" across a room restart, matching doc 05's
+   * transient-cooldown posture for tree state. */
+  treeChops: Map<number, number>;
   /**
    * Lag-compensation ring of recent end-of-tick positions, oldest first.
    * Bounded by capturePosHistory to LAG_COMP_MAX_REWIND_S + slack — at 15Hz
@@ -373,6 +384,9 @@ export function createGameState(
     outbox: [],
     nextEntityId: 1,
     physics: new PhysicsSystem(world, config.physics),
+    felledTrees: new Set(),
+    felledDelta: [],
+    treeChops: new Map(),
     posHistory: [],
   };
 }

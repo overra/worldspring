@@ -323,6 +323,11 @@ interface WorldSnapshot {
    * older snapshots lack it (normalized to []), older code ignores it — no
    * SCHEMA_VERSION bump (same posture as weather/airdrop fields above). */
   bodies: PersistedBody[];
+  /** doc 13 M2 — felled tree indices (into the seed-derived world.trees; the
+   * fingerprint gate guarantees indices stay valid for a persisted world).
+   * ADDITIVE like bodies: older snapshots normalize to [], older code ignores
+   * the key — no SCHEMA_VERSION bump. */
+  felled: number[];
 }
 
 /**
@@ -348,6 +353,7 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     weatherRaining: game.weatherRaining,
     airdropNextAt: game.airdropNextAt,
     bodies: game.physics.serialize(),
+    felled: [...game.felledTrees],
   };
   storage.transactionSync(() => {
     // O(1) rows written: delete the prior single snapshot row, insert the new
@@ -391,7 +397,7 @@ function hasNumericId(v: unknown): v is { id: number } {
 function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies"] as const) {
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
@@ -456,6 +462,15 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   if (bodies.length > 0) {
     game.physics.restore(bodies);
     for (const b of bodies) maxId = Math.max(maxId, b.id);
+  }
+
+  // doc 13 M2 — felled trees: rebuild the set AND tell the physics system
+  // (pre-attach: fellTree just records the index, and attachEngine skips
+  // building those static colliders). Per-entry guard mirrors hasNumericId.
+  for (const idx of snapshot.felled) {
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    game.felledTrees.add(idx);
+    game.physics.fellTree(idx);
   }
 
   if (Number.isFinite(snapshot.time)) game.time = snapshot.time;

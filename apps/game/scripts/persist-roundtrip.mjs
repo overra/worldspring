@@ -62,6 +62,7 @@ function freshGame() {
     weatherRaining: false,
     airdropNextAt: 0,
     physics: freshPhysics(),
+    felledTrees: new Set(),
   };
 }
 
@@ -102,6 +103,9 @@ function sampleGame() {
   g.weatherNextAt = 999;
   g.weatherRaining = true;
   g.airdropNextAt = 1500;
+  // doc 13 M2 — felled tree indices round-trip with the snapshot.
+  g.felledTrees.add(3);
+  g.felledTrees.add(17);
   return g;
 }
 
@@ -151,6 +155,7 @@ eq(
   [orig.weather, orig.weatherNextAt, orig.weatherRaining, orig.airdropNextAt],
   "weather/airdrop scheduling mismatch",
 );
+eq([...loaded.felledTrees], [...orig.felledTrees], "felled trees mismatch (doc 13 M2)");
 
 // Empty table -> loadWorld returns false (caller stocks a fresh world).
 const empty = makeFakeSql();

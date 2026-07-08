@@ -156,6 +156,8 @@ export interface BodyView {
   y: number;
   z: number;
   q: [number, number, number, number];
+  /** Collider half-extents (trunks — doc 13 M2); absent for fixed-size kinds. */
+  dims?: [number, number, number];
   asleep: boolean;
 }
 
@@ -200,6 +202,12 @@ export interface ClientWorldState {
   /** doc 12 — fog-of-war explored set, mirrored from welcome/snap. null unless
    * the server runs map.reveal === "explored". Read-only to the map renderer. */
   explored: ExploredGrid | null;
+  /** doc 13 M2 — felled tree indices (welcome.felled + per-snap deltas). The
+   * Trees renderer zero-scales these instances out of the static forest. */
+  felledTrees: Set<number>;
+  /** Bumped whenever felledTrees changes (and on reset) so the per-frame
+   * Trees check is one integer compare, not a Set diff. */
+  felledVersion: number;
 }
 
 export const clientWorld: ClientWorldState = {
@@ -224,6 +232,8 @@ export const clientWorld: ClientWorldState = {
   world: null,
   config: DEFAULT_CONFIG,
   explored: null,
+  felledTrees: new Set(),
+  felledVersion: 0,
 };
 
 // Dev-only debug handle: lets tooling (and curious humans) drive input and
@@ -286,4 +296,6 @@ export function resetClientWorld(): void {
   clientWorld.events = [];
   clientWorld.audioEvents = [];
   clientWorld.explored = null;
+  clientWorld.felledTrees.clear();
+  clientWorld.felledVersion++;
 }

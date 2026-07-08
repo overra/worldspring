@@ -115,6 +115,7 @@ import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
+import { tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
 import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/zombies";
@@ -851,6 +852,9 @@ export class GameRoom extends DurableObject<Env> {
       // doc 12 — the full explored set, only on fog servers (additive optional).
       explored:
         this.config.map.reveal === "explored" ? encodeExplored(player.explored) : undefined,
+      // doc 13 M2 — every felled tree so far, so the client hides them from the
+      // static forest on join. Omitted while none are felled (additive optional).
+      felled: game.felledTrees.size > 0 ? [...game.felledTrees] : undefined,
     });
   }
 
@@ -1136,6 +1140,8 @@ export class GameRoom extends DurableObject<Env> {
     stepPortals(game);
     // doc 13 — server-auth physics step (no-op until the engine attaches).
     game.physics.step(dt, game.time);
+    // doc 13 M2 — settled felled trunks despawn to wood loot after their TTL.
+    tickTrunks(game);
     tickZombies(game, dt);
     tickZombieRespawns(game, dt);
     tickSurvival(game, dt);
@@ -1165,6 +1171,10 @@ export class GameRoom extends DurableObject<Env> {
     this.flushOutbox(game);
     this.broadcastSnapshots(game);
     game.events.length = 0;
+    // Felled-tree delta was serialized into every snapshot above (doc 13 M2).
+    // A tick that threw before sending re-broadcasts it next tick — harmless,
+    // the client-side fold-in is a Set add (idempotent).
+    game.felledDelta.length = 0;
   }
 
   // --- Snapshots ---
@@ -1284,6 +1294,8 @@ export class GameRoom extends DurableObject<Env> {
           y: round2(b.y),
           z: round2(b.z),
           q: [round2(b.q[0]), round2(b.q[1]), round2(b.q[2]), round2(b.q[3])],
+          // doc 13 M2 — per-instance half-extents (trunks); omitted otherwise.
+          ...(b.dims ? { dims: [round2(b.dims[0]), round2(b.dims[1]), round2(b.dims[2])] as [number, number, number] } : {}),
           ...(b.asleep ? { asleep: true as const } : {}),
         });
       }
@@ -1345,6 +1357,9 @@ export class GameRoom extends DurableObject<Env> {
       count,
       // doc 12 — newly-explored cells this tick; omitted when empty (fog only).
       fog: player.fogDelta.length > 0 ? player.fogDelta : undefined,
+      // doc 13 M2 — trees felled this tick (global one-shot delta; the full set
+      // rode in welcome). Cleared at end of tick like events; omitted when empty.
+      felled: game.felledDelta.length > 0 ? game.felledDelta : undefined,
     };
   }
 

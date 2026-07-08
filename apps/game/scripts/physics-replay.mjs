@@ -67,6 +67,74 @@ const dt = 1 / 15;
   check(settleOk(3, 0), `flat probe settled at ~0.4 (y=${poses.get(3)?.y.toFixed(2)})`);
 }
 
+// --- 1.5 felled trees + trunk bodies (doc 13 M2) -----------------------------
+// New assertions only — the hashed replay scenario below is UNTOUCHED, so the
+// committed baseline stands.
+{
+  // A world with one 8m tree at the origin (flat ground elsewhere).
+  const treeWorld = {
+    heightAt: () => 0,
+    buildings: [],
+    militaryWalls: [],
+    trees: [{ x: 0, z: 0, r: 0.35, height: 8 }],
+  };
+  const settleY = (sys, id) => [...sys.poses()].find((b) => b.id === id)?.y ?? NaN;
+
+  // a) Standing tree collides: a crate dropped over it rests on TOP (~8.4).
+  const sysA = new PhysicsSystem(treeWorld, { enabled: true, bodyCap: 64 });
+  sysA.attachEngine(RAPIER, dt);
+  sysA.spawnBody(1, "crate", 0, 12, 0);
+  for (let i = 0; i < 450; i++) sysA.step(dt, i * dt);
+  check(Math.abs(settleY(sysA, 1) - 8.4) < 0.5, `crate rests ON the standing tree (y=${settleY(sysA, 1).toFixed(2)} ≈ 8.4)`);
+
+  // b) RUNTIME removal: felling the tree drops that same crate to the ground.
+  sysA.fellTree(0);
+  for (let i = 450; i < 900; i++) sysA.step(dt, i * dt);
+  check(Math.abs(settleY(sysA, 1) - 0.4) < 0.35, `after fellTree the crate falls to the ground (y=${settleY(sysA, 1).toFixed(2)} ≈ 0.4)`);
+
+  // c) PRE-ATTACH exclusion (the restored-world path): fellTree before
+  //    attachEngine must skip building the static collider entirely.
+  const sysB = new PhysicsSystem(treeWorld, { enabled: true, bodyCap: 64 });
+  sysB.fellTree(0);
+  sysB.attachEngine(RAPIER, dt);
+  sysB.spawnBody(1, "crate", 0, 12, 0);
+  for (let i = 0; i < 450; i++) sysB.step(dt, i * dt);
+  check(Math.abs(settleY(sysB, 1) - 0.4) < 0.35, `restored felled set excludes the collider at attach (y=${settleY(sysB, 1).toFixed(2)} ≈ 0.4)`);
+
+  // d) Trunk body: upright spawn + off-center top impulse TOPPLES it — it
+  //    settles lying down (center ≈ its half-WIDTH above ground, not half-
+  //    height), then expireSettled reaps it with a resting pose.
+  const sysC = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysC.attachEngine(RAPIER, dt);
+  const halfH = 4, r = 0.35;
+  sysC.spawnBody(7, "trunk", 0, halfH + 0.3, 0, [r, halfH, r]);
+  // Mirrors systems/trees.ts: impulse = mass * TOPPLE_SPEED at the trunk top.
+  const mass = 8 * r * halfH * r;
+  sysC.applyImpulseAtPoint(7, mass * 2.5, 0, 0, 0, 2 * halfH, 0);
+  let steps = 0;
+  for (; steps < 1200; steps++) {
+    sysC.step(dt, steps * dt);
+    const pose = [...sysC.poses()].find((b) => b.id === 7);
+    if (pose?.asleep) break;
+  }
+  const trunk = [...sysC.poses()].find((b) => b.id === 7);
+  check(trunk !== undefined && trunk.asleep === true, `trunk fell asleep after ${steps} steps`);
+  check(trunk !== undefined && trunk.y < 1.0, `trunk settled LYING DOWN (y=${trunk?.y.toFixed(2)} < 1.0 — toppled, not standing at ~4)`);
+  check(trunk?.dims?.[1] === halfH, "trunk pose carries its dims for the wire");
+  // Not yet expired: 10s < TTL.
+  const sleepT = steps * dt;
+  check(sysC.expireSettled("trunk", 30, sleepT + 10).length === 0, "expireSettled holds before the TTL");
+  const reaped = sysC.expireSettled("trunk", 30, sleepT + 40);
+  check(reaped.length === 1 && Math.abs(reaped[0].y - (trunk?.y ?? NaN)) < 0.01, "expireSettled reaps the trunk after the TTL with its resting pose");
+  check(sysC.count === 0, "reaped trunk left the body registry");
+  // Kind filter: a crate settled just as long is NOT reaped by the trunk sweep.
+  const sysD = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysD.attachEngine(RAPIER, dt);
+  sysD.spawnBody(9, "crate", 0, 2, 0);
+  for (let i = 0; i < 450; i++) sysD.step(dt, i * dt);
+  check(sysD.expireSettled("trunk", 30, 450 * dt + 100).length === 0, "expireSettled('trunk') ignores settled crates");
+}
+
 // --- 2. replay determinism ---------------------------------------------------
 {
   const sys = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 24 });

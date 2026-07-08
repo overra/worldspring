@@ -149,6 +149,19 @@ export const MAX_PORTALS = 16;
 // --- Dropped loot ---
 export const DROPPED_LOOT_TTL_S = 600; // player-dropped items despawn after this
 
+// --- Tree chopping / falling trees (doc 13 M2) ---
+// Axe swings against a trunk are the wood faucet (doc 05's gather-node design,
+// superseded by felling: the FINAL chop brings the whole tree down as a
+// dynamic "trunk" body instead of starting a per-tree cooldown).
+/** Axe hits to fell a tree; each hit grants wood, the last one topples it. */
+export const TREE_CHOPS_TO_FELL = 3;
+/** Wood granted per landed chop (inventory overflow drops at the feet). */
+export const TREE_WOOD_PER_CHOP = 1;
+/** Bonus wood dropped where the felled trunk comes to REST and despawns. */
+export const TRUNK_WOOD_BONUS = 2;
+/** Seconds a settled (sleeping) trunk lies around before despawning to loot. */
+export const TRUNK_SETTLE_TTL_S = 30;
+
 // --- Respawn ---
 export const RESPAWN_DELAY_S = 4;
 

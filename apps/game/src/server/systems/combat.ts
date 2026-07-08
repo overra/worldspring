@@ -37,6 +37,7 @@ import {
   type Zombie,
 } from "./state";
 import { damagePlayer } from "./survival";
+import { tryChopTree } from "./trees";
 import { killDeer } from "./wildlife";
 import { killZombie } from "./zombies";
 
@@ -49,8 +50,9 @@ const MELEE_MAX_DY = 2.5;
 /** Chest height used for the melee wall-occlusion ray. */
 const MELEE_RAY_HEIGHT = 1.2;
 
-/** True when a wall/roof blocks the line from attacker chest to target chest. */
-function meleeBlocked(
+/** True when a wall/roof blocks the line from attacker chest to target chest.
+ * Exported for trees.ts — chops obey the same occlusion as living targets. */
+export function meleeBlocked(
   state: GameState,
   ax: number,
   ay: number,
@@ -256,7 +258,13 @@ function meleeAttack(
     }
   }
 
-  if (!hitPos) return;
+  if (!hitPos) {
+    // Whiffed every living target: an axe swing may still land on a tree
+    // trunk (doc 13 M2 — chopping reuses the melee verb; living targets in
+    // front of a tree always win the swing). Trees are static, so no rewind.
+    tryChopTree(state, player);
+    return;
+  }
   // The impact flash lands at the REWOUND point (where the shooter saw the
   // target); damage/kill below applies to the CURRENT entity objects.
   queueEvent(
