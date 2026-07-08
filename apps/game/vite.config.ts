@@ -8,6 +8,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // rapier's package `exports` map hides its .wasm file, so the server
+      // physics loader imports it through this alias (aliases bypass export
+      // enforcement). Workerd receives it as a precompiled WebAssembly.Module
+      // (CompiledWasm) — the only WASM form Workers allow (doc 13 M0 finding).
+      "rapier3d.wasm": fileURLToPath(
+        new URL("./node_modules/@dimforge/rapier3d-compat/rapier_wasm3d_bg.wasm", import.meta.url),
+      ),
     },
   },
   build: {

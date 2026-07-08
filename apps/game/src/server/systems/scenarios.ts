@@ -9,6 +9,7 @@
 import { BUILTIN_SCENARIO, parseScenario, type Scenario } from "@worldspring/shared/scenario";
 import combatJson from "../../../scenarios/combat.json";
 import craftingJson from "../../../scenarios/crafting.json";
+import physicsJson from "../../../scenarios/physics.json";
 import survivalJson from "../../../scenarios/survival.json";
 
 /** The set used when no name is supplied (or an unknown one is). */
@@ -18,6 +19,7 @@ const SCENARIOS: Readonly<Record<string, Scenario>> = Object.freeze({
   survival: parseScenario(survivalJson),
   combat: parseScenario(combatJson),
   crafting: parseScenario(craftingJson),
+  physics: parseScenario(physicsJson),
 });
 
 /** Every shipped set name — the M4 panel's set-switcher reads this. */

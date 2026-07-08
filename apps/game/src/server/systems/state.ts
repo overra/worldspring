@@ -20,6 +20,7 @@ import type {
   ZombieState,
 } from "@worldspring/shared/protocol";
 import type { World } from "@worldspring/shared/world";
+import { PhysicsSystem } from "../physics/PhysicsSystem";
 
 /**
  * A server-authoritative channeled (timed) action in progress (doc 11). The
@@ -333,6 +334,9 @@ export interface GameState {
   outbox: OutboundMsg[];
   /** Shared id counter for zombies, loot entities and campfires. */
   nextEntityId: number;
+  /** Server-auth dynamic physics (doc 13) — engine attaches async in the DO;
+   * a no-op shell in harnesses/tests that never attach one. */
+  physics: PhysicsSystem;
   /**
    * Lag-compensation ring of recent end-of-tick positions, oldest first.
    * Bounded by capturePosHistory to LAG_COMP_MAX_REWIND_S + slack — at 15Hz
@@ -368,6 +372,7 @@ export function createGameState(
     events: [],
     outbox: [],
     nextEntityId: 1,
+    physics: new PhysicsSystem(world, config.physics),
     posHistory: [],
   };
 }

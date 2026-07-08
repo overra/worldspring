@@ -30,6 +30,7 @@ import {
   LOGOUT_LINGER_S,
   MAP_ACQUIRE_DEFAULT,
   MAP_MINIMAP_DEFAULT,
+  PHYSICS_BODY_CAP,
   MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   RESPAWN_DELAY_S,
@@ -518,5 +519,31 @@ describe("summarizeRules", () => {
     expect(
       summarizeRules(clampConfig({ map: { minimap: false, acquire: "none", reveal: "full" } })).map,
     ).toBe("off");
+  });
+});
+
+// doc 13 — physics group (LIVE-class: outside worldFingerprintOf, never wipes)
+describe("physics config", () => {
+  it("defaults: enabled, bodyCap from the constant", () => {
+    expect(DEFAULT_CONFIG.physics.enabled).toBe(true);
+    expect(DEFAULT_CONFIG.physics.bodyCap).toBe(PHYSICS_BODY_CAP);
+  });
+
+  it("clamps bodyCap into [0, 256] and truncates to an integer", () => {
+    expect(clampConfig({ physics: { bodyCap: 9999 } }).physics.bodyCap).toBe(256);
+    expect(clampConfig({ physics: { bodyCap: -5 } }).physics.bodyCap).toBe(0);
+    expect(clampConfig({ physics: { bodyCap: 12.9 } }).physics.bodyCap).toBe(12);
+  });
+
+  it("garbage values fall back to defaults", () => {
+    const cfg = clampConfig({ physics: { enabled: "yes", bodyCap: "many" } });
+    expect(cfg.physics.enabled).toBe(true);
+    expect(cfg.physics.bodyCap).toBe(PHYSICS_BODY_CAP);
+  });
+
+  it("is LIVE-class: physics overrides never taint the world fingerprint", () => {
+    const a = resolveServerConfig({ preset: "deadcoast" }).config;
+    const b = resolveServerConfig({ preset: "deadcoast", overrides: { physics: { enabled: false, bodyCap: 8 } } }).config;
+    expect(worldFingerprintOf(a.world)).toBe(worldFingerprintOf(b.world));
   });
 });

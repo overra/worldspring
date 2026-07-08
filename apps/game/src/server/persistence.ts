@@ -26,6 +26,7 @@ import type { WipeSchedule } from "@worldspring/shared/config";
 import { encodeExplored } from "@worldspring/shared/fog";
 import type { ItemStack } from "@worldspring/shared/items";
 import type { DeathRecap, LeaderboardEntry, PlayerCore, Vitals } from "@worldspring/shared/protocol";
+import type { PersistedBody } from "./physics/PhysicsSystem";
 import type {
   Airdrop,
   Campfire,
@@ -318,6 +319,10 @@ interface WorldSnapshot {
   weatherNextAt: number;
   weatherRaining: boolean;
   airdropNextAt: number;
+  /** doc 13 — dynamic physics bodies (poses + velocities + sleep). ADDITIVE:
+   * older snapshots lack it (normalized to []), older code ignores it — no
+   * SCHEMA_VERSION bump (same posture as weather/airdrop fields above). */
+  bodies: PersistedBody[];
 }
 
 /**
@@ -342,6 +347,7 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     weatherNextAt: game.weatherNextAt,
     weatherRaining: game.weatherRaining,
     airdropNextAt: game.airdropNextAt,
+    bodies: game.physics.serialize(),
   };
   storage.transactionSync(() => {
     // O(1) rows written: delete the prior single snapshot row, insert the new
@@ -385,7 +391,7 @@ function hasNumericId(v: unknown): v is { id: number } {
 function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops"] as const) {
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
@@ -442,6 +448,14 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     if (!hasNumericId(drop)) continue;
     game.drops.set(drop.id, drop);
     maxId = Math.max(maxId, drop.id);
+  }
+
+  // doc 13 — physics bodies buffer in the PhysicsSystem until the engine
+  // attaches (async on workerd); a save before attach round-trips this list.
+  const bodies = snapshot.bodies.filter(hasNumericId);
+  if (bodies.length > 0) {
+    game.physics.restore(bodies);
+    for (const b of bodies) maxId = Math.max(maxId, b.id);
   }
 
   if (Number.isFinite(snapshot.time)) game.time = snapshot.time;

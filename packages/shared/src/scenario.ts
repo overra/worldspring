@@ -50,6 +50,10 @@ export type Provision =
   | { kind: "fire"; atFeet: true }
   | { kind: "position"; zone: ScenarioZone; face: ScenarioFace }
   | { kind: "clearCooldowns"; which: CooldownKind[] }
+  // --- live in doc 13 M1 ---
+  /** Spawn `count` dynamic physics crates ahead of the player (doc 13).
+   * Warn-noop when config.physics.enabled is false. */
+  | { kind: "spawnBody"; body: "crate"; count: number }
   // --- reserved for M5 (parsed-but-inert) ---
   | { kind: "spawnZombie"; count: number; military: boolean }
   | { kind: "spawnAnimal"; species: string; count: number }
@@ -252,6 +256,9 @@ function parseProvision(raw: unknown): Provision | null {
         .slice(0, MAX_LIST);
       return { kind: "clearCooldowns", which };
     }
+    case "spawnBody":
+      // Only crates exist in doc 13 M1; unknown body strings clamp to crate.
+      return { kind: "spawnBody", body: "crate", count: num(raw.count, 4, 1, 16, true) };
     // --- M5-reserved: parsed-but-inert ---
     case "spawnZombie":
       return { kind: "spawnZombie", count: num(raw.count, 1, 0, 999, true), military: bool(raw.military, false) };

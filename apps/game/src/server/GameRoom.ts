@@ -59,6 +59,7 @@ import {
   type WireFire,
   type WireLoot,
   type WirePlayer,
+  type WireBody,
   type WirePortal,
   type WireZombie,
   type YouState,
@@ -112,6 +113,7 @@ import {
 } from "./systems/state";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
+import { loadRapier } from "./physics/loader";
 import { setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -626,6 +628,16 @@ export class GameRoom extends DurableObject<Env> {
     spawnInitialDeer(game);
     this.game = game;
     this.lastSaveTime = game.time;
+    // doc 13 — attach the physics engine asynchronously (wasm init). Ticks
+    // before it resolves skip stepping; restored bodies buffer in the system.
+    // The catch keeps an engine-load failure from becoming an unhandled
+    // rejection: the room runs physics-less (spawnBody buffers, saves pass
+    // the buffer through), which is degraded but never fatal.
+    if (this.config.physics.enabled) {
+      loadRapier()
+        .then((rapier) => this.game?.physics.attachEngine(rapier, TICK_MS / 1000))
+        .catch((err) => console.error("[physics] engine load failed — running physics-less", err));
+    }
     return game;
   }
 
@@ -1122,6 +1134,8 @@ export class GameRoom extends DurableObject<Env> {
     }
     // Portal crossings resolve against this tick's post-movement positions.
     stepPortals(game);
+    // doc 13 — server-auth physics step (no-op until the engine attaches).
+    game.physics.step(dt, game.time);
     tickZombies(game, dt);
     tickZombieRespawns(game, dt);
     tickSurvival(game, dt);
@@ -1257,6 +1271,24 @@ export class GameRoom extends DurableObject<Env> {
       portals.push({ id: portal.id, x: round2(portal.x), y: round2(portal.y), z: round2(portal.z), to: portal.toRealm });
     }
 
+    // doc 13 — dynamic bodies: overworld-only (they exist in the overworld;
+    // red-realm players get an empty array), interest-filtered like portals.
+    const bodies: WireBody[] = [];
+    if (player.realm === "overworld") {
+      for (const b of game.physics.poses()) {
+        if (distSq2D(px, pz, b.x, b.z) > interestSq) continue;
+        bodies.push({
+          id: b.id,
+          kind: b.kind,
+          x: round2(b.x),
+          y: round2(b.y),
+          z: round2(b.z),
+          q: [round2(b.q[0]), round2(b.q[1]), round2(b.q[2]), round2(b.q[3])],
+          ...(b.asleep ? { asleep: true as const } : {}),
+        });
+      }
+    }
+
     // Airdrops are NEVER interest-filtered: the smoke column (and the falling
     // crate) must be visible from anywhere on the island.
     const drops: WireDrop[] = [];
@@ -1305,6 +1337,7 @@ export class GameRoom extends DurableObject<Env> {
       corpses,
       fires,
       portals,
+      bodies,
       drops,
       animals,
       weather: round2(game.weather),
