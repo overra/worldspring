@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
 import { clientWorld, debugStats } from "@/client/runtime";
-import { useSettingsStore } from "@/client/state/settings";
+import { qualitySource, useSettingsStore } from "@/client/state/settings";
 import { useUIStore } from "@/client/state/store";
 import "./debug.css";
 
@@ -82,6 +82,9 @@ function Row({ label, value }: RowProps): ReactElement {
 
 export function DebugOverlay(): ReactElement | null {
   const showDebug = useSettingsStore((s) => s.showDebug);
+  // Active render tier (doc 08 M2) — store-subscribed so an Esc-menu switch
+  // re-renders the row (which also refreshes the auto/manual/url source tag).
+  const quality = useSettingsStore((s) => s.quality);
   const pingMs = useUIStore((s) => s.pingMs);
   const [snap, setSnap] = useState<DebugSnapshot>(takeSnapshot);
 
@@ -118,6 +121,7 @@ export function DebugOverlay(): ReactElement | null {
           value={`${snap.jsMs.toFixed(1)} / ${snap.submitMs.toFixed(1)} ms`}
         />
       )}
+      <Row label="tier" value={`${quality} (${qualitySource()})`} />
       <Row label="draws" value={String(snap.drawCalls)} />
       <Row label="tris" value={`${(snap.triangles / 1000).toFixed(1)}k`} />
       <Row label="geo/tex" value={`${snap.geometries}/${snap.textures}`} />
