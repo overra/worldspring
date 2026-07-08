@@ -26,6 +26,7 @@ import {
 } from "@worldspring/shared/constants";
 import { distSq2D, inMeleeCone, yawToDir } from "@worldspring/shared/math";
 import type { Tree } from "@worldspring/shared/world";
+import { meleeBlocked } from "./combat";
 import { addToInventory, sendInventory } from "./players";
 import { queueEvent, sendTo, type GameState, type ServerPlayer } from "./state";
 
@@ -89,6 +90,10 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
     if (dSq >= bestSq) continue;
     const index = state.world.trees.indexOf(tree);
     if (index === -1 || state.felledTrees.has(index)) continue;
+    // Same wall/roof occlusion ray every living melee target gets — worldgen
+    // places trees as close as 2 m outside building walls, so an unchecked
+    // cone would harvest (and fell) the forest from indoors.
+    if (meleeBlocked(state, x, py, z, tree.x, tree.groundY, tree.z)) continue;
     bestSq = dSq;
     hitIndex = index;
     hitTree = tree;

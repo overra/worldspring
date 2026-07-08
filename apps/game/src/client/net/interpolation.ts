@@ -26,6 +26,12 @@ interface BufferedSnap {
   /** doc 13 — dynamic bodies, interpolated like remote players. */
   bodies: WireBody[];
   bodyById: Map<number, WireBody>;
+  /** doc 13 M2 — trees felled in this snap's tick. Folded into
+   * clientWorld.felledTrees only when the render cursor reaches this snap, so
+   * the static tree vanishes on the same delayed timeline the trunk body
+   * appears on (folding at receipt blanks the tree INTERP_DELAY_MS early). */
+  felled: number[] | undefined;
+  felledApplied: boolean;
   weather: number;
 }
 
@@ -63,9 +69,16 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
     animalById,
     bodies: snap.bodies,
     bodyById,
+    felled: snap.felled,
+    felledApplied: false,
     weather: snap.weather,
   });
-  if (buffer.length > MAX_BUFFERED_SNAPS) buffer.shift();
+  if (buffer.length > MAX_BUFFERED_SNAPS) {
+    // Never let a trimmed buffer drop a felled delta (idempotent no-op if the
+    // cursor already consumed it).
+    const evicted = buffer.shift();
+    if (evicted) applyFelled(evicted);
+  }
 
   // Loot, corpses, fires and drops are discrete — always show the newest set.
   clientWorld.loot = snap.loot;
@@ -75,6 +88,20 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
   setTimeBase(snap.time, arrivalMs);
 }
 
+/** Fold a snap's felled-tree delta into the client set. Idempotent (Set.add +
+ * the applied flag), called when the render cursor reaches the snap or when
+ * the snap is evicted unconsumed. */
+function applyFelled(s: BufferedSnap): void {
+  if (s.felledApplied) return;
+  s.felledApplied = true;
+  if (!s.felled || s.felled.length === 0) return;
+  for (const idx of s.felled) clientWorld.felledTrees.add(idx);
+  clientWorld.felledVersion++;
+}
+
+// Dropping the buffer can discard unapplied felled deltas — safe only because
+// resetInterpolation runs on welcome/disconnect, and every welcome rebuilds
+// clientWorld.felledTrees from the server's FULL set (connection.ts).
 export function resetInterpolation(): void {
   buffer.length = 0;
   latestGameTime = 0;
@@ -105,18 +132,23 @@ export function updateInterpolation(nowMs: number): void {
       break;
     }
   }
-  let a: BufferedSnap;
-  let b: BufferedSnap;
+  let aIdx: number;
+  let bIdx: number;
   if (olderIdx === -1) {
-    a = buffer[0];
-    b = buffer[0];
+    aIdx = 0;
+    bIdx = 0;
   } else if (olderIdx === buffer.length - 1) {
-    a = buffer[olderIdx];
-    b = buffer[olderIdx];
+    aIdx = olderIdx;
+    bIdx = olderIdx;
   } else {
-    a = buffer[olderIdx];
-    b = buffer[olderIdx + 1];
+    aIdx = olderIdx;
+    bIdx = olderIdx + 1;
   }
+  const a = buffer[aIdx];
+  const b = buffer[bIdx];
+  // doc 13 M2 — fold felled deltas through the newer rendered snap: bodies
+  // draw from `b`, so the trunk and the vanishing static tree share a frame.
+  for (let i = 0; i <= bIdx; i++) applyFelled(buffer[i]);
   const span = b.arrival - a.arrival;
   const t = span > 0 ? clamp((renderTime - a.arrival) / span, 0, 1) : 1;
 

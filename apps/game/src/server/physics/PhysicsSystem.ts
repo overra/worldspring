@@ -346,7 +346,13 @@ export class PhysicsSystem {
     this.world.createCollider(collider, body);
     const rec: BodyRec = {
       id: p.id, kind: p.kind, body,
-      sleptAt: p.asleep ? this.gameTime : null,
+      // Restored-asleep bodies start with a NULL settle clock even though they
+      // sleep: this.gameTime is still 0 when attachEngine drains the buffer
+      // before the first step (warm-isolate boot), and stamping 0 would make
+      // expireSettled reap them instantly against the restored game.time. The
+      // first step() stamps sleeping bodies at the CURRENT game time — the
+      // fresh-settle-clock restore behavior tickTrunks documents.
+      sleptAt: null,
       createdAt: this.gameTime,
     };
     if (p.dims) rec.dims = p.dims;

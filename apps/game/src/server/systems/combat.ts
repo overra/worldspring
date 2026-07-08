@@ -50,8 +50,9 @@ const MELEE_MAX_DY = 2.5;
 /** Chest height used for the melee wall-occlusion ray. */
 const MELEE_RAY_HEIGHT = 1.2;
 
-/** True when a wall/roof blocks the line from attacker chest to target chest. */
-function meleeBlocked(
+/** True when a wall/roof blocks the line from attacker chest to target chest.
+ * Exported for trees.ts — chops obey the same occlusion as living targets. */
+export function meleeBlocked(
   state: GameState,
   ax: number,
   ay: number,
