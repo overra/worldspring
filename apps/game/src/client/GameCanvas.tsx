@@ -51,7 +51,11 @@ export function GameCanvas(): React.ReactElement {
   return (
     <Canvas
       className="game-canvas"
-      gl={{ antialias: true, powerPreference: "high-performance" }}
+      // antialias: false — the EffectComposer (always mounted, SMAA-only on
+      // low tiers) is the sole renderer and SMAA is the AA; an MSAA default
+      // framebuffer would just add a per-frame resolve on the final blit,
+      // pure bandwidth waste on the fill-bound devices the mobile tier targets.
+      gl={{ antialias: false, powerPreference: "high-performance" }}
       camera={{ fov: 75, near: 0.1, far: 600 }}
       dpr={[1, qualityCfg.maxDpr]}
       shadows="percentage"

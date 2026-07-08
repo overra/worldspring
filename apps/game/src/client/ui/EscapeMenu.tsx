@@ -9,7 +9,9 @@ import { useUIStore } from "@/client/state/store";
 import { disconnect } from "@/client/net/connection";
 import "./menu.css";
 
-const QUALITY_PRESETS: QualityPreset[] = ["low", "medium", "high"];
+// Lightest → heaviest. Must stay in sync with the QualityPreset union and
+// QUALITY_CONFIGS table in settings.ts (the three edit sites).
+const QUALITY_PRESETS: QualityPreset[] = ["mobile", "low", "medium", "high"];
 
 /** One-line summary of what a preset does, derived from QUALITY_CONFIGS. */
 function qualityHint(preset: QualityPreset): string {
@@ -17,8 +19,14 @@ function qualityHint(preset: QualityPreset): string {
   const shadows = c.shadows ? "shadows" : "no shadows";
   const post = c.postFx ? "effects" : "no effects";
   const grass =
-    c.grassDensity >= 1 ? "dense grass" : c.grassDensity >= 0.5 ? "medium grass" : "sparse grass";
-  return `${preset}: ${shadows}, ${post}, ${grass}`;
+    c.grassDensity >= 1
+      ? "dense grass"
+      : c.grassDensity >= 0.5
+        ? "medium grass"
+        : c.grassDensity >= 0.35
+          ? "sparse grass"
+          : "minimal grass";
+  return `${preset}: ${shadows}, ${post}, ${grass}, ${c.maxDpr}x res cap`;
 }
 
 export function EscapeMenu(): React.ReactElement | null {

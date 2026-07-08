@@ -57,9 +57,9 @@ M3 Max — they surface only on weaker GPUs / at preset entity ceilings. See
 document.visibilityState
 (()=>{let n=0;const t0=performance.now();const f=()=>{n++;if(performance.now()-t0<1000)requestAnimationFrame(f);else console.log('rAF Hz ~',n)};requestAnimationFrame(f)})()
 // must be 'visible' and ~60-120Hz. Then confirm tier:
-JSON.parse(localStorage.getItem('ws_settings')).state.quality  // expect 'high'
-__gl.getPixelRatio()                                            // expect 2
-__gl.getContext().getContextAttributes()                        // expect antialias:true (the waste we'll remove)
+JSON.parse(localStorage.getItem('ws_settings')).state.quality  // auto-detected tier — force ?tier=high (or Esc menu) before A/B runs
+__gl.getPixelRatio()                                            // expect 2 on the high tier
+__gl.getContext().getContextAttributes()                        // expect antialias:false (SMAA in the composer is the AA)
 ```
 
 ## 1. CPU-vs-submit blame splitter (read the live overlay — arbitrates everything)
