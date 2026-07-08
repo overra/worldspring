@@ -18,6 +18,11 @@ export default defineConfig({
   // domain on the worldspring-web Worker (wrangler.jsonc `routes`). Drives
   // sitemap/canonical-URL generation; also the future OAuth client URL origin.
   site: "https://worldspring.games",
+  // Load-bearing for /admin and the SSR form pages: same-origin form POSTs
+  // are the CSRF posture (admin.astro's header comment relies on it). It IS
+  // the Astro default, but the default is not a contract — pin it so a
+  // future config edit or major-version change can't silently drop it.
+  security: { checkOrigin: true },
   adapter: cloudflare({
     // v13 wires local bindings (D1, etc.) for `astro dev` automatically via
     // @cloudflare/vite-plugin — there's no `platformProxy` option (that was v12).

@@ -41,6 +41,10 @@ export async function fileReport(
     .first<{ id: string }>();
   if (!server) return "not-found";
 
+  // These pre-checks only pick the RESPONSE (429 vs idempotent success); the
+  // INSERT below re-asserts both inside its own atomic batch, so concurrent
+  // requests racing this read (check-then-write across separate D1 round
+  // trips) can never actually exceed the limit or store a duplicate.
   const [countRes, dupRes] = await db.batch<{ n: number }>([
     db.prepare("SELECT COUNT(*) AS n FROM reports WHERE ip_hash = ?").bind(ipHash),
     db
@@ -55,9 +59,24 @@ export async function fileReport(
   await db.batch([
     db
       .prepare(
-        "INSERT INTO reports (id, server_id, reason, detail, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        `INSERT INTO reports (id, server_id, reason, detail, ip_hash, created_at)
+         SELECT ?, ?, ?, ?, ?, ?
+         WHERE (SELECT COUNT(*) FROM reports WHERE ip_hash = ?) < ?
+           AND NOT EXISTS (SELECT 1 FROM reports
+                           WHERE ip_hash = ? AND server_id = ? AND resolved_at IS NULL)`,
       )
-      .bind(ulid(now), serverId, body.reason, body.detail, ipHash, now),
+      .bind(
+        ulid(now),
+        serverId,
+        body.reason,
+        body.detail,
+        ipHash,
+        now,
+        ipHash,
+        REPORT_LIMIT_PER_DAY,
+        ipHash,
+        serverId,
+      ),
     // Flag check rides the same atomic batch, AFTER the insert. flagged is
     // sticky until a human resolves the reports (admin resolve-report clears
     // it when none remain unresolved).

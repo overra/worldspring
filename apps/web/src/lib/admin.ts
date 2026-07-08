@@ -39,9 +39,11 @@ export function adminCookieValueOf(token: string): Promise<string> {
   return sha256Hex(`${COOKIE_DOMAIN_SEP}${token}`);
 }
 
-/** Login-form check: presented token vs the ADMIN_TOKEN secret. */
-export function isValidAdminLogin(presented: string, token: string): boolean {
-  return constantTimeEqual(presented, token);
+/** Login-form check: presented token vs the ADMIN_TOKEN secret. Both sides
+ * are hashed first so the compare is fixed-length — constantTimeEqual's
+ * byte-length early-return must not leak the token's length to a guesser. */
+export async function isValidAdminLogin(presented: string, token: string): Promise<boolean> {
+  return constantTimeEqual(await sha256Hex(presented), await sha256Hex(token));
 }
 
 /** Cookie check for every /admin request. Single-token ⇒ single actor; when

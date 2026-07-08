@@ -28,11 +28,16 @@ const now = Date.now();
 const id = Astro.params.id ?? "";
 
 let row: Row | null = null;
-let uptimeRatio20d = 0;
+/** null = no non-verify probes yet (brand-new listing) — render "no data",
+ * never a false 0% on the page whose whole job is honest facts. */
+let uptimeRatio20d: number | null = null;
 try {
   // Only `live` listings get an interstitial (open decision #5): hidden,
   // banned, pending, and unreachable rows aren't in the browse list, and a
-  // 404 here avoids an existence oracle for moderated rows.
+  // 404 here avoids an existence oracle for moderated rows on the HTML
+  // surfaces. (Deliberate asymmetry: the JSON report API accepts reports for
+  // ANY existing row so hidden/banned listings keep collecting evidence —
+  // lib/reports.ts. That surface does distinguish moderated-vs-deleted.)
   row = await db
     .prepare(
       "SELECT id, url, name, created_at, source FROM servers WHERE id = ? AND status = 'live'",
@@ -41,17 +46,19 @@ try {
     .first<Row>();
   if (row) {
     // Same 20-day window as /servers, excluding unauthenticated 'verify' rows
-    // (see /api/v1/servers GET).
+    // (see /api/v1/servers GET). AVG over zero rows is NULL — kept as null.
     const uptime = await db
       .prepare(
         "SELECT AVG(ok) AS ratio FROM probes WHERE server_id = ? AND at > ? AND source != 'verify'",
       )
       .bind(id, now - 20 * 86400_000)
       .first<{ ratio: number | null }>();
-    uptimeRatio20d = Number(uptime?.ratio ?? 0);
+    uptimeRatio20d = uptime?.ratio ?? null;
   }
-} catch {
-  // local dev without a migrated D1 — falls through to the 404 below
+} catch (err) {
+  // Expected only in local dev without a migrated D1; log so a prod D1
+  // outage reads as a DB failure in the tail, not as silent 404s.
+  console.error("[join] D1 lookup failed — rendering 404:", err);
 }
 
 if (!row) {
@@ -91,7 +98,9 @@ const continueUrl = `${row.url}/?ref=worldspring-directory`;
       <div class="host">{host}</div>
       <p class="facts">
         Listed for {ageDays} {ageDays === 1 ? "day" : "days"} ·
-        {Math.round(uptimeRatio20d * 100)}% uptime over the last 20 days
+        {uptimeRatio20d === null
+          ? "no uptime data yet"
+          : `${Math.round(uptimeRatio20d * 100)}% uptime over the last 20 days`}
       </p>
 
       {/* Doc 02 §7 vouch/no-vouch paragraph — M6 acceptance: verbatim-or-better. */}
@@ -110,7 +119,9 @@ const continueUrl = `${row.url}/?ref=worldspring-directory`;
         </p>
       </div>
 
-      <div class="name-row">
+      {/* Hidden until the script that makes it functional reveals it — a
+          no-JS visitor must not see a dangling "()" and a dead checkbox. */}
+      <div class="name-row" id="name-row" hidden>
         <label>
           <input type="checkbox" id="send-name" />
           Prefill my survivor name (<code id="name-preview"></code>) on that server
@@ -118,7 +129,14 @@ const continueUrl = `${row.url}/?ref=worldspring-directory`;
         <input type="text" id="name-input" maxlength={MAX_NAME_LENGTH} placeholder="survivor name" hidden />
       </div>
 
-      <a class="continue" id="continue" href={continueUrl} target="_blank" rel="noopener noreferrer">
+      <a
+        class="continue"
+        id="continue"
+        href={continueUrl}
+        data-server-id={row.id}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         Continue to {host} &rarr;
       </a>
 
@@ -150,7 +168,13 @@ const continueUrl = `${row.url}/?ref=worldspring-directory`;
       const namePreview = document.getElementById("name-preview")!;
       const skip = document.getElementById("skip") as HTMLInputElement;
       const baseHref = link.href;
-      const serverId = location.pathname.split("/").pop() ?? "";
+      // The server-rendered id, NOT location.pathname parsing: a trailing
+      // slash (/join/:id/ — Astro serves it) would make .pop() return "" and
+      // silently store the skip preference under the wrong key.
+      const serverId = link.dataset.serverId ?? "";
+
+      // JS is running — the prefill controls work now, so reveal them.
+      document.getElementById("name-row")!.hidden = false;
 
       let saved = "";
       try {
@@ -174,15 +198,29 @@ const continueUrl = `${row.url}/?ref=worldspring-directory`;
       });
       nameInput.addEventListener("input", syncHref);
 
-      link.addEventListener("click", () => {
+      // Persist "don't warn me again" the moment it's toggled — a click
+      // listener on the link misses middle-click / context-menu "open in new
+      // tab" navigations. The checkbox itself is the preference statement.
+      skip.addEventListener("change", () => {
         try {
-          const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
-          if (sendName.checked && name !== "") localStorage.setItem(NAME_KEY, name);
           if (skip.checked) localStorage.setItem(skipKeyOf(serverId), "1");
+          else localStorage.removeItem(skipKeyOf(serverId));
         } catch {
           // storage blocked — the join itself still proceeds
         }
       });
+
+      // Save the name on any activation of the link (auxclick = middle-click).
+      const saveName = () => {
+        try {
+          const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
+          if (sendName.checked && name !== "") localStorage.setItem(NAME_KEY, name);
+        } catch {
+          // storage blocked — the join itself still proceeds
+        }
+      };
+      link.addEventListener("click", saveName);
+      link.addEventListener("auxclick", saveName);
     </script>
   </body>
 </html>

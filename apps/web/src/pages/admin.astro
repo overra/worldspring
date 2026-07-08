@@ -1,9 +1,14 @@
 ---
 // /admin — moderation (doc 02 §7, M7). SSR, gated by the ADMIN_TOKEN cookie
 // (lib/admin.ts owns the auth seam and the OAuth-successor note). Lists
-// flagged servers + open reports; actions hide/unhide/ban/unban/delete/
-// resolve-report, EVERY one appending a moderation_actions row (append-only
-// audit — M7 acceptance).
+// servers needing attention (flagged, hidden/banned, or carrying unresolved
+// reports — a single malware report must surface the full action set, not
+// wait for the 3-reporter flag threshold), open reports, and banned hosts;
+// actions hide/unhide/ban/unban/clear-flag/delete/resolve-report/unban-host,
+// EVERY effective one appending a moderation_actions row (append-only audit —
+// M7 acceptance). Login POSTs ride the shared `attempts` ledger (10/h per
+// ip_hash) — ADMIN_TOKEN is operator-chosen, so online brute-force must cost
+// something.
 //
 // Actions are SAME-ORIGIN FORM POSTs on this page, never /api/v1/* routes:
 // every /api/v1 response is CORS-open (`access-control-allow-origin: *`,
@@ -23,10 +28,10 @@ import {
   isValidAdminLogin,
   logAdminDisabledOnce,
 } from "../lib/admin";
-import { directoryEnv } from "../lib/db";
+import { attemptAndCheckLimit, directoryEnv, hashIp, readFormBody } from "../lib/db";
 
 const { ADMIN_TOKEN } = adminEnv();
-const { DB } = directoryEnv();
+const { DB, REPORT_SALT } = directoryEnv();
 const configured = typeof ADMIN_TOKEN === "string" && ADMIN_TOKEN.length > 0;
 if (!configured) logAdminDisabledOnce();
 
@@ -35,29 +40,48 @@ let authed =
     ? await isAdmin(Astro.cookies.get(ADMIN_COOKIE)?.value, ADMIN_TOKEN)
     : false;
 
-const SERVER_ACTIONS = ["hide", "unhide", "ban", "unban", "delete"] as const;
+const SERVER_ACTIONS = ["hide", "unhide", "ban", "unban", "clear-flag", "delete"] as const;
 type ServerAction = (typeof SERVER_ACTIONS)[number];
 
+/** Same posture as register (5/h) / verify (10/h): the login POST is the most
+ * sensitive unauthenticated POST on the site, so it pays the same ledger. */
+const ADMIN_LOGIN_LIMIT_PER_HOUR = 10;
+/** formData() buffers the whole body before any check runs — cap it like
+ * readJsonBody does for the JSON routes (generous: fields here are tiny). */
+const FORM_MAX_BYTES = 16 * 1024;
+
 let loginError = false;
+let loginRateLimited = false;
 
 if (configured && ADMIN_TOKEN && Astro.request.method === "POST") {
-  const form = await Astro.request.formData();
+  const form = await readFormBody(Astro.request, FORM_MAX_BYTES);
+  if (!form) {
+    return new Response("Bad request", { status: 413, headers: { "content-type": "text/plain" } });
+  }
   const now = Date.now();
 
   if (!authed) {
-    // Login: constant-time compare, then an HttpOnly derived-value cookie.
-    const presented = form.get("token");
-    if (typeof presented === "string" && isValidAdminLogin(presented, ADMIN_TOKEN)) {
-      Astro.cookies.set(ADMIN_COOKIE, await adminCookieValueOf(ADMIN_TOKEN), {
-        httpOnly: true,
-        secure: true,
-        sameSite: "strict",
-        path: "/admin",
-        maxAge: ADMIN_COOKIE_MAX_AGE_S,
-      });
-      return Astro.redirect("/admin", 303); // PRG — never re-POST on refresh
+    // Login: attempt ledger first (EVERY attempt inserts, success included),
+    // then constant-time compare, then an HttpOnly derived-value cookie.
+    const ipHash = await hashIp(Astro.request, REPORT_SALT);
+    if (await attemptAndCheckLimit(DB, ipHash, "admin", ADMIN_LOGIN_LIMIT_PER_HOUR, now)) {
+      loginRateLimited = true;
+      Astro.response.status = 429;
+    } else {
+      const presented = form.get("token");
+      if (typeof presented === "string" && (await isValidAdminLogin(presented, ADMIN_TOKEN))) {
+        Astro.cookies.set(ADMIN_COOKIE, await adminCookieValueOf(ADMIN_TOKEN), {
+          httpOnly: true,
+          secure: true,
+          sameSite: "strict",
+          path: "/admin",
+          maxAge: ADMIN_COOKIE_MAX_AGE_S,
+        });
+        return Astro.redirect("/admin", 303); // PRG — never re-POST on refresh
+      }
+      console.warn("[admin] failed login attempt");
+      loginError = true;
     }
-    loginError = true;
   } else {
     const action = form.get("action");
     const reasonRaw = form.get("reason");
@@ -84,8 +108,8 @@ if (configured && ADMIN_TOKEN && Astro.request.method === "POST") {
             DB.prepare("UPDATE reports SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL")
               .bind(now, reportId),
             // Human review complete: clear the flag once nothing is left
-            // unresolved. (A heuristic-only flag with zero reports has no
-            // resolve path yet — see the M7 concerns note.)
+            // unresolved. (A heuristic-only flag with zero reports is cleared
+            // via the clear-flag server action instead.)
             DB.prepare(
               `UPDATE servers SET flagged = 0, updated_at = ?
                WHERE id = ? AND NOT EXISTS
@@ -98,6 +122,23 @@ if (configured && ADMIN_TOKEN && Astro.request.method === "POST") {
       return Astro.redirect("/admin", 303);
     }
 
+    if (action === "unban-host") {
+      // banned_hosts outlives its server row (ban → delete cascades the row
+      // but the host block stays, deliberately). This is the recovery path —
+      // without it the only un-ban for a deleted server's host is manual SQL.
+      const hostRaw = form.get("host");
+      const host = sanitizeListingText(typeof hostRaw === "string" ? hostRaw : "", 255);
+      if (host !== "") {
+        await DB.batch([
+          DB.prepare("DELETE FROM banned_hosts WHERE host = ?").bind(host),
+          DB.prepare(
+            "INSERT INTO moderation_actions (id, server_id, action, reason, created_at) VALUES (?, NULL, 'unban-host', ?, ?)",
+          ).bind(ulid(now), reason ? `${host} — ${reason}` : host, now),
+        ]);
+      }
+      return Astro.redirect("/admin", 303);
+    }
+
     const serverId = form.get("server_id");
     if (
       typeof serverId === "string" &&
@@ -105,10 +146,22 @@ if (configured && ADMIN_TOKEN && Astro.request.method === "POST") {
       typeof action === "string" &&
       (SERVER_ACTIONS as readonly string[]).includes(action)
     ) {
-      const row = await DB.prepare("SELECT id, url, status FROM servers WHERE id = ?")
+      const row = await DB.prepare("SELECT id, url, status, flagged FROM servers WHERE id = ?")
         .bind(serverId)
-        .first<{ id: string; url: string; status: string }>();
-      if (row) {
+        .first<{ id: string; url: string; status: string; flagged: number }>();
+      // Guarded no-ops (hide on banned, unhide on non-hidden, …) must not
+      // append an audit row — the append-only log records what HAPPENED, and
+      // a "hide" entry for a state change the SQL guard rejected is a false
+      // history. The pre-state is in `row`; the SQL guards below still hold
+      // against the tiny SELECT→batch race.
+      const isNoop =
+        row !== null &&
+        ((action === "hide" && (row.status === "hidden" || row.status === "banned")) ||
+          (action === "unhide" && row.status !== "hidden") ||
+          (action === "ban" && row.status === "banned") ||
+          (action === "unban" && row.status !== "banned") ||
+          (action === "clear-flag" && row.flagged !== 1));
+      if (row && !isNoop) {
         const host = new URL(row.url).hostname;
         const stmts: D1PreparedStatement[] = [];
         switch (action as ServerAction) {
@@ -157,8 +210,19 @@ if (configured && ADMIN_TOKEN && Astro.request.method === "POST") {
               DB.prepare("DELETE FROM banned_hosts WHERE host = ?").bind(host),
             );
             break;
+          case "clear-flag":
+            // The exit for heuristic-only flags (fake-count prober flag with
+            // zero report rows) — resolve-report can't reach those, and
+            // false positives must not squat the attention list forever.
+            stmts.push(
+              DB.prepare(
+                "UPDATE servers SET flagged = 0, updated_at = ? WHERE id = ? AND flagged = 1",
+              ).bind(now, serverId),
+            );
+            break;
           case "delete":
             // Hard delete; FK CASCADEs clear probes/stats_hourly/reports.
+            // (A banned row's banned_hosts entry survives — see unban-host.)
             stmts.push(DB.prepare("DELETE FROM servers WHERE id = ?").bind(serverId));
             break;
         }
@@ -198,15 +262,25 @@ interface AuditRow {
   reason: string;
   created_at: number;
 }
+interface BannedHostRow {
+  host: string;
+  reason: string;
+  created_at: number;
+}
 
 let attention: AttentionRow[] = [];
 let reports: ReportRow[] = [];
 let recentActions: AuditRow[] = [];
+let bannedHosts: BannedHostRow[] = [];
 if (authed) {
-  const [attentionRes, reportsRes, auditRes] = await DB.batch([
+  const [attentionRes, reportsRes, auditRes, bannedHostsRes] = await DB.batch([
     DB.prepare(
+      // Any unresolved report surfaces the server here with the full action
+      // select — a single malware-phishing report must be actionable NOW,
+      // not after the 3-reporter flag threshold.
       `SELECT id, name, url, status, flagged, players, updated_at FROM servers
        WHERE flagged = 1 OR status IN ('hidden', 'banned')
+          OR id IN (SELECT server_id FROM reports WHERE resolved_at IS NULL)
        ORDER BY updated_at DESC LIMIT 100`,
     ),
     DB.prepare(
@@ -221,10 +295,14 @@ if (authed) {
     DB.prepare(
       "SELECT server_id, action, reason, created_at FROM moderation_actions ORDER BY created_at DESC LIMIT 20",
     ),
+    DB.prepare(
+      "SELECT host, reason, created_at FROM banned_hosts ORDER BY created_at DESC LIMIT 100",
+    ),
   ]);
   attention = attentionRes.results as unknown as AttentionRow[];
   reports = reportsRes.results as unknown as ReportRow[];
   recentActions = auditRes.results as unknown as AuditRow[];
+  bannedHosts = bannedHostsRes.results as unknown as BannedHostRow[];
 }
 
 const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ");
@@ -267,6 +345,9 @@ const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T",
         ) : !authed ? (
           <>
             <h1>Moderation sign-in</h1>
+            {loginRateLimited && (
+              <p class="error">Too many sign-in attempts — try again in an hour.</p>
+            )}
             {loginError && <p class="error">That token didn't match.</p>}
             <form method="post" class="inline">
               <input type="password" name="token" placeholder="admin token" required autofocus />
@@ -314,6 +395,7 @@ const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T",
                             <option value="unhide">unhide</option>
                             <option value="ban">ban</option>
                             <option value="unban">unban</option>
+                            <option value="clear-flag">clear flag</option>
                             <option value="delete">delete</option>
                           </select>
                           <input type="text" name="reason" placeholder="reason (audited)" />
@@ -362,6 +444,34 @@ const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T",
               </table>
             )}
 
+            <h2>Banned hosts ({bannedHosts.length})</h2>
+            {bannedHosts.length === 0 ? (
+              <p class="muted">No banned hosts.</p>
+            ) : (
+              <table>
+                <thead>
+                  <tr><th>Host</th><th>Reason</th><th>When</th><th /></tr>
+                </thead>
+                <tbody>
+                  {bannedHosts.map((h) => (
+                    <tr>
+                      <td><code>{h.host}</code></td>
+                      <td>{h.reason}</td>
+                      <td class="muted">{fmt(h.created_at)}</td>
+                      <td>
+                        <form method="post" class="inline">
+                          <input type="hidden" name="action" value="unban-host" />
+                          <input type="hidden" name="host" value={h.host} />
+                          <input type="text" name="reason" placeholder="reason (audited)" />
+                          <button type="submit">Unban host</button>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
             <h2>Recent actions</h2>
             {recentActions.length === 0 ? (
               <p class="muted">No moderation actions yet.</p>
@@ -386,5 +496,24 @@ const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T",
         )
       }
     </main>
+    <script>
+      // delete is irreversible (FK CASCADE destroys probes/stats/reports —
+      // the evidence AND the server's earned history) and sits one <option>
+      // away from routine hide. Gate it behind a confirm; no-JS admins simply
+      // don't get the safety net.
+      for (const form of document.querySelectorAll("form")) {
+        form.addEventListener("submit", (e) => {
+          const sel = form.querySelector('select[name="action"]') as HTMLSelectElement | null;
+          if (
+            sel?.value === "delete" &&
+            !confirm(
+              "Hard-delete this server and ALL its history (probes, stats, reports)? This cannot be undone.",
+            )
+          ) {
+            e.preventDefault();
+          }
+        });
+      }
+    </script>
   </body>
 </html>

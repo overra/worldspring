@@ -7,8 +7,12 @@
 // JSON API route uses.
 export const prerender = false;
 import { parseReportBody, REPORT_REASONS } from "@worldspring/shared/directory";
-import { directoryEnv, hashIp } from "../../../lib/db";
+import { directoryEnv, hashIp, readFormBody } from "../../../lib/db";
 import { fileReport, type ReportOutcome } from "../../../lib/reports";
+
+/** formData() buffers the whole body before validation — cap it like the JSON
+ * route's readJsonBody does. Generous: max-length detail is ~6 KB urlencoded. */
+const FORM_MAX_BYTES = 16 * 1024;
 
 const { DB, REPORT_SALT } = directoryEnv();
 const id = Astro.params.id ?? "";
@@ -21,8 +25,10 @@ try {
   server = await DB.prepare("SELECT id, name, url FROM servers WHERE id = ? AND status = 'live'")
     .bind(id)
     .first<{ id: string; name: string; url: string }>();
-} catch {
-  // local dev without a migrated D1 — 404 below
+} catch (err) {
+  // Expected only in local dev without a migrated D1; log so a prod D1
+  // outage reads as a DB failure in the tail, not as silent 404s.
+  console.error("[report] D1 lookup failed — rendering 404:", err);
 }
 if (!server) {
   return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
@@ -39,12 +45,14 @@ const REASON_LABELS: Record<string, string> = {
 
 let outcome: ReportOutcome | "bad-body" | null = null;
 if (Astro.request.method === "POST") {
-  const form = await Astro.request.formData();
-  const detailRaw = form.get("detail");
-  const body = parseReportBody({
-    reason: form.get("reason"),
-    detail: typeof detailRaw === "string" ? detailRaw : undefined,
-  });
+  const form = await readFormBody(Astro.request, FORM_MAX_BYTES);
+  const detailRaw = form?.get("detail");
+  const body = form
+    ? parseReportBody({
+        reason: form.get("reason"),
+        detail: typeof detailRaw === "string" ? detailRaw : undefined,
+      })
+    : null;
   if (!body) {
     outcome = "bad-body";
   } else {
