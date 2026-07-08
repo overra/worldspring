@@ -21,7 +21,7 @@
 // (positions/inventories from an old world layout would be nonsense) but the
 // leaderboard survives — finished lives stay comparable across wipes.
 
-import { LEADERBOARD_MAX } from "@worldspring/shared/constants";
+import { LEADERBOARD_MAX, WORLDGEN_VERSION } from "@worldspring/shared/constants";
 import type { WipeSchedule } from "@worldspring/shared/config";
 import { encodeExplored } from "@worldspring/shared/fog";
 import type { ItemStack } from "@worldspring/shared/items";
@@ -176,7 +176,14 @@ export function initSchema(sql: SqlStorage, boot: SchemaBootContext): string {
     return boot.fingerprint;
   }
 
-  const stored = getMeta(sql, "world_fingerprint");
+  const storedRaw = getMeta(sql, "world_fingerprint");
+  // doc 07 M1: a stored pre-gen 4-part fingerprint is the SAME world as its
+  // 5-part `gen:1` form (the gen component counts formula changes; everything
+  // generated before it existed is gen 1). Normalize BEFORE any comparison —
+  // treating the absent component as a mismatch would route a routine deploy
+  // into case 5's sanctioned wipe. On a match the stored string is rewritten
+  // in place below (adopt, never wipe — the world_seed-adopt precedent).
+  const stored = normalizeStoredFingerprint(storedRaw);
 
   // 2. Pre-M2 database (schema 2 from the single-row persist fix, no fingerprint
   //    row yet). If the legacy world_seed matches the running seed, adopt it
@@ -191,9 +198,11 @@ export function initSchema(sql: SqlStorage, boot: SchemaBootContext): string {
   }
 
   // 3. Fingerprint matches → benign boot (only LIVE fields, which are not in the
-  //    fingerprint, can have changed). Refresh config_json, run the scheduled-
-  //    wipe epoch check; no world wipe.
+  //    fingerprint, can have changed). Refresh config_json (and the stored
+  //    fingerprint when the match came via gen-normalization), run the
+  //    scheduled-wipe epoch check; no world wipe.
   if (stored !== null && stored === boot.fingerprint) {
+    if (stored !== storedRaw) setMeta(sql, "world_fingerprint", stored);
     setMeta(sql, "config_json", boot.configJson);
     reconcileWipeSchedule(sql, boot);
     return boot.fingerprint;
@@ -240,26 +249,46 @@ export function initSchema(sql: SqlStorage, boot: SchemaBootContext): string {
   return boot.fingerprint;
 }
 
+/** The legacy (pre-gen, doc 07 M1) 4-part fingerprint shape. Kept string-only
+ * so persistence needs no runtime config dependency. */
+const LEGACY_FP_RE = /^v1\|seed:-?\d+\|size:(standard|large|huge)\|water:[01]$/;
+/** The current 5-part shape, gen component captured. */
+const GEN_FP_RE = /^v1\|seed:-?\d+\|size:(standard|large|huge)\|water:[01]\|gen:(\d+)$/;
+
+/** Normalize a stored fingerprint for comparison: a well-formed pre-gen 4-part
+ * string gains the implicit `|gen:1` (absent == 1, doc 07 M1); anything else
+ * passes through untouched (a 5-part string is already canonical; garbage stays
+ * garbage for the downstream recoverability check). */
+function normalizeStoredFingerprint(fp: string | null): string | null {
+  if (fp === null) return null;
+  return LEGACY_FP_RE.test(fp) ? `${fp}|gen:1` : fp;
+}
+
 /** The fingerprint a pre-M2 database was running: the legacy world_seed at the
- * default shape. The format mirrors config `worldFingerprintOf` for a default-
- * shape world (both pinned to the same literal by config.test.ts); used as the
- * "persisted world" when no fingerprint row exists yet. */
+ * default shape (gen 1 — everything generated before the gen component existed
+ * is by definition formula version 1). The format mirrors config
+ * `worldFingerprintOf` (both pinned by config.test.ts); used as the "persisted
+ * world" when no fingerprint row exists yet. */
 function legacyFingerprint(sql: SqlStorage): string | null {
   const raw = getMeta(sql, "world_seed");
   if (raw === null || !Number.isFinite(Number(raw))) return null;
-  return `v1|seed:${Number(raw)}|size:standard|water:0`;
+  return `v1|seed:${Number(raw)}|size:standard|water:0|gen:1`;
 }
 
 /** A stored fingerprint is usable on the refusal path only if it round-trips the
- * canonical v1 format. A malformed value would make GameRoom's parseWorldFingerprint
- * return null, booting the preserved characters into the running world instead —
- * so the refusal path rejects it and starts fresh rather than serve a desynced
- * world. This regex MUST match @worldspring/shared/config `parseWorldFingerprint`
- * (kept string-only here so persistence needs no runtime config dependency; the
- * corrupt-fingerprint case is covered by persist-wipe.mjs). */
+ * canonical v1 format AND its worldgen version matches the running binary's —
+ * this code literally cannot regenerate a world from another formula version,
+ * so booting "from the stored string" across a gen difference would rehydrate
+ * characters into divergent geometry (the exact desync the refusal path exists
+ * to prevent). A malformed value would make GameRoom's parseWorldFingerprint
+ * return null with the same effect — rejected too. These regexes MUST match
+ * @worldspring/shared/config `parseWorldFingerprint` (string-only here so the
+ * node-based persistence tests stay resolvable; covered by persist-wipe.mjs). */
 function recoverableFingerprint(fp: string | null): string | null {
   if (fp === null) return null;
-  return /^v1\|seed:-?\d+\|size:(standard|large|huge)\|water:[01]$/.test(fp) ? fp : null;
+  const m = GEN_FP_RE.exec(fp);
+  if (!m) return null;
+  return Number(m[2]) === WORLDGEN_VERSION ? fp : null;
 }
 
 /** Clear characters + world_state (NEVER the leaderboard), capturing the PITR

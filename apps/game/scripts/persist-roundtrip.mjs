@@ -11,7 +11,7 @@ import { PhysicsSystem } from "../src/server/physics/PhysicsSystem.ts";
 // Engineless PhysicsSystem (never attaches Rapier): serialize() passes the
 // restored/pending buffer through, exactly the pre-attach DO behavior — so
 // the round-trip covers doc 13 bodies without loading wasm here.
-const fakeStatics = { heightAt: () => 0, buildings: [], militaryWalls: [], trees: [] };
+const fakeStatics = { size: 800, heightAt: () => 0, buildings: [], militaryWalls: [], trees: [] };
 const freshPhysics = () => new PhysicsSystem(fakeStatics, { enabled: true, bodyCap: 64 });
 
 function makeFakeSql() {

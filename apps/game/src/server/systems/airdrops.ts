@@ -10,7 +10,6 @@ import {
   AIRDROP_INTERVAL_MIN_S,
   AIRDROP_MIN_TERRAIN_H,
   AIRDROP_TTL_S,
-  WORLD_SIZE,
 } from "@worldspring/shared/constants";
 import { AIRDROP_ROLLS, AIRDROP_TABLE, type ItemStack } from "@worldspring/shared/items";
 import { distSq2D } from "@worldspring/shared/math";
@@ -35,7 +34,7 @@ function randBetween(min: number, max: number): number {
  * inside its walls would double-stack the risk/reward there).
  */
 function pickDropPoint(state: GameState): { x: number; z: number } | null {
-  const limit = WORLD_SIZE * 0.4;
+  const limit = state.world.size * 0.4;
   const military = state.world.military;
   const militaryRadiusSq = military.radius * military.radius;
   for (let attempt = 0; attempt < DROP_POINT_ATTEMPTS; attempt++) {

@@ -6,9 +6,8 @@
 import {
   CHAT_MAX_LENGTH,
   MAX_NAME_LENGTH,
-  WORLD_SIZE,
 } from "@worldspring/shared/constants";
-import { clampConfig, effectiveGameHour } from "@worldspring/shared/config";
+import { clampConfig, effectiveGameHour, worldParamsOf } from "@worldspring/shared/config";
 import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
@@ -417,19 +416,31 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   clientWorld.zombies.clear();
   clientWorld.animals.clear();
 
-  clientWorld.world = createWorld(msg.seed);
-  // Clamp the server's config before storing — NEVER store the raw object. A
-  // hostile open-source server (doc 02's first-party join path) could send
-  // zombieDensity:1e9 (OOM) or dayLengthMin:0 (NaN clock); clampConfig bounds
-  // every field. Absent config → DEFAULT_CONFIG (clampConfig's base). M1 stores
-  // it but does not yet drive runtime behavior off it (clock swap deferred to
-  // M4 to keep this PR byte-identical).
+  // Clamp the server's config BEFORE building the world — NEVER build from (or
+  // store) the raw object. A hostile open-source server (doc 02's first-party
+  // join path) could send zombieDensity:1e9 (OOM) or dayLengthMin:0 (NaN
+  // clock); clampConfig bounds every field. Absent config → DEFAULT_CONFIG
+  // (clampConfig's base).
   clientWorld.config = clampConfig(msg.config);
+  // doc 07 M2: the world is built from the clamped config (tier-derived
+  // size/counts via worldParamsOf). welcome.seed stays for legacy compat and
+  // MUST equal config.world.seed — on a disagreement trust the top-level seed
+  // (the pre-config source of truth): log + coerce, never throw.
+  if (clientWorld.config.world.seed !== msg.seed) {
+    console.error(
+      `[config] welcome.seed ${msg.seed} != config.world.seed ${clientWorld.config.world.seed}; using welcome.seed`,
+    );
+    clientWorld.config.world.seed = msg.seed;
+  }
+  clientWorld.world = createWorld(worldParamsOf(clientWorld.config.world));
   // doc 12 — mirror the server-blessed explored set on fog servers (else null,
-  // and the map renders full). createWorld + the map bake both use WORLD_SIZE,
-  // so the grid's cell indices line up with the snapshot deltas below.
+  // and the map renders full). createWorld + the map bake both derive from
+  // world.size, so the grid's cell indices line up with the snapshot deltas
+  // below (both ends compute the fog dim from the same config-derived size).
   clientWorld.explored =
-    clientWorld.config.map.reveal === "explored" ? decodeExplored(WORLD_SIZE, msg.explored) : null;
+    clientWorld.config.map.reveal === "explored"
+      ? decodeExplored(clientWorld.world.size, msg.explored)
+      : null;
   // doc 13 M2 — the server's full felled-tree set (per-snap deltas fold in
   // below). Rebuilt from scratch on every welcome: a reconnect must not keep
   // stale indices from a previous world/session.

@@ -4,7 +4,7 @@
 // of this one canvas. Pure 2D canvas — NO three.js (UI contract). The heavy
 // heightAt sampling runs here, once, off the server tick and off the rAF frame.
 
-import { WATER_LEVEL, WORLD_SIZE } from "@worldspring/shared/constants";
+import { WATER_LEVEL } from "@worldspring/shared/constants";
 import {
   FOG_CELL_M,
   FOG_REVEAL_RADIUS_M,
@@ -27,7 +27,7 @@ type Canvas2D = HTMLCanvasElement;
 type Ctx2D = CanvasRenderingContext2D;
 
 export interface BakedMap {
-  /** world meters (WORLD_SIZE today; world.size once doc 07 lands it). */
+  /** world meters (world.size — doc 07 M2). */
   size: number;
   /** baked pixel dimension. */
   px: number;
@@ -116,7 +116,7 @@ export function getBakedMap(): BakedMap | null {
   const world = clientWorld.world;
   if (!world) return null;
   if (cached && cached.world === world) return cached.baked;
-  const baked = bakeMap(world, WORLD_SIZE); // world.size once doc 07 lands it
+  const baked = bakeMap(world, world.size); // doc 07 M2: tier-sized worlds bake at their true extent
   cached = { world, baked };
   return baked;
 }

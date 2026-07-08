@@ -9,9 +9,14 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { WATER_LEVEL, WORLD_SIZE } from "@worldspring/shared/constants";
+import { clientWorld } from "@/client/runtime";
 
-const WATER_SIZE = WORLD_SIZE * 1.6;
+/** Ocean plane size/segments at the standard tier. Both scale with world.size
+ * (doc 07 M2); segments cap at 192 (doc 07 §4) — cell size grows slightly at
+ * huge, invisible on slow swells. */
+const WATER_SCALE = 1.6;
 const SEGMENTS = 64;
+const SEGMENTS_CAP = 192;
 const WAVE_AMPLITUDE = 0.07;
 const DEEP_COLOR = new THREE.Color("#16313d");
 const SHALLOW_COLOR = new THREE.Color("#5d8294");
@@ -76,6 +81,11 @@ function createWaterMaterial(): WaterAssets {
 
 export function WaterPlane(): ReactElement | null {
   const water = useMemo(createWaterMaterial, []);
+  // world.size drives the plane (doc 07 M2); the scene only mounts once the
+  // welcome built the world, but fall back to the standard size defensively.
+  const size = clientWorld.world?.size ?? WORLD_SIZE;
+  const waterSize = size * WATER_SCALE;
+  const segments = Math.min(Math.round(SEGMENTS * (size / WORLD_SIZE)), SEGMENTS_CAP);
 
   useEffect(() => () => water.material.dispose(), [water]);
 
@@ -90,7 +100,7 @@ export function WaterPlane(): ReactElement | null {
       frustumCulled={false}
       material={water.material}
     >
-      <planeGeometry args={[WATER_SIZE, WATER_SIZE, SEGMENTS, SEGMENTS]} />
+      <planeGeometry args={[waterSize, waterSize, segments, segments]} />
     </mesh>
   );
 }

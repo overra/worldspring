@@ -15,6 +15,7 @@ import {
   parseWorldFingerprint,
   resolveServerConfig,
   summarizeRules,
+  tierParamsOf,
   wipeEpochOf,
   worldFingerprintOf,
   worldParamsOf,
@@ -641,17 +642,28 @@ export class GameRoom extends DurableObject<Env> {
 
   private ensureGame(): GameState {
     if (this.game) return this.game;
-    // worldParamsOf returns { seed } only (createWorld unchanged; size/water land
-    // in doc 07). M2 honors a custom seed — the fail-closed fingerprint gate in
-    // initSchema, not coercion, guards persisted state against a world change.
-    const world = createWorld(worldParamsOf(this.config.world).seed);
-    // Boot determinism check: the generated world's seed MUST equal the config's.
-    // Log + coerce, NEVER throw — a throwing constructor/boot crash-loops the DO.
+    // doc 07 M2: createWorld takes the full WorldGenParams (seed + tier-derived
+    // size/counts). The fail-closed fingerprint gate in initSchema, not
+    // coercion, guards persisted state against a world (seed OR tier) change.
+    const world = createWorld(worldParamsOf(this.config.world));
+    // Boot determinism checks: the generated world's seed/size MUST match the
+    // config they were derived from. Log + coerce, NEVER throw — a throwing
+    // constructor/boot crash-loops the DO.
     if (world.seed !== this.config.world.seed) {
       console.error(
         `[config] world seed ${world.seed} != config seed ${this.config.world.seed}; coercing config to match the generated world`,
       );
       this.config.world.seed = world.seed;
+    }
+    if (world.size !== tierParamsOf(this.config.world.sizeTier).size) {
+      console.error(
+        `[config] world size ${world.size} != tier "${this.config.world.sizeTier}" size ` +
+          `${tierParamsOf(this.config.world.sizeTier).size}; coercing config to match the generated world`,
+      );
+      const match = (["standard", "large", "huge"] as const).find(
+        (t) => tierParamsOf(t).size === world.size,
+      );
+      if (match) this.config.world.sizeTier = match;
     }
     const game = createGameState(world, this.config);
     // loadWorld hydrates loot/corpses/fires/respawn timers and restores

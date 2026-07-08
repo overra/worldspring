@@ -40,7 +40,8 @@ const bundled = await build({
   stdin: {
     contents:
       'export { createWorld } from "./world.ts";\n' +
-      'export { WORLD_SIZE, WATER_LEVEL } from "./constants.ts";\n' +
+      'export { tierParamsOf } from "./config.ts";\n' +
+      'export { WATER_LEVEL } from "./constants.ts";\n' +
       'export { rasterizeBase, mapPOIs } from "./map/raster.ts";\n' +
       'export { makeProjection } from "./map/projection.ts";\n',
     resolveDir: dir,
@@ -53,13 +54,13 @@ const bundled = await build({
   write: false,
   logLevel: "silent",
 });
-const { createWorld, WORLD_SIZE, WATER_LEVEL, rasterizeBase, mapPOIs, makeProjection } =
+const { createWorld, tierParamsOf, WATER_LEVEL, rasterizeBase, mapPOIs, makeProjection } =
   await import("data:text/javascript;base64," + Buffer.from(bundled.outputFiles[0].text).toString("base64"));
 
 // ---- render (invoked at the bottom, after every const/helper is initialized) ----
 function render() {
-  const size = WORLD_SIZE; // doc 07 will make this world.size; the core already takes it as a param
-  const world = createWorld(seed);
+  const world = createWorld({ seed, ...tierParamsOf("standard") });
+  const size = world.size; // doc 07 M2: the world carries its own extent
   const t0 = performance.now();
   const { pixels } = rasterizeBase(world.heightAt, size, px, WATER_LEVEL);
   const proj = makeProjection(size, px);
