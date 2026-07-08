@@ -1,8 +1,20 @@
 ---
-// Prerendered marketing landing (Astro 6 default). An explicit file route at /
-// wins over Starlight's generated root, so the docs live at their own slugs.
-// The real landing grows later; this scaffold proves the prerender path.
+// Marketing landing. Was prerendered; M4 (doc 01) flips it to SSR so the nav
+// can show "Sign in"/"Account" ONLY when the OAuth secrets are set — before
+// issue #66 configures them, the rendered HTML is byte-identical in intent
+// (no auth links), so deploying M4 is a visual no-op. An explicit file route
+// at / still wins over Starlight's generated root.
+import { authEnv, oauthConfigured, readSession, SESSION_COOKIE } from "../lib/auth";
+
+export const prerender = false;
+
 const title = "Worldspring";
+const e = authEnv();
+const configured = oauthConfigured(e);
+const session =
+  configured && e.SESSION_HMAC_KEY
+    ? await readSession(e.SESSION_HMAC_KEY, Astro.cookies.get(SESSION_COOKIE)?.value)
+    : null;
 ---
 
 <!doctype html>
@@ -21,6 +33,8 @@ const title = "Worldspring";
             apps/game/wrangler.jsonc for why the domain lives account-side). */}
         <a href="https://play.worldspring.games">Play now</a> ·
         <a href="/servers">Browse servers</a> · <a href="/getting-started">Docs</a>
+        {configured && session && <> · <a href="/account">Account</a></>}
+        {configured && !session && <> · <a href="/login">Sign in</a></>}
       </p>
     </main>
   </body>
