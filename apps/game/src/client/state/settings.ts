@@ -42,8 +42,13 @@ export const QUALITY_CONFIGS: Record<QualityPreset, QualityConfig> = {
 // coarse: strong = Apple silicon / discrete desktop parts; weak = mobile and
 // software rasterizers (mostly already caught by the coarse-pointer check).
 // Anything unrecognized — including privacy-masked strings — lands on medium.
-const STRONG_GPU = /apple (m\d|gpu)|geforce|rtx\b|radeon rx|radeon pro|arc a\d/i;
-const WEAK_GPU = /mali|adreno|powervr|videocore|swiftshader|llvmpipe|softpipe|software/i;
+// Real UNMASKED_RENDERER strings often carry "(TM)" tokens ("AMD Radeon(TM)
+// RX 6800 XT", "Intel Arc(TM) A770") — tolerate them or high-end AMD/Intel
+// desktops silently detect medium. "Basic Render Driver" is D3D WARP, the
+// CPU rasterizer behind RDP/VM sessions — that's a low device.
+const STRONG_GPU = /apple (m\d|gpu)|geforce|rtx\b|radeon\s*(\(tm\)\s*)?(rx|pro)|arc\s*(\(tm\)\s*)?a\d/i;
+const WEAK_GPU =
+  /mali|adreno|powervr|videocore|swiftshader|llvmpipe|softpipe|software|basic render driver/i;
 
 /**
  * Read the GPU renderer string from a throwaway WebGL context. Returns "" when
@@ -138,6 +143,10 @@ const urlTier: QualityPreset | null = (() => {
 // Cleared by setQuality: a manual pick mid-session is a real choice.
 let persistShadowQuality: QualityPreset | null = null;
 
+// A manual pick mid-session supersedes the `?tier=` override for the rest of
+// the session — tracked so qualitySource() reports "manual", not "url".
+let urlTierSuperseded = false;
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
@@ -154,6 +163,7 @@ export const useSettingsStore = create<SettingsState>()(
       setSensitivity: (sensitivity) => set({ sensitivity }),
       setQuality: (quality) => {
         persistShadowQuality = null;
+        urlTierSuperseded = true;
         set({ quality, userOverrodeQuality: true });
       },
       setShowDebug: (showDebug) => set({ showDebug }),
@@ -180,20 +190,28 @@ export const useSettingsStore = create<SettingsState>()(
  */
 function applyTierDefaults(): void {
   const s = useSettingsStore.getState();
+  // Out-of-table persisted values (hand-edited blobs, or a preset from a
+  // newer build read after a prod rollback) must never reach the
+  // QUALITY_CONFIGS[quality] lookups — treat them as unset and re-resolve,
+  // so a bad blob self-heals instead of white-screening the client.
+  const storedTier =
+    s.tier !== null && Object.hasOwn(QUALITY_CONFIGS, s.tier) ? s.tier : null;
+  const storedQuality = Object.hasOwn(QUALITY_CONFIGS, s.quality) ? s.quality : null;
+  const userOverrodeQuality = s.userOverrodeQuality && storedQuality !== null;
   if (urlTier !== null) {
-    persistShadowQuality = s.quality;
-    useSettingsStore.setState({ quality: urlTier });
+    persistShadowQuality = storedQuality ?? storedTier ?? detectTier();
+    useSettingsStore.setState({ quality: urlTier, tier: storedTier, userOverrodeQuality });
     return;
   }
-  if (s.userOverrodeQuality) return;
-  const tier = s.tier ?? detectTier();
-  useSettingsStore.setState({ tier, quality: tier });
+  if (userOverrodeQuality) return;
+  const tier = storedTier ?? detectTier();
+  useSettingsStore.setState({ tier, quality: tier, userOverrodeQuality });
 }
 applyTierDefaults();
 
 /** How the active quality was chosen — shown in the debug overlay. */
 export function qualitySource(): "url" | "manual" | "auto" {
-  if (urlTier !== null) return "url";
+  if (urlTier !== null && !urlTierSuperseded) return "url";
   return useSettingsStore.getState().userOverrodeQuality ? "manual" : "auto";
 }
 
