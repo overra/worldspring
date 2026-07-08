@@ -2,12 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   challengeHashOfToken,
   DIRECTORY_CHALLENGE_PREFIX,
+  FAKE_COUNT_PROBE_STREAK,
+  isFakeCountObservation,
   mintServerToken,
   normalizeServerUrl,
   parseHeartbeatBody,
+  parseReportBody,
   parseServerInfoForDirectory,
   parseServerToken,
   probeServerInfo,
+  REPORT_DETAIL_MAX,
+  REPORT_FLAG_THRESHOLD,
+  REPORT_LIMIT_PER_DAY,
+  REPORT_REASONS,
   score,
   sha256Hex,
   ulid,
@@ -258,5 +265,54 @@ describe("sanitizeListingText", () => {
       SERVER_NAME_MAX,
     );
     expect(sanitizeListingText("​​ ", 48)).toBe("");
+  });
+});
+
+describe("parseReportBody", () => {
+  it("accepts every migration-0002 reason and sanitizes detail", () => {
+    for (const reason of REPORT_REASONS) {
+      expect(parseReportBody({ reason })).toEqual({ reason, detail: "" });
+    }
+    expect(parseReportBody({ reason: "broken", detail: "  fake​ counts  " })).toEqual({
+      reason: "broken",
+      detail: "fake counts",
+    });
+  });
+  it("caps detail at 500 code points", () => {
+    const parsed = parseReportBody({ reason: "other", detail: "x".repeat(2000) });
+    expect(parsed).not.toBeNull();
+    expect([...(parsed as { detail: string }).detail]).toHaveLength(REPORT_DETAIL_MAX);
+  });
+  it("rejects non-objects, unknown reasons, and non-string detail", () => {
+    expect(parseReportBody(null)).toBeNull();
+    expect(parseReportBody("broken")).toBeNull();
+    expect(parseReportBody({})).toBeNull();
+    expect(parseReportBody({ reason: "rude" })).toBeNull();
+    expect(parseReportBody({ reason: "BROKEN" })).toBeNull();
+    expect(parseReportBody({ reason: "broken", detail: 7 })).toBeNull();
+  });
+  it("tolerates unknown extra fields", () => {
+    expect(parseReportBody({ reason: "broken", extra: true })).toEqual({
+      reason: "broken",
+      detail: "",
+    });
+  });
+});
+
+describe("report/moderation thresholds", () => {
+  it("pins the doc 02 §7 numbers", () => {
+    expect(REPORT_LIMIT_PER_DAY).toBe(5);
+    expect(REPORT_FLAG_THRESHOLD).toBe(3);
+    expect(FAKE_COUNT_PROBE_STREAK).toBe(3);
+  });
+});
+
+describe("isFakeCountObservation", () => {
+  it("flags only observations under HALF the claim", () => {
+    expect(isFakeCountObservation(9, 20)).toBe(true); // 9*2=18 < 20
+    expect(isFakeCountObservation(10, 20)).toBe(false); // exactly half is honest
+    expect(isFakeCountObservation(0, 1)).toBe(true);
+    expect(isFakeCountObservation(0, 0)).toBe(false); // zero-claim never counts
+    expect(isFakeCountObservation(null, 20)).toBe(false); // failed probe reports nothing
   });
 });

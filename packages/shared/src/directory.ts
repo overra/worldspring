@@ -6,6 +6,11 @@
 // Sources: docs/plans/02-server-directory.md §2/§3/§7/§8, doc 03 §6/§9.
 
 import type { HeartbeatBody, HeartbeatEvent, ServerInfo } from "./serverInfo";
+// Explicit .ts extension: apps/game's offline harnesses load this module via
+// `node --experimental-strip-types` (no bundler), where extensionless
+// relative specifiers don't resolve. Type-only imports (above) are erased
+// before resolution and may stay extensionless.
+import { sanitizeListingText } from "./text.ts";
 
 // --- Token format (doc 02 §2, binding) -------------------------------------
 // `dcd1.<serverId>.<secretHex>` — serverId is a 26-char ULID (public listing
@@ -353,3 +358,61 @@ export const HEARTBEAT_BUCKET_REFILL_MS = 15_000;
 export const HEARTBEAT_MAX_AGE_MS = 5 * 60_000;
 /** Probe history retention (doc 02 §6 housekeeping). */
 export const PROBE_HISTORY_DAYS = 20;
+
+// --- Reports + moderation (doc 02 §7, M7) ------------------------------------
+
+/** The migration-0002 CHECK enum, verbatim — adding a reason means a migration. */
+export const REPORT_REASONS = [
+  "fake-counts",
+  "offensive-content",
+  "malware-phishing",
+  "impersonation",
+  "broken",
+  "other",
+] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+
+/** Free-text cap in CODE POINTS (migration 0002 comment; doc 02 §3). */
+export const REPORT_DETAIL_MAX = 500;
+/** 5 reports/day per ip_hash (doc 02 §4/§7). The day string baked into the
+ * hash recipe makes a plain per-hash COUNT automatically a today-count. */
+export const REPORT_LIMIT_PER_DAY = 5;
+/** ≥3 UNIQUE reporters (distinct unresolved ip_hash) sets flagged=1 for human
+ * review — reports NEVER auto-hide (doc 02 §7: brigading a rival server off
+ * the list must not work). */
+export const REPORT_FLAG_THRESHOLD = 3;
+
+export interface ReportBody {
+  reason: ReportReason;
+  /** Sanitized (STRIP_TEXT_RE recipe), ≤ REPORT_DETAIL_MAX code points. */
+  detail: string;
+}
+
+function isReportReason(v: unknown): v is ReportReason {
+  return typeof v === "string" && (REPORT_REASONS as readonly string[]).includes(v);
+}
+
+/** Validate a report body: `{ reason, detail? }`. Unknown fields tolerated,
+ * read fields strict; detail is re-sanitized here — sender-side sanitization
+ * is never trusted (doc 03 §9). Returns null on anything unusable. */
+export function parseReportBody(v: unknown): ReportBody | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (!isReportReason(o.reason)) return null;
+  if (o.detail !== undefined && typeof o.detail !== "string") return null;
+  return {
+    reason: o.reason,
+    detail: sanitizeListingText(o.detail ?? "", REPORT_DETAIL_MAX),
+  };
+}
+
+/** Fake-count flag heuristic (doc 02 §7): a probe observation counts against
+ * a heartbeat claim when it reports LESS THAN HALF the claimed players.
+ * Exactly half is honest enough (churn between beat and probe). */
+export const FAKE_COUNT_PROBE_STREAK = 3;
+export function isFakeCountObservation(
+  probePlayers: number | null,
+  claimedPlayers: number,
+): boolean {
+  return probePlayers !== null && claimedPlayers > 0 && probePlayers * 2 < claimedPlayers;
+}

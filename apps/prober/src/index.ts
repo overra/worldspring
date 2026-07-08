@@ -22,6 +22,8 @@
 //   - unreachable: backed off to every 60 min; deleted after 30 days.
 
 import {
+  FAKE_COUNT_PROBE_STREAK,
+  isFakeCountObservation,
   probeServerInfo,
   PROBE_HISTORY_DAYS,
   type ProbeResult,
@@ -57,6 +59,9 @@ interface DueRow {
   last_heartbeat_at: number | null;
   last_event: string | null;
   unreachable_since: number | null;
+  /** Stored claim — a heartbeat's when last_heartbeat_at > last_probe_at. */
+  players: number;
+  flagged: number;
 }
 
 function isDue(row: DueRow, now: number): boolean {
@@ -86,7 +91,8 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
   const due = await env.DB.prepare(
     `SELECT id, url, status, challenge_hash, challenge_hash_next,
             consecutive_failures, created_at, last_probe_at,
-            last_heartbeat_at, last_event, unreachable_since
+            last_heartbeat_at, last_event, unreachable_since,
+            players, flagged
      FROM servers
      WHERE status = 'pending'
         OR (status = 'unreachable' AND (last_probe_at <= ? OR unreachable_since <= ?))
@@ -192,6 +198,36 @@ async function runProbeSweep(controller: ScheduledController, env: Env): Promise
           row.id,
         ),
       );
+      // Fake-count flag heuristic (doc 02 §7, M7): three consecutive probes
+      // each reporting < half the latest heartbeat claim ⇒ flagged=1 for
+      // human review (never auto-hide/auto-ban). The stored `players` is a
+      // genuine heartbeat CLAIM only when the last write was a beat
+      // (last_heartbeat_at > last_probe_at) — after our own success UPDATE
+      // above overwrites it, the next beat must re-claim before the next
+      // probe can count again, which is exactly the doc's "latest
+      // heartbeat's claim" cadence. The streak is confirmed in SQL over the
+      // last 3 non-verify probe rows (this run's INSERT precedes this
+      // statement in the same ordered batch): all 3 must be ok=1 with
+      // players under half the claim — a failed probe reports nothing and
+      // breaks the streak.
+      if (
+        row.flagged === 0 &&
+        row.last_heartbeat_at !== null &&
+        row.last_heartbeat_at > row.last_probe_at &&
+        isFakeCountObservation(info.players, row.players)
+      ) {
+        stmts.push(
+          env.DB.prepare(
+            `UPDATE servers SET flagged = 1, updated_at = ?2
+             WHERE id = ?1 AND flagged = 0
+               AND (SELECT COUNT(*) FROM (
+                      SELECT ok, players FROM probes
+                      WHERE server_id = ?1 AND source != 'verify'
+                      ORDER BY at DESC LIMIT ?3)
+                    WHERE ok = 1 AND players IS NOT NULL AND players * 2 < ?4) = ?3`,
+          ).bind(row.id, now, FAKE_COUNT_PROBE_STREAK, row.players),
+        );
+      }
     } else {
       // Failure (timeout / non-200 / >16 KB / bad shape / challenge-mismatch):
       // count it; live→unreachable at 3 consecutive (~15 min). Pending rows

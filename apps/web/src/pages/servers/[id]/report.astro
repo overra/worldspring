@@ -1,0 +1,117 @@
+---
+// /servers/:id/report — the report form (doc 02 §7; M7 open decision #4:
+// the doc anchors the Report link to the not-yet-built /servers/:id detail
+// page, so until M5 completes this small page is its home, linked from the
+// /join/:id interstitial). Same-origin form POST handled right here (Astro's
+// checkOrigin covers CSRF); the intake logic is the exact fileReport() the
+// JSON API route uses.
+export const prerender = false;
+import { parseReportBody, REPORT_REASONS } from "@worldspring/shared/directory";
+import { directoryEnv, hashIp } from "../../../lib/db";
+import { fileReport, type ReportOutcome } from "../../../lib/reports";
+
+const { DB, REPORT_SALT } = directoryEnv();
+const id = Astro.params.id ?? "";
+
+// Mirror /join/:id (open decision #5): only live listings render the form —
+// no existence oracle for hidden/banned rows on the HTML surface. (The JSON
+// API accepts reports for any existing row.)
+let server: { id: string; name: string; url: string } | null = null;
+try {
+  server = await DB.prepare("SELECT id, name, url FROM servers WHERE id = ? AND status = 'live'")
+    .bind(id)
+    .first<{ id: string; name: string; url: string }>();
+} catch {
+  // local dev without a migrated D1 — 404 below
+}
+if (!server) {
+  return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
+}
+
+const REASON_LABELS: Record<string, string> = {
+  "fake-counts": "Fake player counts",
+  "offensive-content": "Offensive name or MOTD",
+  "malware-phishing": "Malware or phishing",
+  impersonation: "Impersonates another server",
+  broken: "Broken / doesn't work",
+  other: "Something else",
+};
+
+let outcome: ReportOutcome | "bad-body" | null = null;
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const detailRaw = form.get("detail");
+  const body = parseReportBody({
+    reason: form.get("reason"),
+    detail: typeof detailRaw === "string" ? detailRaw : undefined,
+  });
+  if (!body) {
+    outcome = "bad-body";
+  } else {
+    const ipHash = await hashIp(Astro.request, REPORT_SALT);
+    outcome = await fileReport(DB, server.id, body, ipHash, Date.now());
+  }
+}
+
+const host = new URL(server.url).hostname;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Report {server.name} — Worldspring</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
+      label { display: block; margin: 0.5rem 0; }
+      textarea { width: 100%; min-height: 6rem; font: inherit; padding: 0.5rem; }
+      button { padding: 0.5rem 1rem; font-size: 1rem; margin-top: 0.75rem; }
+      .ok { color: #2a7; }
+      .error { color: #c33; }
+      .muted { color: #888; font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Report {server.name}</h1>
+      <p class="muted">{host}</p>
+
+      {
+        outcome === "accepted" ? (
+          <p class="ok">
+            Thanks — your report is in. Reports are reviewed by a human;
+            they never remove a server automatically.
+          </p>
+        ) : (
+          <>
+            {outcome === "rate-limited" && (
+              <p class="error">You've hit the daily report limit — try again tomorrow.</p>
+            )}
+            {outcome === "bad-body" && <p class="error">Pick a reason and try again.</p>}
+            <form method="post">
+              <fieldset>
+                <legend>What's wrong?</legend>
+                {REPORT_REASONS.map((r) => (
+                  <label>
+                    <input type="radio" name="reason" value={r} required /> {REASON_LABELS[r]}
+                  </label>
+                ))}
+              </fieldset>
+              <label for="detail">Details (optional, 500 characters max)</label>
+              <textarea id="detail" name="detail" maxlength="500"></textarea>
+              <button type="submit">Send report</button>
+            </form>
+            <p class="muted">
+              Reports flag a server for human review — they never take one down
+              automatically, and duplicate reports from the same place collapse
+              into one. See the <a href="/policy">listing policy</a>.
+            </p>
+          </>
+        )
+      }
+      <p><a href="/servers">&larr; Back to servers</a></p>
+    </main>
+  </body>
+</html>

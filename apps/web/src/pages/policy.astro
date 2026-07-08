@@ -1,0 +1,57 @@
+---
+// /policy — the listing policy (doc 02 §7, M7). Prerendered (Astro 6 static
+// default — no prerender export): the vouch/no-vouch paragraph that also
+// sits under every Join button, plus the plain enforcement statement.
+const title = "Listing policy";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — Worldspring</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
+      .vouch { border-left: 3px solid #8886; padding: 0.25rem 0 0.25rem 0.9rem; margin: 1.25rem 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{title}</h1>
+
+      <h2>What the directory vouches for — and what it does not</h2>
+      {/* Doc 02 §7, verbatim — the same words render on every /join/:id page. */}
+      <div class="vouch">
+        <p>
+          Listed servers are community-run copies of Worldspring at their own
+          web addresses. We verify that the owner controls the address and that
+          it answers as a Worldspring server.
+          <strong>We do not review or control the code it runs</strong> — it may
+          be modified, and its version of the game (including its login screen
+          and everything you type there) is served by that operator, not by us.
+        </p>
+      </div>
+      <p>
+        Your identity is per-server: you'll have a separate character on each
+        server you join, and the directory never passes tokens or saved data to
+        a community server.
+      </p>
+
+      <h2>Enforcement</h2>
+      <p>
+        Fabricated player counts, impersonation of other servers, or malicious
+        listing content get a server delisted and its host banned from
+        re-registering. Reports and admin review are the enforcement loop:
+        anyone can report a listing, reports never remove a server
+        automatically, and repeated independent reports flag it for a human.
+      </p>
+      <p>
+        Server owners can delist their own server at any time with their
+        registration token.
+      </p>
+
+      <p><a href="/servers">&larr; Back to servers</a></p>
+    </main>
+  </body>
+</html>
