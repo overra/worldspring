@@ -6,6 +6,7 @@
   "exports": {
     "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
+    "./directory": "./src/directory.ts",
     "./fog": "./src/fog.ts",
     "./items": "./src/items.ts",
     "./map/projection": "./src/map/projection.ts",
@@ -17,6 +18,7 @@
     "./rng": "./src/rng.ts",
     "./scenario": "./src/scenario.ts",
     "./serverInfo": "./src/serverInfo.ts",
+    "./text": "./src/text.ts",
     "./version": "./src/version.ts",
     "./world": "./src/world.ts"
   },

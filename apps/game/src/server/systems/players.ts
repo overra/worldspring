@@ -48,17 +48,11 @@ const INPUT_QUEUE_CAP = 60;
 /** Sanity clamp for client-supplied pitch (client clamps to ±1.45 itself). */
 const PITCH_LIMIT = 1.6;
 
-/**
- * Characters stripped from all player-supplied text (names, chat): C0
- * controls, DEL + C1 controls, zero-width chars (ZWSP/ZWNJ/ZWJ U+200B-D,
- * word joiner + invisible operators U+2060-2064), bidi controls (LRM/RLM,
- * embeddings/overrides U+202A-E, isolates U+2066-2069), and BOM U+FEFF.
- * Zero-width chars defeat empty-string guards (\s does not match U+200B);
- * bidi overrides visually reverse rendered text in recipients' clients.
- */
-export const STRIP_TEXT_RE =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+// STRIP_TEXT_RE was hoisted to @worldspring/shared/text (doc 02 §7 M1: the
+// directory needs the one true regex without dragging game-state types).
+// Re-exported here so existing game-side call sites are untouched.
+import { STRIP_TEXT_RE } from "@worldspring/shared/text";
+export { STRIP_TEXT_RE };
 
 /** Trim, strip control/invisible chars, cap length, default, de-duplicate. */
 export function sanitizeName(raw: string, state: GameState): string {
