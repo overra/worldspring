@@ -29,6 +29,7 @@ import {
 } from "@worldspring/shared/math";
 import { roundsInMag, tryConsumeRound } from "./magazine";
 import { sendInventory, startReload } from "./players";
+import { tryShoveProp } from "./props";
 import { damageStructure } from "./structures";
 import {
   queueEvent,
@@ -263,11 +264,15 @@ function meleeAttack(
 
   if (!hitPos) {
     // Whiffed every living target: a directly-aimed structure piece takes the
-    // swing (doc 06 M7 — raiding), else an axe swing may still land on a tree
-    // trunk (doc 13 M2 — chopping reuses the melee verb; living targets in
-    // front of either always win the swing). Both are static, so no rewind.
+    // swing (doc 06 M7 — raiding), else an axe swing may fell a tree trunk (doc
+    // 13 M2), else a swing may shove/break a physics barrel (doc 13 M3). Living
+    // targets in front of any of them always win the swing; each fallback is
+    // static or server-auth, so no rewind. Order is least-disruptive: the
+    // barrel shove is the last additive fallback, so it never steals an
+    // axe-chop from a tree in the same cone.
     if (tryHitStructure(state, player, def)) return;
-    tryChopTree(state, player);
+    if (tryChopTree(state, player)) return;
+    tryShoveProp(state, player);
     return;
   }
   // The impact flash lands at the REWOUND point (where the shooter saw the

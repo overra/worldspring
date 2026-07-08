@@ -19,6 +19,10 @@
 import RAPIER from "@dimforge/rapier3d-compat";
 import { readFile } from "node:fs/promises";
 import { PhysicsSystem } from "../src/server/physics/PhysicsSystem.ts";
+// doc 13 M3 — the REAL server-side barrel-break loot roller + table, so the
+// break→loot section below exercises production code, not a re-implementation.
+import { rollFromTable } from "../src/server/systems/loot.ts";
+import { BARREL_LOOT_TABLE } from "@worldspring/shared/items";
 
 let failures = 0;
 const check = (ok, msg) => {
@@ -137,6 +141,94 @@ const dt = 1 / 15;
   sysD.spawnBody(9, "crate", 0, 2, 0);
   for (let i = 0; i < 450; i++) sysD.step(dt, i * dt);
   check(sysD.expireSettled("trunk", 30, 450 * dt + 100).length === 0, "expireSettled('trunk') ignores settled crates");
+}
+
+// --- 1.6 physics props: barrels (doc 13 M3) ----------------------------------
+// New assertions only — the hashed replay scenario (section 2) is UNTOUCHED, so
+// the committed baseline stands (no re-baseline). Barrels are a fixed-size,
+// dims-less "barrel" BodyKind spawned near loot zones and shoved by melee.
+{
+  const poseOf = (sys, id) => [...sys.poses()].find((b) => b.id === id);
+
+  // a) Fixed-size dynamic body: dropped over flat ground it settles upright at
+  //    ~BARREL_HALF_Y (0.5) above the ground and carries NO dims on the wire
+  //    (the WireBody shape stays unchanged — dims is trunk-only).
+  const sysA = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysA.attachEngine(RAPIER, dt);
+  sysA.spawnBody(1, "barrel", -100, 6, -100); // over flat 0, clear of the plateaus
+  for (let i = 0; i < 450; i++) sysA.step(dt, i * dt);
+  const settled = poseOf(sysA, 1);
+  check(settled !== undefined && Math.abs(settled.y - 0.5) < 0.35, `barrel settles at ~0.5 (y=${settled?.y.toFixed(2)})`);
+  check(settled !== undefined && settled.dims === undefined, "barrel pose carries NO dims (fixed-size wire shape unchanged)");
+
+  // b) A scripted impulse moves a barrel to a REPRODUCIBLE resting pose: settle
+  //    it, shove it along +x (mirroring systems/props.ts), it re-settles asleep
+  //    having moved +x. Tolerance/direction — NOT hashed (determinism itself is
+  //    pinned by section 2's replay hash), so the committed baseline stands.
+  const shoveMass = 8 * 0.3 * 0.5 * 0.3; // BARREL cuboid mass at density 1
+  const runShove = () => {
+    const sys = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+    sys.attachEngine(RAPIER, dt);
+    sys.spawnBody(1, "barrel", -100, 0.7, -100);
+    for (let i = 0; i < 200; i++) sys.step(dt, i * dt); // settle first
+    const x0 = poseOf(sys, 1).x;
+    sys.applyImpulse(1, shoveMass * 4.5, shoveMass * 1.2, 0); // += props.ts shove
+    let s = 200;
+    for (; s < 1200; s++) {
+      sys.step(dt, s * dt);
+      if (poseOf(sys, 1)?.asleep) break;
+    }
+    for (let k = 0; k < 60; k++) sys.step(dt, (s + k) * dt); // hold past sleep
+    return { pose: poseOf(sys, 1), x0, sleepStep: s };
+  };
+  const r1 = runShove();
+  check(r1.pose?.asleep === true, `shoved barrel re-settled asleep (~${r1.sleepStep - 200} steps after the shove)`);
+  check(r1.pose !== undefined && r1.pose.x - r1.x0 > 0.5, `shove moved the barrel along +x (Δx=${(r1.pose.x - r1.x0).toFixed(2)} > 0.5)`);
+  const r2 = runShove();
+  check(
+    r2.pose !== undefined && Math.abs(r2.pose.x - r1.pose.x) < 1e-6 && Math.abs(r2.pose.z - r1.pose.z) < 1e-6,
+    `shove is reproducible (resting pose matches to <1e-6: Δx=${Math.abs(r2.pose.x - r1.pose.x).toExponential(1)})`,
+  );
+
+  // c) Body cap with props+trunks MIXED: a small cap, a mix of barrels+trunks
+  //    over it, step to settle — the cap holds (oldest-settled-first eviction).
+  const sysC = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 6 });
+  sysC.attachEngine(RAPIER, dt);
+  let id = 1;
+  for (let i = 0; i < 6; i++) sysC.spawnBody(id++, "barrel", -80 + i * 2, 3, -80);
+  for (let i = 0; i < 6; i++) sysC.spawnBody(id++, "trunk", -80 + i * 2, 4.3, -60, [0.35, 4, 0.35]);
+  for (let s = 0; s < 400; s++) sysC.step(dt, s * dt);
+  check(sysC.count <= 6, `body cap holds with props+trunks mixed (count=${sysC.count} ≤ 6)`);
+
+  // d) Restore round-trip preserves a barrel (kind, dims-less, pose) alongside a
+  //    trunk — the persisted `bodies` snapshot rebuilds props exactly.
+  const sysD = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysD.attachEngine(RAPIER, dt);
+  sysD.spawnBody(1, "barrel", -100, 0.7, -100);
+  sysD.spawnBody(2, "trunk", -60, 4.3, -60, [0.35, 4, 0.35]);
+  for (let i = 0; i < 300; i++) sysD.step(dt, i * dt);
+  const persisted = sysD.serialize();
+  const barrelRow = persisted.find((b) => b.id === 1);
+  check(barrelRow?.kind === "barrel" && barrelRow.dims === undefined, "barrel serializes as kind 'barrel' with no dims");
+  const sysD2 = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysD2.attachEngine(RAPIER, dt);
+  sysD2.restore(persisted);
+  const restored = new Map([...sysD2.poses()].map((b) => [b.id, b]));
+  check(restored.get(1)?.kind === "barrel", "restore rebuilds the barrel body (kind preserved)");
+  check(restored.get(2)?.kind === "trunk", "restore rebuilds the mixed trunk body too");
+  check(Math.abs((restored.get(1)?.y ?? NaN) - (barrelRow?.y ?? NaN)) < 0.01, "restored barrel resumes its persisted pose");
+
+  // e) break→loot rolls SERVER-SIDE: the real rollFromTable over the real
+  //    BARREL_LOOT_TABLE yields valid stacks (renderable types, counts in
+  //    range) — exactly what breakBarrel spills on the final swing.
+  let rollOk = true;
+  for (let i = 0; i < 300 && rollOk; i++) {
+    const stack = rollFromTable(BARREL_LOOT_TABLE);
+    const entry = BARREL_LOOT_TABLE.find((e) => e.type === stack.type);
+    rollOk = !!entry && stack.count >= entry.min && stack.count <= entry.max;
+    if (!rollOk) check(false, `barrel loot roll out of range: ${JSON.stringify(stack)}`);
+  }
+  if (rollOk) check(true, "barrel break loot rolls valid server-side stacks (300 rolls, all in range)");
 }
 
 // --- 2. replay determinism ---------------------------------------------------

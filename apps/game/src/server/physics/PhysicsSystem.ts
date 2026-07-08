@@ -85,6 +85,13 @@ export interface PersistedBody {
 const HEIGHTFIELD_CELL_M = 4;
 /** Crates half-extent (matches the client's crate mesh + loot-crate scale). */
 const CRATE_HALF = 0.4;
+/** Barrel collider half-extents (doc 13 M3). LOCAL mirror of shared
+ * BARREL_HALF_XZ / BARREL_HALF_Y (constants.ts) — this module stays value-
+ * import-free of non-leaf shared modules for the strip-types replay harness
+ * (the CRATE_HALF precedent), so the values are duplicated, not imported. They
+ * MUST equal the shared pair (the client mesh + the server spawn lift read it). */
+const BARREL_HALF_XZ = 0.3;
+const BARREL_HALF_Y = 0.5;
 /** Seconds a body must sleep before it counts as "settled" for eviction. */
 const SETTLED_AFTER_S = 2;
 /** Engine substeps per game tick. Rapier's solver is tuned for ~1/60s steps;
@@ -362,6 +369,24 @@ export class PhysicsSystem {
     this.enforceCap();
   }
 
+  /**
+   * Live body positions of `kind` — for server-side melee target selection
+   * (doc 13 M3: the barrel-shove cone test lives in systems/props.ts, which
+   * has no engine handle). Reads current translations; empty before the engine
+   * attaches or when disabled (a buffered-but-unmaterialized barrel can't be
+   * shoved — it materializes on attach, effectively at boot).
+   */
+  bodyPositions(kind: BodyKind): Array<{ id: number; x: number; y: number; z: number }> {
+    const out: Array<{ id: number; x: number; y: number; z: number }> = [];
+    if (!this.engine) return out;
+    for (const rec of this.bodies.values()) {
+      if (rec.kind !== kind) continue;
+      const t = rec.body.translation();
+      out.push({ id: rec.id, x: t.x, y: t.y, z: t.z });
+    }
+    return out;
+  }
+
   /** Poses for the snapshot path (unquantized — GameRoom round2's). */
   *poses(): IterableIterator<WireBody> {
     if (this.engine) {
@@ -419,12 +444,27 @@ export class PhysicsSystem {
     // Restore asleep bodies asleep — no wake-storm on boot (doc 13 §4).
     if (p.asleep) desc.setCanSleep(true).sleeping = true;
     const body = this.world.createRigidBody(desc);
-    // Trunks: per-instance half-extents, high friction / low restitution so a
-    // felled tree slides and stops instead of bouncing (doc 13 M2). Crates
-    // (and any dims-less row) keep the M1 cube exactly.
-    const [hx, hy, hz] = p.dims ?? [CRATE_HALF, CRATE_HALF, CRATE_HALF];
+    // Half-extents per kind: trunks carry per-instance dims (doc 13 M2);
+    // barrels are a fixed upright drum (doc 13 M3, dims-less); crates the M1
+    // cube. A dims-carrying row always wins, so crates/pre-M2 rows still fall
+    // to the CRATE_HALF cube byte-identically (the replay hash covers exactly
+    // this — the barrel branch never runs in the crate/trunk-only scenario).
+    let hx: number, hy: number, hz: number;
+    if (p.dims) {
+      [hx, hy, hz] = p.dims;
+    } else if (p.kind === "barrel") {
+      hx = BARREL_HALF_XZ;
+      hy = BARREL_HALF_Y;
+      hz = BARREL_HALF_XZ;
+    } else {
+      hx = hy = hz = CRATE_HALF;
+    }
     const collider = engine.ColliderDesc.cuboid(hx, hy, hz);
+    // Surface response per kind: trunks slide and stop (felled tree, doc 13
+    // M2); barrels tumble a little then settle (the shove feel, doc 13 M3);
+    // crates keep the M1 default exactly.
     if (p.kind === "trunk") collider.setRestitution(0.05).setFriction(0.9);
+    else if (p.kind === "barrel") collider.setRestitution(0.1).setFriction(0.6);
     else collider.setRestitution(0.3).setFriction(0.8);
     this.world.createCollider(collider, body);
     const rec: BodyRec = {

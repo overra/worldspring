@@ -16,6 +16,7 @@
     "./map/raster": "./src/map/raster.ts",
     "./math": "./src/math.ts",
     "./movement": "./src/movement.ts",
+    "./props": "./src/props.ts",
     "./protocol": "./src/protocol.ts",
     "./rng": "./src/rng.ts",
     "./scenario": "./src/scenario.ts",

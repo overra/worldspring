@@ -512,6 +512,22 @@ export const LOOT_TABLES: Record<LootTier, LootTableEntry[]> = {
 export const LOOT_TABLE = LOOT_TABLES.coastal;
 
 /**
+ * doc 13 M3 — what a shoved-open physics barrel spills. Ambient scavenging:
+ * salvage (scrap/cloth/rope) plus a little pistol ammo and the odd bandage —
+ * modest by design, barrels dress the map, they are not a loot-room substitute.
+ * Rolled server-side by the barrel-break path (systems/props.ts) via the shared
+ * rollFromTable weighting; every `type` is a real ItemType (asserted in tests).
+ */
+export const BARREL_LOOT_TABLE: LootTableEntry[] = [
+  { type: "scrap", weight: 26, min: 1, max: 3 },
+  { type: "cloth", weight: 22, min: 1, max: 2 },
+  { type: "ammo_9mm", weight: 12, min: 4, max: 10 },
+  { type: "rope", weight: 10, min: 1, max: 1 },
+  { type: "bandage", weight: 10, min: 1, max: 1 },
+  { type: "beans", weight: 8, min: 1, max: 1 },
+];
+
+/**
  * Fallback ItemDef for an unrecognised ItemType string (e.g. a server running
  * a newer version sends a type this client has never heard of). Guards the
  * `ITEM_DEFS[type] ?? UNKNOWN_DEF` pattern in HUD.tsx and NetSystem.tsx so old
