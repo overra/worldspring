@@ -16,13 +16,31 @@
 //     candidates) and draws a fixed number of values per iteration regardless of
 //     acceptance — the military-site precedent. Selection is deterministic
 //     post-processing (zero draws).
-//   • GEN uses transcendentals (sin for the bed profile, central-difference
-//     gradients for the march) → the records are Linux-canonical, exactly like
-//     the huge-tier fingerprint rows. But QUERY-time carve (carvedHeight /
-//     freshSurfaceAt) is pure +,−,*,/,√,min — all IEEE-754 correctly-rounded, so
-//     the same records yield bit-identical heightAt on client and server. There
-//     is ONE query carve implementation (used by heightAt AND waterAt) so the
-//     two can never disagree (the doc §Threatens mitigation).
+//   • GEN uses transcendentals (sin for the bed profile; Math.cos/sin for the
+//     meander rotation; central-difference gradients of simplex noise for the
+//     march) whose results differ by an ULP across JS engines — and the march
+//     COMPOUNDS it: a sub-ULP gradient/heading nudge shifts the path, which
+//     shifts the next gradient, over up to 400 steps → a structurally different
+//     river polyline. So the river/pond RECORDS are Linux-canonical (regenerated
+//     on CI/Linux, like the huge-tier rows).
+//   • CROSS-ENGINE HAZARD (conscious pre-ship caveat, adversarial finding): the
+//     client currently RE-RUNS this generator locally (connection.ts calls
+//     createWorld), so the transcendental march executes on the USER's engine
+//     (V8/JSC/SpiderMonkey on their OS) and can diverge from the Linux/workerd
+//     server. The QUERY-time carve below (carvedHeight / freshAt) is pure
+//     +,−,*,/,√,min — bit-identical GIVEN identical records — but identical
+//     records are NOT guaranteed cross-engine here. Net: a WATER world is NOT
+//     cross-engine deterministic even at the prod-default standard/seed-1337
+//     config (the DRY world IS — its base noise is stable on 1337; water
+//     amplifies the base-noise divergence ~6× and reaches 1337), so a non-Linux
+//     browser client can desync from the server near rivers/ponds. Mitigations:
+//     (1) water servers must ship behind the M7 PROTOCOL_VERSION bump so a
+//     stale/mismatched client is refused at rejoin, not silently mispredicting;
+//     (2) the real cure — deferred to M7 — is to send the server's water records
+//     to the client so ONLY the pure query carve runs client-side (then the
+//     "identical records" premise actually holds). There is ONE query carve
+//     implementation (heightAt AND waterAt) so those two never disagree on a
+//     given side.
 
 import {
   RIVER_FORD_DEPTH,
@@ -78,11 +96,12 @@ export interface WaterField extends WaterFeatures {
    * one grid Map.get; an empty cell (the vast majority) returns baseH untouched.
    * Pass the point's pre-carve base height (createWorld already has it). */
   carvedHeight(x: number, z: number, baseH: number): number;
-  /** Fresh water at (x,z): the surface y + depth of the feature submerging the
-   * point the MOST (max bed·profile), or null when no river/pond covers it.
-   * "Deepest submersion" (not deepest carve / highest surface) is what keeps a
-   * ford shallow and a pool deep even where channels overlap. Ocean is the
-   * caller's job (WATER_LEVEL). */
+  /** Fresh water at (x,z): the surface y + depth of the NEAREST feature actually
+   * submerging the point (depth measured against the same C0-continuous carve as
+   * heightAt, so it is 0 at the shoreline and positive only over real water), or
+   * null when no river/pond covers it. Nearest — not deepest — keeps a ford
+   * shallow and crossable even when a deeper channel passes within range (doc
+   * §5.3). Ocean is the caller's job (WATER_LEVEL). */
   freshAt(x: number, z: number): { surface: number; depth: number } | null;
 }
 
@@ -106,7 +125,11 @@ const FLAT_STEPS_TERMINATE = 8;
 const SEA_MARGIN = 0.2; // terminate once baseH ≤ WATER_LEVEL + this (reached sea)
 const SURF_DROP = 0.45; // surfY_i = min(surfY_{i−1}, baseH_i − this)
 const BED_PHASE_FREQ = 0.35; // bedDepth sinusoid frequency along the march
-const RIVER_R_MULT = 2.2; // carve influence radius R = halfW · this
+/** Carve influence radius R = halfW · this. Exported so the client ribbon mesh
+ * (FreshWater.tsx) spans the same footprint the carve modifies — with the
+ * C0-continuous carve, terrain occlusion then feathers the water to its true
+ * shoreline (where carvedH rises back to surfY). */
+export const RIVER_R_MULT = 2.2;
 /** Ponds: 300 fixed candidates; accept low-slope base h∈[3,12], ≥40m clear. */
 const POND_CANDIDATES = 300;
 const POND_MIN_BASE_H = 3;
@@ -294,7 +317,14 @@ function marchRiver(rng: Rng, baseH: BaseHeightFn, src: Source): MarchResult {
   // Any river that stopped INLAND (a flat basin OR the 400-step march cap) pools
   // into a terminus lake instead of ending in a dead-end trench — so every river
   // resolves to "reaches the sea OR a terminus pond" (doc §5 acceptance). Only a
-  // sea-terminating river skips it. Deterministic, zero draws (law #4).
+  // sea-terminating river skips it. Deterministic, zero draws (law #4). Unlike
+  // pickPonds it runs NO slope/height gate: gating it would leave a march-cap
+  // river with neither a sea outlet nor a terminus pond, breaking that
+  // acceptance invariant. On a non-flat stop the disc is a flat pad on a slope —
+  // but with the C0-continuous carve its uphill rim is now a smooth bank, not the
+  // vertical lip the discontinuous spec form produced (adversarial finding). The
+  // remaining flat-pad-on-a-slope look and the high march-cap rate are WET-only
+  // cosmetics for a later polish pass; the march numbers are load-bearing (§5).
   let terminus: Pond | null = null;
   if (!reachedSea && n >= 2) {
     const last = verts[n - 1];
@@ -450,29 +480,42 @@ export function buildWaterField(
     );
   }
 
-  /** Carve contribution of one river segment: surfY − bedDepth·clamp(1−(d/R)²),
-   * or Infinity when the point is outside the segment's influence radius R. */
-  const riverCarve = (x: number, z: number, ri: number, vi: number): number => {
+  // The carve is C0-CONTINUOUS: the amount cut below `base` tapers with the
+  // radial profile to ZERO at the influence rim (d = R), so heightAt returns to
+  // the natural terrain with NO step. The spec's `surfY − bedDepth·profile`
+  // blended toward surfY (the water surface) at the rim, so wherever the bank
+  // sat above surfY (the normal inland case) heightAt dropped by ≥SURF_DROP
+  // crossing d = R — a vertical terrain lip ringing every feature (adversarial
+  // finding). Blending toward `base` instead removes the lip while keeping the
+  // centreline bed at surfY − bedDepth (profile 1). The submerged footprint is
+  // therefore the sub-disc where carvedH < surfY (< R), which the client mesh
+  // covers by drawing out to R and letting terrain occlusion feather the edge.
+
+  /** Carved height from one river segment: `base` minus the tapered channel
+   * depth. Returns `base` (no carve) outside R. */
+  const riverCarve = (x: number, z: number, base: number, ri: number, vi: number): number => {
     const a = rivers[ri].verts[vi];
     const b = rivers[ri].verts[vi + 1];
     const { t, dSq } = projectToSegment(x, z, a.x, a.z, b.x, b.z);
     const halfW = a.halfW + (b.halfW - a.halfW) * t;
     const R = halfW * RIVER_R_MULT;
-    if (dSq >= R * R) return Infinity;
+    if (dSq >= R * R) return base;
     const d = Math.sqrt(dSq);
     const surfY = a.surfY + (b.surfY - a.surfY) * t;
     const bedDepth = a.bedDepth + (b.bedDepth - a.bedDepth) * t;
     const profile = clamp(1 - (d / R) * (d / R), 0, 1);
-    return surfY - bedDepth * profile;
+    // Channel-bed depth below `base` at the centreline (never negative — a point
+    // already lower than the bed is left alone), tapered to 0 at the rim.
+    return base - Math.max(0, base - (surfY - bedDepth)) * profile;
   };
 
-  const pondCarve = (x: number, z: number, pi: number): number => {
+  const pondCarve = (x: number, z: number, base: number, pi: number): number => {
     const p = ponds[pi];
     const dSq = (x - p.cx) ** 2 + (z - p.cz) ** 2;
-    if (dSq >= p.radius * p.radius) return Infinity;
+    if (dSq >= p.radius * p.radius) return base;
     const d = Math.sqrt(dSq);
     const profile = clamp(1 - (d / p.radius) * (d / p.radius), 0, 1);
-    return p.surfY - p.depth * profile;
+    return base - Math.max(0, base - (p.surfY - p.depth)) * profile;
   };
 
   const carvedHeight = (x: number, z: number, base: number): number => {
@@ -480,28 +523,40 @@ export function buildWaterField(
     if (cell === undefined) return base; // empty cell — straight through
     let h = base;
     for (const [ri, vi] of cell.segs) {
-      const c = riverCarve(x, z, ri, vi);
+      const c = riverCarve(x, z, base, ri, vi);
       if (c < h) h = c;
     }
     for (const pi of cell.ponds) {
-      const c = pondCarve(x, z, pi);
+      const c = pondCarve(x, z, base, pi);
       if (c < h) h = c;
     }
     return h;
   };
 
-  // Fresh water at (x,z): the depth + surface of the NEAREST covering feature —
-  // the channel the point actually sits in. Nearest (not deepest-carve, not
-  // max-surface, not max-submersion) is what preserves crossability: a ford
-  // reads its OWN shallow bed even when a deeper pool/meander passes just within
-  // range, so the wade hook (doc §6) sees a crossing every ~100m by design. depth
-  // is that feature's local channel depth (bed·profile → bedDepth at the centre,
-  // tapering to 0 at the influence edge); surface is its water level. null when
-  // no river/pond covers the point. Rivers vs ponds barely overlap (ponds sit
-  // ≥40m from rivers/each other), so the cross-type tie is effectively unused.
+  // Fresh water at (x,z): the surface + depth of the NEAREST covering feature the
+  // point is actually submerged by. Depth is measured against the SAME
+  // C0-continuous carve heightAt uses — submersion = surfY − carvedBed for that
+  // feature = max(0, base − bed)·profile − (base − surfY) — so it tapers to 0
+  // exactly at the feature's shoreline, water is reported ONLY where the terrain
+  // genuinely sits below its surface (depth > 0, no phantom water out to the
+  // influence rim), and depth == surface − heightAt wherever a SINGLE feature
+  // covers the point. NEAREST (not deepest) is the deliberate crossability choice
+  // (doc §5.3): a ford reads its OWN shallow bed even when a slightly deeper
+  // meander/pool passes within range, so the M7 wade hook still sees a crossing
+  // ~every 100m. WHERE features OVERLAP, nearest ≠ heightAt's deepest-wins, so
+  // waterAt.depth can under-report the carved bed — and this is NOT limited to
+  // fords: consecutive march segments overlap on wider (downstream) reaches,
+  // and monotonic surfY / river mouths carved below the ocean make the gap
+  // reach several meters (measured ~5.5m at the worst overlap). That is a
+  // KNOWN, deferred inconsistency — M5 never consumes depth (movement is M7);
+  // when M7's wade/drink/fish hooks read it, reconcile then (either derive depth
+  // from surfY − heightAt, or confirm the hooks tolerate the nearest-channel
+  // value). Rivers vs ponds barely overlap (ponds sit ≥40m from rivers/each
+  // other). null on dry land.
   const freshAt = (x: number, z: number): { surface: number; depth: number } | null => {
     const cell = grid.get(cellKey(cellOf(x), cellOf(z)));
     if (cell === undefined) return null;
+    const base = baseH(x, z);
     let nearest = Infinity;
     let depth = 0;
     let surf = 0;
@@ -512,20 +567,26 @@ export function buildWaterField(
       const halfW = a.halfW + (b.halfW - a.halfW) * t;
       const R = halfW * RIVER_R_MULT;
       if (dSq >= R * R || dSq >= nearest) continue;
-      nearest = dSq;
       const d = Math.sqrt(dSq);
       const profile = clamp(1 - (d / R) * (d / R), 0, 1);
-      depth = (a.bedDepth + (b.bedDepth - a.bedDepth) * t) * profile;
-      surf = a.surfY + (b.surfY - a.surfY) * t;
+      const surfY = a.surfY + (b.surfY - a.surfY) * t;
+      const bedDepth = a.bedDepth + (b.bedDepth - a.bedDepth) * t;
+      const dep = Math.max(0, base - (surfY - bedDepth)) * profile - (base - surfY);
+      if (dep <= 0) continue; // past this channel's shoreline — dry here
+      nearest = dSq;
+      depth = dep;
+      surf = surfY;
     }
     for (const pi of cell.ponds) {
       const p = ponds[pi];
       const dSq = (x - p.cx) ** 2 + (z - p.cz) ** 2;
       if (dSq >= p.radius * p.radius || dSq >= nearest) continue;
-      nearest = dSq;
       const d = Math.sqrt(dSq);
       const profile = clamp(1 - (d / p.radius) * (d / p.radius), 0, 1);
-      depth = p.depth * profile;
+      const dep = Math.max(0, base - (p.surfY - p.depth)) * profile - (base - p.surfY);
+      if (dep <= 0) continue;
+      nearest = dSq;
+      depth = dep;
       surf = p.surfY;
     }
     return nearest === Infinity ? null : { surface: surf, depth };

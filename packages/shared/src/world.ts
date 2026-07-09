@@ -19,6 +19,7 @@ import { createStructureIndex, type StructureIndex } from "./structures";
 import { buildWaterField, type WaterFeatures } from "./water";
 
 export type { River, RiverVertex, Pond, WaterFeatures } from "./water";
+export { RIVER_R_MULT } from "./water";
 
 export type BuildingKind = "house" | "shed" | "barn" | "barracks" | "hangar";
 

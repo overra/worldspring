@@ -938,9 +938,15 @@ export function effectiveGameHour(cfg: TimeConfig, gameTimeS: number): number {
  * `...|gen:1` string is unreadable to every pre-doc-07 binary (their 4-part
  * fingerprint regex + string equality both fail), so eagerly writing the
  * 5-part form would turn a routine revert of the doc 07 deploy into a
- * production wipe on both the sanctioned and fail-closed paths. The first
- * 5-part writer must be the first actual gen bump (doc 07 M5), by which time
- * no gen-unaware binary is a plausible rollback target. NOTE: this is the
+ * production wipe on both the sanctioned and fail-closed paths. doc 07 M5 does
+ * NOT bump it: the water carve only reshapes heightAt on the WET path
+ * (waterFeatures:true) and leaves the dry seed-1337 prod world byte-identical,
+ * so its identity is distinguished by the existing `water:0/1` component and
+ * WORLDGEN_VERSION stays 1 (a bump would emit `|gen:2` for the live dry world
+ * and wipe it on ship). The first 5-part/gen-bump writer is therefore the first
+ * FUTURE formula change that alters an already-shipped world's geometry from an
+ * identical config — by which time no gen-unaware binary is a plausible
+ * rollback target. NOTE: this is the
  * config wipe identity, NOT the worldgen determinism hash
  * (scripts/fingerprint.mjs) — they are unrelated; do not conflate them.
  */

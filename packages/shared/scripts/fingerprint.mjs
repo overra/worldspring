@@ -16,7 +16,13 @@
 // LINUX value (regenerate in CI, not on a Mac); `pnpm fingerprint` on macOS
 // will mismatch seed 0 — a known cross-platform artifact, not a regression.
 // (The cross-platform divergence itself is a separate latent client/server
-// hazard tracked outside this gate; prod seed 1337 is stable on both.)
+// hazard tracked outside this gate; the prod-default DRY seed 1337 is stable on
+// both. NOT SO for a WATER world (doc 07 M5): the river march runs transcendental
+// cos/sin + noise-gradient math for up to 400 compounding steps, which amplifies
+// the base-noise ULP divergence ~6× and reaches seed 1337 — a `standard water`
+// row is Linux-canonical for THIS gate but a non-Linux browser client that
+// re-runs createWorld can desync from the server near water. See water.ts's
+// CROSS-ENGINE HAZARD note; water servers gate behind the M7 protocol bump.)
 //
 // esbuild bundles the target module (resolving the extensionless ./ imports and
 // simplex-noise, fully transpiling TS). It only transpiles for this hash — the

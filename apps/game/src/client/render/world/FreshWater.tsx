@@ -9,20 +9,24 @@ import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { RIVER_R_MULT } from "@worldspring/shared/world";
 import type { River, Pond, World } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
 import { createWaterMaterial, FRESH_WAVE_AMPLITUDE } from "./WaterPlane";
 
 /** Sit the visible surface just under surfY so waves never poke through banks. */
 const SURFACE_DROP = 0.05;
-/** Ribbon overhangs the carve half-width a touch so the water meets dry ground. */
-const RIBBON_MARGIN = 0.3;
 /** Pond disc tessellation. */
 const POND_SEGMENTS = 24;
 
-/** Append a river as a two-sided ribbon strip: paired verts offset ± the local
- * half-width perpendicular to the polyline, each at its own surfY (the surface
- * slopes downhill with the channel). */
+/** Append a river as a two-sided ribbon strip: paired verts offset ± the carve
+ * influence half-width (halfW·RIVER_R_MULT — the full width the terrain is
+ * carved over) perpendicular to the polyline, each at its own surfY (the surface
+ * slopes downhill with the channel). Drawing to the carve radius (not the
+ * narrower channel) lets the opaque terrain, which the C0-continuous carve
+ * raises back to natural height by that radius, occlude the water exactly at its
+ * shoreline — so the visible edge follows the real bank on any terrain instead
+ * of leaving a submerged-but-undrawn band. */
 function addRiver(river: River, pos: number[], idx: number[]): void {
   const v = river.verts;
   if (v.length < 2) return;
@@ -40,7 +44,7 @@ function addRiver(river: River, pos: number[], idx: number[]): void {
     // Perpendicular in XZ.
     const px = -tz;
     const pz = tx;
-    const w = cur.halfW + RIBBON_MARGIN;
+    const w = cur.halfW * RIVER_R_MULT;
     const y = cur.surfY - SURFACE_DROP;
     pos.push(cur.x + px * w, y, cur.z + pz * w); // left
     pos.push(cur.x - px * w, y, cur.z - pz * w); // right
