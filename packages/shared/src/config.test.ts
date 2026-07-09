@@ -266,8 +266,18 @@ describe("resolveServerConfig", () => {
     expect(r.worldTainted).toBe(true);
   });
 
-  it("waterFeatures:true is coerced to false + taints (reserved until doc 07)", () => {
+  it("doc 07 M5: waterFeatures:true is honored cleanly (WIPE-class, no taint)", () => {
     const r = resolveServerConfig({ overrides: { world: { waterFeatures: true } } });
+    expect(r.config.world.waterFeatures).toBe(true);
+    // A clean boolean is a deliberate world choice (like a tier change), NOT a
+    // coercion — it drives worldFingerprintOf's `water:1` + a sanctioned wipe.
+    expect(r.worldTainted).toBe(false);
+  });
+
+  it("a non-boolean waterFeatures taints but does not throw", () => {
+    const r = resolveServerConfig({
+      overrides: { world: { waterFeatures: "yes" } },
+    } as unknown);
     expect(r.config.world.waterFeatures).toBe(false);
     expect(r.worldTainted).toBe(true);
   });
@@ -432,11 +442,11 @@ describe("tierParamsOf / worldParamsOf", () => {
     }
   });
 
-  it("returns { seed, ...tier } flat", () => {
+  it("returns { seed, waterFeatures, ...tier } flat", () => {
     const p = worldParamsOf(DEFAULT_CONFIG.world);
-    expect(p).toEqual({ seed: WORLD_SEED, ...tierParamsOf("standard") });
-    const large = worldParamsOf({ seed: 7, sizeTier: "large", waterFeatures: false });
-    expect(large).toEqual({ seed: 7, ...tierParamsOf("large") });
+    expect(p).toEqual({ seed: WORLD_SEED, waterFeatures: false, ...tierParamsOf("standard") });
+    const large = worldParamsOf({ seed: 7, sizeTier: "large", waterFeatures: true });
+    expect(large).toEqual({ seed: 7, waterFeatures: true, ...tierParamsOf("large") });
   });
 });
 

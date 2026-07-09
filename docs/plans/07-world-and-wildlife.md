@@ -459,6 +459,17 @@ explicit no-rng water rejections for buildings/trees/rocks/spawn points (legal u
      are fishable. Without it rivers would bisect the island with no swimming to cross them.
 4. *Carve:* `carvedH(x,z) = min(baseH, surfY − bedDepth · clamp(1 − (d/R)², 0, 1))` where
    `d` = distance to nearest segment (interpolated attrs), `R = halfW · 2.2`.
+   **Implementation deviation (M5, C0-continuity):** this closed form is
+   discontinuous at `d = R` — the profile → 0 there so the carve → `surfY` (the
+   water level), not `baseH`, dropping heightAt by ≥`SURF_DROP` (canyon walls:
+   several meters) as you cross the rim, a vertical terrain lip ringing every
+   feature. Shipped form blends the carved bed toward `baseH` at the rim instead:
+   `carvedH = baseH − max(0, baseH − (surfY − bedDepth)) · clamp(1 − (d/R)²)`,
+   identical at the centreline (bed = `surfY − bedDepth`) but continuous at `R`.
+   The submerged footprint is then the sub-disc where `carvedH < surfY`; `waterAt`
+   reports water only there (depth = `surfY − carvedBed`, tapering to 0 at the
+   shoreline) and the client mesh draws out to `R`, letting terrain occlusion
+   feather the surface to the true bank.
 
 **Ponds** — stream `hashString(`pond|${seed}`)`, count per tier (3 / 8 / 18), fixed 300
 candidate draws: accept low-slope sites, base h ∈ [3, 12], ≥ 40m from rivers/other ponds.
@@ -470,6 +481,27 @@ Stamp: radius ∈ [7, 16], `surfY` = (min of 16 fixed rim samples) − 0.25, cen
 `waterFeatures: false`) falls straight through to the base formula. `heightAt` is the hottest
 function in the sim (movement, raycast march at 2m steps, AI, mesh builds) — the harness
 gains a microbench asserting carved-world `heightAt` ≤ 2× base cost on dry points.
+
+**Cross-engine determinism caveat (conscious pre-ship decision, M5).** The client
+re-runs `createWorld` locally (`connection.ts`), so the river *march* — up to 400
+steps of `cos`/`sin` meander + central-difference simplex gradients, each ULP
+difference compounding into a structurally different polyline — executes on the
+player's own JS engine (V8/JSC/SpiderMonkey per OS) and can diverge from the
+Linux/workerd server. The query-time carve is pure IEEE and bit-identical *given
+identical records*, but the client generates its own records here. **Net: a water
+world is NOT cross-engine deterministic even at the prod-default
+standard/seed-1337 config** (the dry world IS — water amplifies the base-noise
+divergence ~6× and reaches 1337), so a non-Linux browser client can desync from
+the server near rivers/ponds. This is acceptable for M5 (water is opt-in, gated,
+no gameplay yet) provided: **water servers ship behind the M7 `PROTOCOL_VERSION`
+bump** (a stale/mismatched client is refused at rejoin, not left silently
+mispredicting), with an operational note that water is a divergence surface. The
+real cure — deferred to M7 — is to send the server's water records to the client
+so only the pure query carve runs client-side, restoring the "identical records"
+premise. (Quantizing the march's transcendental outputs was considered and
+rejected: it changes the load-bearing march numbers + the WET fingerprint and is
+only a probabilistic mitigation — measure-zero rounding-boundary flips still
+diverge — so it is not worth doing ahead of the records-over-the-wire cure.)
 
 **New World API:**
 

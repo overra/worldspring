@@ -17,6 +17,24 @@ export const WORLDGEN_VERSION = 1;
 export const WATER_LEVEL = 0; // world y of the ocean plane
 export const WATER_WALK_MIN = -0.55; // terrain height below this blocks walking (deep water)
 export const TERRAIN_MAX_HEIGHT = 22;
+
+// --- Fresh water: rivers + ponds (doc 07 §5, gated on world.waterFeatures) ---
+// The carve LOWERS heightAt near rivers/ponds, so these are worldgen-shaping and
+// only ever active on a water world (waterFeatures:true → its own fingerprint).
+// FORD/POOL depths are load-bearing: a ford (0.45) sits under the M7 wade limit
+// (0.55) so rivers stay crossable ~every 100m; a pool (1.4) blocks + is fishable.
+export const RIVER_FORD_DEPTH = 0.45;
+export const RIVER_POOL_DEPTH = 1.4;
+/** River half-width lerps min→max from source to mouth (width grows downstream). */
+export const RIVER_HALFW_MIN = 1.5;
+export const RIVER_HALFW_MAX = 4.0;
+/** Pond stamp radius / centre depth ranges (uniform-sampled per pond). */
+export const POND_RADIUS_MIN = 7;
+export const POND_RADIUS_MAX = 16;
+export const POND_DEPTH_MIN = 0.9;
+export const POND_DEPTH_MAX = 1.6;
+/** Cell pitch (m) of the water spatial index heightAt prepends one Map.get to. */
+export const WATER_GRID_CELL = 32;
 export const TOWN_COUNT = 4;
 export const CABIN_COUNT = 6;
 export const TREE_COUNT = 700;
