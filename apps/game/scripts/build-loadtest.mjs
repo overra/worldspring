@@ -55,6 +55,7 @@ import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import {
   BUILD_CELL,
   BUILD_RANGE,
+  TICK_MS,
   WORLD_PIECE_CAP,
   WORLD_SAVE_INTERVAL_S,
 } from "@worldspring/shared/constants";
@@ -682,7 +683,7 @@ async function main() {
   console.log(`  tick EMA (steady average)          ${fmtMs(tickEmaSteady)}      —`);
   console.log(`  tick MAX (steady, no-save window)  ${fmtMs(tickMaxSteady)}      < ${TICK_BUDGET_MS} ms  [acceptance]`);
   console.log(`  tick MAX (save-tick peak)          ${fmtMs(tickMaxSavePeak)}      — (periodic persistAll, in-tick)`);
-  console.log(`  persistAll duration (peak − steady)${fmtMs(persistSpike)}      — (300KB blob write @ cap)`);
+  console.log(`  persistAll duration (peak − steady)${fmtMs(persistSpike)}      — (in-tick blob write @ cap; blob size measured post-run from SQLite, see doc)`);
   console.log(`  join sync (open→sFull done)        ${fmtMs(joinProbe.total)}      < ${JOIN_SYNC_BUDGET_MS} ms  [acceptance]`);
   console.log(`    ├ open→welcome                   ${fmtMs(joinProbe.openToWelcome)}`);
   console.log(`    └ welcome→sFull done             ${fmtMs(joinProbe.welcomeToFull)}`);
@@ -694,16 +695,31 @@ async function main() {
   // --- acceptance ------------------------------------------------------------
   // tick MAX is the STEADY (no-save) worst tick — the milestone lists tick max
   // and persistAll duration as distinct measurements, so the save is NOT folded
-  // into the tick-max bar (it is reported separately above).
+  // into the tick-max bar. But the save runs INSIDE the tick, so the save-tick
+  // peak is a real per-tick stall clients feel; it is surfaced honestly below
+  // (as a WATCH, not silently excluded) so "RESULT: PASS" is never mistaken for
+  // "every tick fits the frame budget."
   const tickPass = tickMaxSteady < TICK_BUDGET_MS;
   const joinPass = joinProbe.total < JOIN_SYNC_BUDGET_MS;
   const atCap = pieceCount() >= CAP;
+  // A too-easy measurement (a partial join wave => fewer bots => lighter tick)
+  // must not silently PASS. Require the server to have counted at least 80% of
+  // the requested bots online during the window.
+  const botsFloor = Math.ceil(BOTS * 0.8);
+  const botsPass = playersMed >= botsFloor;
+  // Informational watch: the in-tick save spike vs the real frame budget.
+  const saveOverBudget = tickMaxSavePeak > TICK_MS;
   console.log("\n=== ACCEPTANCE ===");
   console.log(`  reached cap (${pieceCount()} >= ${CAP})          ${atCap ? "PASS" : "FAIL"}`);
-  console.log(`  tick MAX ${tickMaxSteady.toFixed(2)}ms < ${TICK_BUDGET_MS}ms at cap w/ ${playersMed} bots   ${tickPass ? "PASS" : "FAIL"}`);
+  console.log(`  ${playersMed} bots online >= ${botsFloor} (of ${BOTS} requested)   ${botsPass ? "PASS" : "FAIL"}`);
+  console.log(`  tick MAX (steady) ${tickMaxSteady.toFixed(2)}ms < ${TICK_BUDGET_MS}ms at cap w/ ${playersMed} bots   ${tickPass ? "PASS" : "FAIL"}`);
   console.log(`  join sync ${joinProbe.total}ms < ${JOIN_SYNC_BUDGET_MS}ms on localhost        ${joinPass ? "PASS" : "FAIL"}`);
-  const ok = tickPass && joinPass && atCap;
-  console.log(`\nRESULT: ${ok ? "PASS" : "FAIL"}`);
+  console.log(
+    `  WATCH: save-tick peak ${tickMaxSavePeak.toFixed(1)}ms vs ${TICK_MS.toFixed(1)}ms frame budget` +
+      `   ${saveOverBudget ? `OVER by ${(tickMaxSavePeak - TICK_MS).toFixed(1)}ms — periodic persistAll @ cap, watch as cap grows` : "within budget"}`,
+  );
+  const ok = tickPass && joinPass && atCap && botsPass;
+  console.log(`\nRESULT: ${ok ? "PASS" : "FAIL"}  (steady-tick acceptance; see WATCH for the in-tick save spike)`);
   clearTimeout(globalDeadline);
   process.exit(ok ? 0 : 1);
 }
