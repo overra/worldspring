@@ -15,11 +15,15 @@ deployment platform (workerd), so the baseline is the Linux value; regenerate it
 Bumping `.nvmrc` may shift hashes too — regenerate then.
 
 The baseline covers all three world-size tiers (doc 07 M2): 8 standard rows
-(the original, byte-frozen lines) plus 8 `large` and 8 `huge` rows. The tier
-rows are Linux-canonical too (huge seeds 42/7 diverge macOS↔Linux); they were
-generated with `docker run --platform linux/amd64 node:22.21.1` at the pinned
-Node — regenerate the same way, or from CI output. A convenient one-liner from
-the repo root:
+(the original, byte-frozen lines) plus 8 `large` and 8 `huge` rows, then (doc 07
+M5) 8 `standard water` + 8 `large water` + 8 `huge water` rows — the
+`waterFeatures:true` carve (48 rows total). The `water` rows are a DISTINCT world
+identity: their heightAt lattice differs from the matching dry row (the carve is
+real) while the dry rows stay byte-frozen (`waterFeatures:false` takes the exact
+pre-M5 path). The tier AND water rows are Linux-canonical (huge seeds 42/7 and
+the gen-time `sin`/gradient math diverge macOS↔Linux); they were generated with
+`docker run --platform linux/amd64 node:22.21.1` at the pinned Node — regenerate
+the same way, or from CI output. A convenient one-liner from the repo root:
 
 ```sh
 docker run --rm --platform linux/amd64 -v "$PWD/packages/shared:/shared:ro" node:22.21.1 \

@@ -17,21 +17,25 @@ import { clientWorld } from "@/client/runtime";
 const WATER_SCALE = 1.6;
 const SEGMENTS = 64;
 const SEGMENTS_CAP = 192;
-const WAVE_AMPLITUDE = 0.07;
+/** Ocean swell height; doc 07 M5 fresh water reuses this material with a calmer
+ * amplitude (rivers/ponds are small — big swells would z-fight the banks). */
+export const OCEAN_WAVE_AMPLITUDE = 0.07;
+export const FRESH_WAVE_AMPLITUDE = 0.03;
 const DEEP_COLOR = new THREE.Color("#16313d");
 const SHALLOW_COLOR = new THREE.Color("#5d8294");
 
 // Injected after begin_vertex. Local xy is world xz (the mesh is rotated
 // -PI/2 about X), local z is world up. Long, slow swells — the plane cells
-// are ~20m, so wavelengths stay well above that.
-const VERTEX_PATCH = /* glsl */ `
+// are ~20m, so wavelengths stay well above that. The amplitude is baked per
+// material so the ocean and the (calmer) fresh-water surface share one shader.
+const vertexPatch = (amplitude: number): string => /* glsl */ `
 #include <begin_vertex>
 {
   float waterWave =
     sin(transformed.x * 0.035 + uWaterTime * 0.6) * 0.5 +
     sin(transformed.x * 0.05 + transformed.y * 0.06 - uWaterTime * 0.9) * 0.3 +
     sin(transformed.y * 0.1 + uWaterTime * 1.4) * 0.2;
-  transformed.z += waterWave * ${WAVE_AMPLITUDE.toFixed(3)};
+  transformed.z += waterWave * ${amplitude.toFixed(3)};
 }
 `;
 
@@ -46,12 +50,16 @@ const FRAGMENT_PATCH = /* glsl */ `
 }
 `;
 
-interface WaterAssets {
+export interface WaterAssets {
   material: THREE.MeshStandardMaterial;
   timeUniform: { value: number };
 }
 
-function createWaterMaterial(): WaterAssets {
+/** The patched translucent water material (sine displacement + fresnel). doc 07
+ * M5 exports it so FreshWater.tsx renders river ribbons / pond discs with the
+ * same look as the ocean; `amplitude` calms the fresh-water swell. Caller owns
+ * disposal of `material`. */
+export function createWaterMaterial(amplitude: number = OCEAN_WAVE_AMPLITUDE): WaterAssets {
   const timeUniform = { value: 0 };
   const material = new THREE.MeshStandardMaterial({
     color: DEEP_COLOR,
@@ -68,7 +76,7 @@ function createWaterMaterial(): WaterAssets {
     shader.uniforms.uWaterShallow = { value: SHALLOW_COLOR };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nuniform float uWaterTime;")
-      .replace("#include <begin_vertex>", VERTEX_PATCH);
+      .replace("#include <begin_vertex>", vertexPatch(amplitude));
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
@@ -80,7 +88,7 @@ function createWaterMaterial(): WaterAssets {
 }
 
 export function WaterPlane(): ReactElement | null {
-  const water = useMemo(createWaterMaterial, []);
+  const water = useMemo(() => createWaterMaterial(), []);
   // world.size drives the plane (doc 07 M2); the scene only mounts once the
   // welcome built the world, but fall back to the standard size defensively.
   const size = clientWorld.world?.size ?? WORLD_SIZE;

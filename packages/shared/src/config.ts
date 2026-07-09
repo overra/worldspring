@@ -572,22 +572,26 @@ function clampInto(
   // server to a non-standard tier is only safe after a PROTOCOL_VERSION bump
   // ships post-M2 (doc 07 §1 runbook caveat).
 
+  // doc 07 M5: waterFeatures is now HONORED (the reserved force-to-false is
+  // gone — the sizeTier-honoring precedent from M2). A clean boolean does NOT
+  // taint: waterFeatures:true is WIPE-class via worldFingerprintOf (`water:1`),
+  // so flipping it on a persisted world routes through initSchema's fail-closed
+  // gate exactly like a seed/tier change — a sanctioned wipe, not a coercion.
+  // OPERATIONAL CAVEAT (same shape as the tier one above): client bundles built
+  // BEFORE M5 still force waterFeatures→false here, so they pass the join gate
+  // against a water server and silently build a DRY world. Flipping a LIVE
+  // server to water is only safe after the PROTOCOL_VERSION bump ships (doc 07
+  // M7) — a stale bundle is then refused at rejoin instead of desyncing.
   let waterFeatures = base.world.waterFeatures;
   if (rw.waterFeatures !== undefined) {
     if (typeof rw.waterFeatures === "boolean") {
       waterFeatures = rw.waterFeatures;
     } else {
-      warnings.push("world.waterFeatures: not a boolean, using false");
+      warnings.push(
+        `world.waterFeatures: not a boolean, using ${base.world.waterFeatures}`,
+      );
       worldCoerced = true;
     }
-  }
-  // Reserved until doc 07 — forced false.
-  if (waterFeatures) {
-    warnings.push(
-      "world.waterFeatures: reserved (no fresh water yet), coerced to false",
-    );
-    waterFeatures = false;
-    worldCoerced = true;
   }
 
   const rt = isObject(r.threats) ? r.threats : {};
@@ -893,7 +897,9 @@ export function tierParamsOf(tier: WorldSizeTier): TierParams {
  * derive bit-identical params from the same config.
  */
 export function worldParamsOf(world: WorldConfig): WorldGenParams {
-  return { seed: world.seed, ...tierParamsOf(world.sizeTier) };
+  // doc 07 M5: waterFeatures rides the params so both sides carve identically.
+  // false → createWorld takes the exact pre-M5 dry path (byte-identical).
+  return { seed: world.seed, waterFeatures: world.waterFeatures, ...tierParamsOf(world.sizeTier) };
 }
 
 /** Effective zombie population cap (server cap AND client pool hint). 0 when

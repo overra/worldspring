@@ -64,8 +64,8 @@ const GRID = 48; // (GRID+1)^2 sample points per seed
 const dropSize = (key, value) =>
   key === "size" || key === "structures" ? undefined : value;
 
-function fingerprintWorld(seed, tier) {
-  const w = createWorld({ seed, ...tierParamsOf(tier) });
+function fingerprintWorld(seed, tier, water = false) {
+  const w = createWorld({ seed, ...tierParamsOf(tier), ...(water ? { waterFeatures: true } : {}) });
   const h = createHash("sha256");
   // All geometry data (seed/towns/buildings/military/props/trees/loot/spawns);
   // function members serialize to undefined and drop out — deterministic order.
@@ -99,6 +99,17 @@ for (const seed of SEEDS) {
 for (const tier of ["large", "huge"]) {
   for (const seed of SEEDS) {
     lines.push(`seed ${String(seed).padStart(6)} ${tier} : ${fingerprintWorld(seed, tier)}`);
+  }
+}
+// doc 07 M5: water-ON rows (waterFeatures:true → carved heightAt + river/pond
+// records). A DISTINCT world identity from the dry rows above; the heightAt
+// lattice bytes MUST differ from the matching dry row (the carve is real) while
+// the dry rows above stay byte-frozen. Linux-canonical like the huge tiers —
+// gen-time sin (bed profile) + central-difference gradients are transcendental,
+// so regenerate on CI/Linux (docker), never commit macOS hashes.
+for (const tier of ["standard", "large", "huge"]) {
+  for (const seed of SEEDS) {
+    lines.push(`seed ${String(seed).padStart(6)} ${tier} water : ${fingerprintWorld(seed, tier, true)}`);
   }
 }
 process.stdout.write(lines.join("\n") + "\n");

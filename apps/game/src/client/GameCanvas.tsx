@@ -14,6 +14,7 @@ import { PostFX } from "./render/post/PostFX";
 import { SkyAndLighting } from "./render/world/SkyAndLighting";
 import { Terrain } from "./render/world/Terrain";
 import { WaterPlane } from "./render/world/WaterPlane";
+import { FreshWater } from "./render/world/FreshWater";
 import { Buildings } from "./render/world/Buildings";
 import { BuildingTrim } from "./render/world/BuildingTrim";
 import { Structures } from "./render/world/Structures";
@@ -75,6 +76,9 @@ export function GameCanvas(): React.ReactElement {
       {realm !== "red" && (
         <>
           <WaterPlane />
+          {/* doc 07 M5 — river ribbons + pond discs; renders only on a water
+              world (world.water present), one extra draw call. */}
+          <FreshWater />
           <Buildings />
           <BuildingTrim />
           <Containers />
