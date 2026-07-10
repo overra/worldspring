@@ -46,6 +46,7 @@ export interface PhysicsStaticsSource {
    * are already in this index when attachEngine runs (loadWorld is
    * synchronous, the Rapier attach is async), so attach builds them all. */
   structures?: { pieces: ReadonlyMap<number, StructurePiece> };
+  plantedTrees?: { trees: ReadonlyMap<number, { id: number; x: number; z: number; groundY: number; r: number; height: number }> };
 }
 interface Aabb {
   minX: number;
@@ -194,6 +195,8 @@ export class PhysicsSystem {
   /** Static tree colliders by index in statics.trees, so a felled tree's
    * collider can be REMOVED at runtime (doc 13 M2). Empty until attach. */
   private treeColliders = new Map<number, RapierCollider>();
+  /** Runtime planted-tree colliders by stable entity id. */
+  private plantedTreeColliders = new Map<number, RapierCollider>();
   /** doc 06 — static colliders per structure piece id (the fellTree handle
    * pattern in reverse): runtime placements add, demolish removes, door
    * toggles swap. Empty until attach; pre-attach mutations are no-ops because
@@ -275,6 +278,9 @@ export class PhysicsSystem {
         ),
       );
     });
+    for (const tree of this.statics.plantedTrees?.trees.values() ?? []) {
+      this.addPlantedTree(tree.id, tree.x, tree.groundY, tree.z, tree.r, tree.height);
+    }
 
     // doc 06 — player structures: everything already in the shared index
     // (restored pieces included — loadWorld ran synchronously before this
@@ -337,6 +343,25 @@ export class PhysicsSystem {
     if (!this.engine) return;
     this.removeStructure(id);
     this.addStructure(id, aabbs);
+  }
+
+  /** Add/resize a young or mature planted-tree collider. Saplings pass r=0. */
+  addPlantedTree(id: number, x: number, groundY: number, z: number, r: number, height: number): void {
+    this.removePlantedTree(id);
+    if (!this.engine || !this.world || !this.cfg.enabled || r <= 0 || height <= 0) return;
+    this.plantedTreeColliders.set(
+      id,
+      this.world.createCollider(
+        this.engine.ColliderDesc.cuboid(r, height / 2, r).setTranslation(x, groundY + height / 2, z),
+      ),
+    );
+  }
+
+  removePlantedTree(id: number): void {
+    const collider = this.plantedTreeColliders.get(id);
+    if (!collider) return;
+    this.plantedTreeColliders.delete(id);
+    if (this.world) this.world.removeCollider(collider, true);
   }
 
   get ready(): boolean {

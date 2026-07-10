@@ -42,7 +42,10 @@ export type ItemType =
   | "hammer"
   // doc 13 M4: a jerry can of fuel — the vehicle's tank juice. Additive
   // (UNKNOWN_DEF rule); doc 13 M4's proto bump is forced by its ClientMsgs.
-  | "fuel";
+  | "fuel"
+  /** Species-specific planting items; stack identity stays metadata-free. */
+  | "pine_cone"
+  | "acorn";
 
 export type ItemKind =
   | "food"
@@ -322,6 +325,8 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   // other materials); it is consumed only by the `refuel` interaction on a
   // vehicle (systems/vehicles.ts), one can = FUEL_PER_CAN units.
   fuel: { type: "fuel", name: "Jerry Can", kind: "material", stack: 2, color: "#c8402a", power: 0 },
+  pine_cone: { type: "pine_cone", name: "Pine Cone", kind: "placeable", stack: 8, color: "#6b4b2a", power: 0 },
+  acorn: { type: "acorn", name: "Acorn", kind: "placeable", stack: 8, color: "#8a6335", power: 0 },
 };
 
 // --- Crafting (doc 05 M2) ---

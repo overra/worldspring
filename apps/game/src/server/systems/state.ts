@@ -22,6 +22,7 @@ import type {
 } from "@worldspring/shared/protocol";
 import { pieceAabbs } from "@worldspring/shared/structures";
 import type { World } from "@worldspring/shared/world";
+import type { PlantedTreeDelta } from "@worldspring/shared/trees";
 import { PhysicsSystem } from "../physics/PhysicsSystem";
 
 /**
@@ -460,6 +461,14 @@ export interface GameState {
    * partially-chopped tree "heals" across a room restart, matching doc 05's
    * transient-cooldown posture for tree state. */
   treeChops: Map<number, number>;
+  /** Planted entities use server ids, never natural-tree indices. */
+  plantedTreeChops: Map<number, number>;
+  /** Loss-free additive planted-tree state sent in the next snapshot. */
+  plantedTreeDelta: PlantedTreeDelta[];
+  /** Per-player ambient seed roll deadline (game-time, transient). */
+  seedDropAt: Map<string, number>;
+  /** Wall-clock growth scan deadline (epoch ms, transient). */
+  treeGrowthNextAtMs: number;
   /** doc 13 M3 — transient per-barrel melee-hit counters (physics body id →
    * hits). A barrel breaks open at BARREL_HITS_TO_BREAK. Never persisted (the
    * treeChops posture): a partly-shoved barrel "heals" across a room restart,
@@ -517,6 +526,10 @@ export function createGameState(
     felledTrees: new Set(),
     felledDelta: [],
     treeChops: new Map(),
+    plantedTreeChops: new Map(),
+    plantedTreeDelta: [],
+    seedDropAt: new Map(),
+    treeGrowthNextAtMs: 0,
     propHits: new Map(),
     vehicleMeta: new Map(),
     posHistory: [],

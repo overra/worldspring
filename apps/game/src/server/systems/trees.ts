@@ -20,12 +20,19 @@ import {
   MELEE_HALF_ANGLE_RAD,
   MELEE_RANGE,
   TREE_CHOPS_TO_FELL,
+  PLANTED_TREE_CAP,
+  TREE_FELL_SEED_CHANCE,
+  TREE_PLANT_CLEARANCE,
+  TREE_PLANT_DIST,
+  TREE_SEED_DROP_INTERVAL_S,
+  TREE_SEED_LOOSE_CAP,
   TREE_WOOD_PER_CHOP,
   TRUNK_SETTLE_TTL_S,
   TRUNK_WOOD_BONUS,
 } from "@worldspring/shared/constants";
 import { distSq2D, inMeleeCone, yawToDir } from "@worldspring/shared/math";
 import type { Tree } from "@worldspring/shared/world";
+import { treeStageAt, type PlantedTree, type PlantedTreeRecord, type TreeSpecies } from "@worldspring/shared/trees";
 import { meleeBlocked } from "./combat";
 import { addToInventory, sendInventory } from "./players";
 import { queueEvent, sendTo, type GameState, type ServerPlayer } from "./state";
@@ -40,6 +47,21 @@ const TOPPLE_SPEED = 2.5;
  * a flush base could start intersecting it and pop. */
 const TRUNK_SPAWN_LIFT = 0.3;
 
+type TreeTarget =
+  | { identity: "natural"; key: number; tree: Tree }
+  | { identity: "planted"; key: number; tree: PlantedTree };
+
+function hashUnit(a: number, b: number): number {
+  let h = Math.imul(a ^ b, 0x45d9f3b);
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x45d9f3b);
+  return (h >>> 0) / 0xffffffff;
+}
+
+function seedType(species: TreeSpecies): "pine_cone" | "acorn" {
+  return species === "conifer" ? "pine_cone" : "acorn";
+}
+
 /** Wood on the ground at (x, z) — the dropAtFeet shape (spawnId null = never
  * respawns, TTL'd like any player-dropped stack). */
 function dropWoodAt(state: GameState, x: number, z: number, count: number): void {
@@ -48,6 +70,20 @@ function dropWoodAt(state: GameState, x: number, z: number, count: number): void
     id,
     type: "wood",
     count,
+    x,
+    y: state.world.groundHeight(x, z),
+    z,
+    spawnId: null,
+    ttl: DROPPED_LOOT_TTL_S,
+  });
+}
+
+function dropSeedAt(state: GameState, species: TreeSpecies, x: number, z: number): void {
+  const id = state.nextEntityId++;
+  state.loot.set(id, {
+    id,
+    type: seedType(species),
+    count: 1,
     x,
     y: state.world.groundHeight(x, z),
     z,

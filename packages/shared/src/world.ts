@@ -16,6 +16,7 @@ import { STEP_UP_MAX, TERRAIN_MAX_HEIGHT, WATER_LEVEL, WORLD_SIZE } from "./cons
 import { clamp, distSq2D, rayAabb, type Aabb, type Vec3 } from "./math";
 import { createRng, hashString, type Rng } from "./rng";
 import { createStructureIndex, type StructureIndex } from "./structures";
+import { createPlantedTreeIndex, type PlantedTreeIndex, type TreeSpecies } from "./trees";
 import { buildWaterField, type WaterFeatures } from "./water";
 
 export type { River, RiverVertex, Pond, WaterFeatures } from "./water";
@@ -53,7 +54,7 @@ export interface Tree {
   groundY: number;
   r: number; // trunk collision radius
   height: number;
-  kind: "conifer" | "oak";
+  kind: TreeSpecies;
 }
 
 export interface Town {
@@ -157,6 +158,8 @@ export interface World {
    * records, so the three query methods below see identical collision on
    * client and server. */
   structures: StructureIndex;
+  /** Mutable player-planted collection, separate from fingerprint-coupled trees. */
+  plantedTrees: PlantedTreeIndex;
   /** Static colliders (wall boxes + tree trunks) near a point. */
   queryStatics(x: number, z: number, r: number): StaticsQuery;
   /**
@@ -1018,6 +1021,8 @@ export function createWorld(params: WorldGenParams): World {
   // placed pieces with ZERO changes of their own (the y-aware wall filter in
   // movement.ts makes foundations step-on-able and door headers walk-under).
   const structures = createStructureIndex();
+  // Additive mutable index: zero RNG draws and never part of world fingerprints.
+  const plantedTrees = createPlantedTreeIndex();
 
   const queryStatics = (x: number, z: number, r: number): StaticsQuery => {
     const out: StaticsQuery = { walls: [], trees: [] };
@@ -1037,6 +1042,7 @@ export function createWorld(params: WorldGenParams): World {
     }
     // Player structures (doc 06) — the index dedups its own boxes.
     for (const w of structures.queryWalls(x, z, r)) out.walls.push(w);
+    for (const t of plantedTrees.query(x, z, r)) out.trees.push(t);
     return out;
   };
 
@@ -1178,6 +1184,7 @@ export function createWorld(params: WorldGenParams): World {
     containers,
     spawnPoints,
     structures,
+    plantedTrees,
     queryStatics,
     raycastStatics,
   };

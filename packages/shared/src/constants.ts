@@ -188,6 +188,18 @@ export const TREE_WOOD_PER_CHOP = 1;
 export const TRUNK_WOOD_BONUS = 2;
 /** Seconds a settled (sleeping) trunk lies around before despawning to loot. */
 export const TRUNK_SETTLE_TTL_S = 30;
+/** Matching seed dropped as loose loot when a tree is felled. */
+export const TREE_FELL_SEED_CHANCE = 0.4;
+/** Budget for loose pine cones + acorns across the world. */
+export const TREE_SEED_LOOSE_CAP = 96;
+/** Mature trees near a player get one budgeted seed-roll on this cadence. */
+export const TREE_SEED_DROP_INTERVAL_S = 180;
+/** Planting happens this far in front of the player. */
+export const TREE_PLANT_DIST = 2.2;
+/** Empty horizontal radius required around a new sapling. */
+export const TREE_PLANT_CLEARANCE = 1.4;
+/** Hard cap protects persistence, render instances and collision queries. */
+export const PLANTED_TREE_CAP = 512;
 
 // --- Base building (doc 06) ---
 // Geometry details (skirts, door gap, sill/head) live in structures.ts with
