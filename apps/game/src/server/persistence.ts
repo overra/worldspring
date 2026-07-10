@@ -67,7 +67,7 @@ import type {
   ServerPlayer,
   VehicleMeta,
 } from "./systems/state";
-import { treeStageAt } from "@worldspring/shared/trees";
+import { toPlantedRecord, treeStageAt } from "@worldspring/shared/trees";
 import type { PlantedTreeRecord, TreeGrowthStage, TreeSpecies } from "@worldspring/shared/trees";
 
 /** doc 13 M4 — a fresh/restored vehicle meta: persisted fuel/hp/wrecked from the
@@ -542,11 +542,7 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     felled: [...game.felledTrees],
     // Defensive optional-chain like serializeStructures: some probes save a
     // worldless minimal game. The real server always has world.plantedTrees.
-    planted: [...(game.world?.plantedTrees?.trees.values() ?? [])].map(
-      ({ id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage }) => ({
-        id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage,
-      }),
-    ),
+    planted: [...(game.world?.plantedTrees?.trees.values() ?? [])].map(toPlantedRecord),
     structures: serializeStructures(game),
     vehicles: serializeVehicles(game),
   };

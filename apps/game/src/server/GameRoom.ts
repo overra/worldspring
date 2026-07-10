@@ -147,6 +147,7 @@ import {
   vacateSeat,
 } from "./systems/vehicles";
 import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
+import { toPlantedRecord } from "@worldspring/shared/trees";
 import { tickAmbientSeeds, tickTreeGrowth, tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
@@ -1014,18 +1015,7 @@ export class GameRoom extends DurableObject<Env> {
       // server's current wall-clock re-derivation (loadWorld / growth scan).
       planted:
         game.world.plantedTrees.trees.size > 0
-          ? [...game.world.plantedTrees.trees.values()].map(
-              ({ id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage }) => ({
-                id,
-                species,
-                appearanceSeed,
-                x,
-                z,
-                groundY,
-                plantedAtMs,
-                stage,
-              }),
-            )
+          ? [...game.world.plantedTrees.trees.values()].map(toPlantedRecord)
           : undefined,
     });
     // doc 06 — the FULL structure set, synchronously after welcome on the

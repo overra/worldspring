@@ -50,6 +50,7 @@ import {
 } from "@worldspring/shared/constants";
 import { clamp, distSq2D, inMeleeCone, yawToDir, type Aabb } from "@worldspring/shared/math";
 import {
+  toPlantedRecord,
   treeStageAt,
   type PlantedTree,
   type PlantedTreeRecord,
@@ -350,6 +351,18 @@ export function plantSeed(state: GameState, player: ServerPlayer, species: TreeS
       return false;
     }
   }
+  // Sibling SAPLINGS separately: queryStatics deliberately excludes them (r=0,
+  // walk-through), so without this a player could stand still and plant a whole
+  // seed stack at one spot — all maturing later into overlapping colliders.
+  // Linear over the cap-bounded (≤ PLANTED_TREE_CAP) collection, plant-rate only.
+  const clearSq = TREE_PLANT_CLEARANCE * TREE_PLANT_CLEARANCE;
+  for (const t of state.world.plantedTrees.trees.values()) {
+    if (t.stage !== "sapling") continue; // young/mature already covered above
+    if (distSq2D(x, z, t.x, t.z) < clearSq) {
+      sendTo(state, player.id, { t: "notice", msg: "Too close to another tree" });
+      return false;
+    }
+  }
 
   const record: PlantedTreeRecord = {
     id: state.nextEntityId++,
@@ -427,16 +440,7 @@ export function tickTreeGrowth(state: GameState): void {
   for (const tree of state.world.plantedTrees.trees.values()) {
     const stage = treeStageAt(tree.plantedAtMs, nowMs);
     if (stage === tree.stage) continue;
-    const record: PlantedTreeRecord = {
-      id: tree.id,
-      species: tree.species,
-      appearanceSeed: tree.appearanceSeed,
-      x: tree.x,
-      z: tree.z,
-      groundY: tree.groundY,
-      plantedAtMs: tree.plantedAtMs,
-      stage,
-    };
+    const record: PlantedTreeRecord = { ...toPlantedRecord(tree), stage };
     // Re-upsert re-derives r/height for the new stage; addPlantedTree resizes
     // (young→mature) or first-adds (sapling→young) the collider — r=0 saplings
     // never reach here since they only ever grow UP.

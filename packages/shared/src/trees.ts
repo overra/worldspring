@@ -36,6 +36,22 @@ export type PlantedTreeDelta =
 
 const GRID_CELL = 16;
 
+/** Wire/persist projection: the 8 identity fields, with the materialized
+ * geometry (r/height/kind) stripped — shared by saveWorld, welcome assembly
+ * and the growth scan so the record shape has one source of truth. */
+export function toPlantedRecord({
+  id,
+  species,
+  appearanceSeed,
+  x,
+  z,
+  groundY,
+  plantedAtMs,
+  stage,
+}: PlantedTreeRecord): PlantedTreeRecord {
+  return { id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage };
+}
+
 /** Wall-clock growth: offline/idle time counts, while the server owns stages. */
 export function treeStageAt(plantedAtMs: number, nowMs: number): TreeGrowthStage {
   const ageMs = Math.max(0, nowMs - plantedAtMs);

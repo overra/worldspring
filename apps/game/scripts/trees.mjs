@@ -279,6 +279,18 @@ const [OX, OZ] = findOpenSpot(world);
   resetPlanted(world);
 }
 
+// sapling clearance — queryStatics excludes saplings (walk-through), so plantSeed
+// must check siblings itself: a second plant from the SAME spot is rejected
+// (else one seed stack piles 8 saplings that all mature into stacked colliders).
+{
+  const state = makeState(world);
+  const player = makePlayer(state, "ps", OX, OZ, 0, [{ type: "acorn", count: 2 }]);
+  check(plantSeed(state, player, "oak") === true, "first plant from a spot succeeds");
+  check(plantSeed(state, player, "oak") === false, "second plant from the SAME spot is rejected (sapling clearance)");
+  check(world.plantedTrees.trees.size === 1, "only one sapling exists at the spot");
+  resetPlanted(world);
+}
+
 // useItem seed branch — consume on success, KEEP on reject.
 {
   const state = makeState(world);
