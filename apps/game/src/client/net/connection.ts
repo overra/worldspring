@@ -586,6 +586,12 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   clientWorld.felledTrees.clear();
   for (const idx of msg.felled ?? []) clientWorld.felledTrees.add(idx);
   clientWorld.felledVersion++;
+  // Tree lifecycle — the server's full planted-tree collection. createWorld
+  // above gave us a fresh empty plantedTrees index (the felled/structures
+  // precedent), so upsert the welcome set straight in. Prediction collides with
+  // these via the shared queryStatics; PlantedTrees renders them on the bump.
+  for (const rec of msg.planted ?? []) clientWorld.world.plantedTrees.upsert(rec);
+  clientWorld.plantedVersion++;
   // doc 06 — the fresh world's structure index is empty; the sFull batches
   // that follow this welcome on the same socket fill it. Version bump so the
   // renderer drops any stale meshes from a previous session.
@@ -639,6 +645,18 @@ function onSnap(msg: SnapMsg): void {
 
   // doc 12 — fold in any newly-explored cells the server revealed this tick.
   if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
+  // Tree lifecycle — planted deltas (plant/grow/fell) apply to the SHARED index
+  // immediately, unlike felled RENDER deltas (which ride the interp timeline).
+  // A planted remove changes COLLISION, not just visuals, so prediction must
+  // see it now — reconciliation already tracks the server, and this keeps the
+  // shared queryStatics in step. PlantedTrees rebuilds on the version bump.
+  if (msg.planted && clientWorld.world) {
+    for (const d of msg.planted) {
+      if (d.op === "upsert") clientWorld.world.plantedTrees.upsert(d.tree);
+      else clientWorld.world.plantedTrees.remove(d.id);
+    }
+    clientWorld.plantedVersion++;
+  }
   // doc 13 M2 — felled-tree deltas ride the buffered snap (pushSnap above) and
   // fold in when the interpolation cursor reaches them, so the static tree
   // vanishes on the same delayed timeline the trunk body appears on. Folding

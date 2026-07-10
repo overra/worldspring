@@ -20,6 +20,7 @@ import { BuildingTrim } from "./render/world/BuildingTrim";
 import { Structures } from "./render/world/Structures";
 import { Containers } from "./render/world/Containers";
 import { Trees } from "./render/world/Trees";
+import { PlantedTrees } from "./render/world/PlantedTrees";
 import { Scatter } from "./render/world/Scatter";
 import { Grass } from "./render/world/Grass";
 import { RainLayer } from "./render/world/RainLayer";
@@ -88,6 +89,7 @@ export function GameCanvas(): React.ReactElement {
           <Structures />
           <BuildPreview />
           <Trees />
+          <PlantedTrees />
           <Scatter />
           <Grass />
           <RainLayer />

@@ -20,13 +20,15 @@ import * as THREE from "three";
 import type { Tree } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
 
-const TREES_MODEL_URL = "/models/trees.glb";
+export const TREES_MODEL_URL = "/models/trees.glb";
 useGLTF.preload(TREES_MODEL_URL);
 
 // Golden-angle increment gives a deterministic, non-repeating yaw per index.
 const YAW_STEP = 2.3999632;
 
-const VARIANT_NODES = {
+// Shared by the static natural forest (this file) and the dynamic planted-tree
+// renderer (PlantedTrees.tsx) — both pull variant geometry from the same GLB.
+export const VARIANT_NODES = {
   conifer: ["tree_conifer_a", "tree_conifer_b"],
   oak: ["tree_oak_a", "tree_oak_b"],
 } as const;
@@ -37,13 +39,13 @@ interface TreeInstance {
   index: number;
 }
 
-interface VariantPart {
+export interface VariantPart {
   geometry: THREE.BufferGeometry;
   material: THREE.Material | THREE.Material[];
   role: "branches" | "leaves";
 }
 
-interface VariantAssets {
+export interface VariantAssets {
   parts: VariantPart[];
   /** Native model height (m) — per-instance scale = tree.height / native. */
   nativeHeight: number;
@@ -60,7 +62,7 @@ function variantOf(index: number): number {
 
 /** Pulls the generated branches/leaves pair out of a variant node. Role comes
  * from the generator's stable node suffixes, never traversal order. */
-function extractVariant(scene: THREE.Group, name: string): VariantAssets | null {
+export function extractVariant(scene: THREE.Group, name: string): VariantAssets | null {
   const node = scene.getObjectByName(name);
   if (!node) return null;
   const parts: VariantPart[] = [];
