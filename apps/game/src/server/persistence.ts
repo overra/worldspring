@@ -67,6 +67,7 @@ import type {
   ServerPlayer,
   VehicleMeta,
 } from "./systems/state";
+import { treeStageAt } from "@worldspring/shared/trees";
 import type { PlantedTreeRecord, TreeGrowthStage, TreeSpecies } from "@worldspring/shared/trees";
 
 /** doc 13 M4 — a fresh/restored vehicle meta: persisted fuel/hp/wrecked from the
@@ -539,9 +540,13 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     airdropNextAt: game.airdropNextAt,
     bodies: game.physics.serialize(),
     felled: [...game.felledTrees],
-    planted: [...game.world.plantedTrees.trees.values()].map(({ id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage }) => ({
-      id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage,
-    })),
+    // Defensive optional-chain like serializeStructures: some probes save a
+    // worldless minimal game. The real server always has world.plantedTrees.
+    planted: [...(game.world?.plantedTrees?.trees.values() ?? [])].map(
+      ({ id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage }) => ({
+        id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage,
+      }),
+    ),
     structures: serializeStructures(game),
     vehicles: serializeVehicles(game),
   };
@@ -781,8 +786,9 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     const species: TreeSpecies | null = raw.species === "conifer" || raw.species === "oak" ? raw.species : null;
     if (!species || !Number.isFinite(raw.x) || !Number.isFinite(raw.z) || !Number.isFinite(raw.groundY)) continue;
     if (!Number.isFinite(raw.plantedAtMs) || !Number.isInteger(raw.appearanceSeed)) continue;
-    const ageMs = Math.max(0, nowMs - (raw.plantedAtMs as number));
-    const stage: TreeGrowthStage = ageMs < 15 * 60_000 ? "sapling" : ageMs < 60 * 60_000 ? "young" : "mature";
+    // Wall-clock re-stage: offline/idle time counts toward growth (treeStageAt
+    // is the single source of the stage thresholds, shared with the tick scan).
+    const stage: TreeGrowthStage = treeStageAt(raw.plantedAtMs as number, nowMs);
     game.world.plantedTrees.upsert({
       id: raw.id,
       species,

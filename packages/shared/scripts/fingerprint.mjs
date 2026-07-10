@@ -67,8 +67,13 @@ const GRID = 48; // (GRID+1)^2 sample points per seed
 // worldgen geometry: created empty with zero rng draws, filled only by server
 // deltas at runtime. Excluded for the same reason (and so the baseline stays
 // byte-identical); no nested field shares either name.
+//
+// The tree lifecycle added World.plantedTrees (the MUTABLE player-planted index)
+// — identical situation: created empty with zero rng draws, mutated only by
+// runtime plant/grow/fell. Excluded so the baseline stays byte-frozen; without
+// this, JSON.stringify would fold "plantedTrees":{"trees":{}} into every hash.
 const dropSize = (key, value) =>
-  key === "size" || key === "structures" ? undefined : value;
+  key === "size" || key === "structures" || key === "plantedTrees" ? undefined : value;
 
 function fingerprintWorld(seed, tier, water = false) {
   const w = createWorld({ seed, ...tierParamsOf(tier), ...(water ? { waterFeatures: true } : {}) });

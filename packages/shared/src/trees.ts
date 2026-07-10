@@ -3,6 +3,17 @@ import type { Tree } from "./world";
 export type TreeSpecies = "conifer" | "oak";
 export type TreeGrowthStage = "sapling" | "young" | "mature";
 
+// Growth is WALL-CLOCK (offline/idle time counts). Balance-sensitive knobs,
+// co-located with treeStageAt below (see the note in constants.ts): a sapling
+// has no collider (walk-through), a young tree blocks movement but is not
+// choppable, and a mature tree chops/fells like a natural one. NOTE: keep this
+// module free of relative VALUE imports so it (and persistence.ts through it)
+// loads under Node --experimental-strip-types in the test probes.
+/** Planted age (ms) at which a sapling becomes a young (collidable) tree. */
+export const TREE_YOUNG_AT_MS = 15 * 60_000;
+/** Planted age (ms) at which a young tree becomes mature (choppable). */
+export const TREE_MATURE_AT_MS = 60 * 60_000;
+
 /** Persistent/wire identity for a player-planted tree. Geometry is derived. */
 export interface PlantedTreeRecord {
   id: number;
@@ -28,8 +39,8 @@ const GRID_CELL = 16;
 /** Wall-clock growth: offline/idle time counts, while the server owns stages. */
 export function treeStageAt(plantedAtMs: number, nowMs: number): TreeGrowthStage {
   const ageMs = Math.max(0, nowMs - plantedAtMs);
-  if (ageMs < 15 * 60_000) return "sapling";
-  if (ageMs < 60 * 60_000) return "young";
+  if (ageMs < TREE_YOUNG_AT_MS) return "sapling";
+  if (ageMs < TREE_MATURE_AT_MS) return "young";
   return "mature";
 }
 

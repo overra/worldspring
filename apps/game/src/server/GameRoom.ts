@@ -147,7 +147,7 @@ import {
   vacateSeat,
 } from "./systems/vehicles";
 import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
-import { tickTrunks } from "./systems/trees";
+import { tickAmbientSeeds, tickTreeGrowth, tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
 import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
 import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/zombies";
@@ -1009,6 +1009,24 @@ export class GameRoom extends DurableObject<Env> {
       // doc 13 M2 — every felled tree so far, so the client hides them from the
       // static forest on join. Omitted while none are felled (additive optional).
       felled: game.felledTrees.size > 0 ? [...game.felledTrees] : undefined,
+      // Tree lifecycle — the full player-planted collection (separate from the
+      // fingerprint-coupled natural forest). Omitted while empty. Stage is the
+      // server's current wall-clock re-derivation (loadWorld / growth scan).
+      planted:
+        game.world.plantedTrees.trees.size > 0
+          ? [...game.world.plantedTrees.trees.values()].map(
+              ({ id, species, appearanceSeed, x, z, groundY, plantedAtMs, stage }) => ({
+                id,
+                species,
+                appearanceSeed,
+                x,
+                z,
+                groundY,
+                plantedAtMs,
+                stage,
+              }),
+            )
+          : undefined,
     });
     // doc 06 — the FULL structure set, synchronously after welcome on the
     // same socket (socket ordering ⇒ it precedes any tick snapshot or delta).
@@ -1323,6 +1341,10 @@ export class GameRoom extends DurableObject<Env> {
     tickVehicles(game, dt);
     // doc 13 M2 — settled felled trunks despawn to wood loot after their TTL.
     tickTrunks(game);
+    // Tree lifecycle — budgeted ambient seed rain (per-player, game-time
+    // cadence) + the wall-clock growth-stage scan (coarse, planted-cap bounded).
+    tickAmbientSeeds(game);
+    tickTreeGrowth(game);
     tickZombies(game, dt);
     tickZombieRespawns(game, dt);
     tickSurvival(game, dt);
@@ -1356,6 +1378,10 @@ export class GameRoom extends DurableObject<Env> {
     // A tick that threw before sending re-broadcasts it next tick — harmless,
     // the client-side fold-in is a Set add (idempotent).
     game.felledDelta.length = 0;
+    // Planted-tree delta (plant/grow/remove) rides the same snapshots; clear it
+    // the same way. Upserts are idempotent by id, removes tolerate a missing id,
+    // so a re-broadcast after a throw is harmless.
+    game.plantedTreeDelta.length = 0;
 
     // Directory beats ride the already-running tick — never a timer/alarm of
     // their own (doc 03 §5). Flushes a debounced edge or a due periodic beat.
@@ -1555,6 +1581,9 @@ export class GameRoom extends DurableObject<Env> {
       // doc 13 M2 — trees felled this tick (global one-shot delta; the full set
       // rode in welcome). Cleared at end of tick like events; omitted when empty.
       felled: game.felledDelta.length > 0 ? game.felledDelta : undefined,
+      // Tree lifecycle — planted upserts/removes this tick (plant/grow/fell).
+      // Same one-shot posture as felled; the full set rode in welcome.
+      planted: game.plantedTreeDelta.length > 0 ? game.plantedTreeDelta : undefined,
     };
   }
 

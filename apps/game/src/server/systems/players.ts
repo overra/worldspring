@@ -48,6 +48,7 @@ import type {
 import type { CharacterState } from "../persistence";
 import { startLootRespawn } from "./loot";
 import { canStartReload, completeReload, rangedOf } from "./magazine";
+import { plantSeed } from "./trees";
 import { sendTo, type GameState, type PlayerStats, type Portal, type ServerPlayer } from "./state";
 
 /** Contract gap: queue cap is specified as "~60 cmds" with no shared constant. */
@@ -627,10 +628,18 @@ export function useItem(state: GameState, player: ServerPlayer, slot: number): v
       break;
     case "placeable": {
       // The placeable kind dispatches on item type: the portal kit tears open a
-      // realm gateway; everything else (campfire_kit) drops a campfire.
+      // realm gateway; seeds grow a sapling; everything else (campfire_kit)
+      // drops a campfire.
       if (stack.type === "portal_kit") {
         placeRedPortal(state, player);
         break; // consumed by the shared tail below
+      }
+      if (stack.type === "pine_cone" || stack.type === "acorn") {
+        // Plant a sapling in front of the player. On rejection the seed is NOT
+        // consumed (return before the shared consume tail) — plantSeed sends the
+        // notice explaining why (water/bounds/clearance/cap/building).
+        if (!plantSeed(state, player, stack.type === "pine_cone" ? "conifer" : "oak")) return;
+        break; // planted — consumed by the shared tail below
       }
       const [fx, fz] = yawToDir(player.core.yaw);
       const px = player.core.x + fx * CAMPFIRE_PLACE_DIST;

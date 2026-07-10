@@ -200,6 +200,10 @@ export const TREE_PLANT_DIST = 2.2;
 export const TREE_PLANT_CLEARANCE = 1.4;
 /** Hard cap protects persistence, render instances and collision queries. */
 export const PLANTED_TREE_CAP = 512;
+// Growth-stage durations (TREE_YOUNG_AT_MS / TREE_MATURE_AT_MS) live in
+// trees.ts, co-located with treeStageAt: keeping that module free of relative
+// VALUE imports lets it (and persistence.ts through it) load under Node's
+// --experimental-strip-types in the .mjs probes.
 
 // --- Base building (doc 06) ---
 // Geometry details (skirts, door gap, sill/head) live in structures.ts with
