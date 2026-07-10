@@ -671,9 +671,10 @@ function onSnap(msg: SnapMsg): void {
   ui.setVehicleSeat(msg.you.seat ?? null); // doc 13 M4 seat + driver HUD readout
   ui.setPlayerCount(msg.count);
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
-  // Body-break events are released from interpolation.ts when the body-removal
-  // snapshot reaches the render cursor. Combat/audio events remain immediate.
-  const immediateEvents = msg.events.filter((event) => event.e !== "break");
+  // Destruction FX (break + treeCut) are released from interpolation.ts when
+  // their snapshot reaches the render cursor — in lock-step with the body
+  // removal / tree vanish. Combat/audio events remain immediate.
+  const immediateEvents = msg.events.filter((event) => event.e !== "break" && event.e !== "treeCut");
   if (immediateEvents.length > 0) {
     clientWorld.events.push(...immediateEvents);
     clientWorld.audioEvents.push(...immediateEvents);

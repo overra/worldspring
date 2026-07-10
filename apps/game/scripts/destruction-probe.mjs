@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Headless gate for the exact production barrel geometry + Three Pinata
-// template seeds. Bundling resolves the client's bundler-style TS imports.
+// Headless gate for the exact production fracture geometry + Three Pinata
+// template seeds — barrels AND tree cuts (both species). Bundling resolves the
+// client's bundler-style TS imports.
 
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -10,7 +11,14 @@ const appDir = fileURLToPath(new URL("..", import.meta.url));
 const sharedDir = fileURLToPath(new URL("../../../packages/shared", import.meta.url));
 const { build } = createRequire(sharedDir + "/package.json")("esbuild");
 const bundled = await build({
-  entryPoints: [appDir + "/src/client/render/entities/barrelFracture.ts"],
+  stdin: {
+    contents:
+      'export * from "./src/client/render/entities/barrelFracture.ts";\n' +
+      'export * from "./src/client/render/entities/treeFracture.ts";\n',
+    resolveDir: appDir,
+    loader: "ts",
+    sourcefile: "destruction-probe-entry.ts",
+  },
   bundle: true,
   format: "esm",
   platform: "node",
@@ -55,17 +63,30 @@ function validate(template, expectedCount) {
 }
 
 let cases = 0;
-for (const count of mod.BARREL_FRAGMENT_COUNTS) {
-  for (const seed of mod.BARREL_FRACTURE_SEEDS) {
-    const first = mod.buildBarrelFractureTemplate(count, seed);
-    const second = mod.buildBarrelFractureTemplate(count, seed);
-    validate(first, count);
-    validate(second, count);
-    const a = templateHash(first), b = templateHash(second);
-    if (a !== b) throw new Error(`${count}/${seed} is nondeterministic: ${a} != ${b}`);
-    for (const fragment of [...first, ...second]) fragment.geometry.dispose();
-    cases++;
+/** Build twice, validate both, and require identical hashes (determinism). */
+function probe(label, buildTemplate, counts, seeds) {
+  for (const count of counts) {
+    for (const seed of seeds) {
+      const first = buildTemplate(count, seed);
+      const second = buildTemplate(count, seed);
+      validate(first, count);
+      validate(second, count);
+      const a = templateHash(first), b = templateHash(second);
+      if (a !== b) throw new Error(`${label} ${count}/${seed} is nondeterministic: ${a} != ${b}`);
+      for (const fragment of [...first, ...second]) fragment.geometry.dispose();
+      cases++;
+    }
   }
+}
+
+probe("barrel", mod.buildBarrelFractureTemplate, mod.BARREL_FRAGMENT_COUNTS, mod.BARREL_FRACTURE_SEEDS);
+for (const species of mod.TREE_SPECIES) {
+  probe(
+    `tree:${species}`,
+    (count, seed) => mod.buildTreeCutTemplate(species, count, seed),
+    mod.TREE_FRAGMENT_COUNTS,
+    mod.TREE_FRACTURE_SEEDS,
+  );
 }
 
 console.log(`destruction-probe: PASS (${cases} deterministic fracture templates)`);

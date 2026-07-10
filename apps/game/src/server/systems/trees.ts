@@ -304,6 +304,14 @@ function fellTree(state: GameState, player: ServerPlayer, index: number): void {
   state.physics.fellTree(index);
   spawnFallingTrunk(state, player, tree);
   maybeDropFellSeed(state, tree.kind, tree.x, tree.z);
+  // Cosmetic cut-burst at the stump line; rides the DELAYED break timeline
+  // client-side so it fires exactly when the standing tree vanishes.
+  queueEvent(
+    state,
+    { e: "treeCut", id: index, species: tree.kind, final: true, x: tree.x, y: tree.groundY, z: tree.z },
+    tree.x,
+    tree.z,
+  );
   sendTo(state, player.id, { t: "notice", msg: "Timber!" });
 }
 
@@ -319,6 +327,12 @@ function fellPlantedTree(state: GameState, player: ServerPlayer, tree: PlantedTr
   state.physics.addPlantedTree(stump.id, stump.x, stump.groundY, stump.z, stump.r, stump.height);
   spawnFallingTrunk(state, player, tree);
   maybeDropFellSeed(state, tree.species, tree.x, tree.z);
+  queueEvent(
+    state,
+    { e: "treeCut", id: tree.id, species: tree.species, final: true, x: tree.x, y: tree.groundY, z: tree.z },
+    tree.x,
+    tree.z,
+  );
   sendTo(state, player.id, { t: "notice", msg: "Timber!" });
 }
 
