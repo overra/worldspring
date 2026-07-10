@@ -12,9 +12,19 @@ import { fileURLToPath } from "node:url";
 const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const PRESET_DIR = join(APP_DIR, "assets", "trees");
 const OUTPUT_PATH = join(APP_DIR, "public", "models", "trees.glb");
+const PINNED_NODE_VERSION = (await readFile(join(APP_DIR, "..", "..", ".nvmrc"), "utf8")).trim();
 const NAMES = ["tree_conifer_a", "tree_conifer_b", "tree_oak_a", "tree_oak_b"];
 const MAX_WEIGHTED_TRIANGLES = 300;
 const MAX_GLB_BYTES = 250 * 1024;
+
+// EZ-Tree relies on V8 transcendental math while constructing its vertices.
+// Those last-bit results can drift between Node/V8 releases, so deterministic
+// GLB bytes use the same exact runtime pin as worldgen and CI.
+if (process.versions.node !== PINNED_NODE_VERSION) {
+  throw new Error(
+    `tree assets require Node ${PINNED_NODE_VERSION} from .nvmrc; running ${process.versions.node}`,
+  );
+}
 
 // TextureLoader only needs an image-shaped object during module evaluation;
 // generated materials are discarded before serialization.
