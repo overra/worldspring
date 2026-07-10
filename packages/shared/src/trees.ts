@@ -1,7 +1,11 @@
 import type { Tree } from "./world";
 
 export type TreeSpecies = "conifer" | "oak";
-export type TreeGrowthStage = "sapling" | "young" | "mature";
+/** Age-driven stages (sapling→young→mature, treeStageAt) plus the EVENT-driven
+ * terminal "stump": entered when a mature planted tree is felled, left only by
+ * a player clearing it with an axe. treeStageAt never returns "stump" — the
+ * growth scan and the load-path re-derivation must both preserve it. */
+export type TreeGrowthStage = "sapling" | "young" | "mature" | "stump";
 
 // Growth is WALL-CLOCK (offline/idle time counts). Balance-sensitive knobs,
 // co-located with treeStageAt below (see the note in constants.ts): a sapling
@@ -60,11 +64,20 @@ export function treeStageAt(plantedAtMs: number, nowMs: number): TreeGrowthStage
   return "mature";
 }
 
+/** Height of a felled-tree stump (m). Shared by planted-stump geometry and the
+ * client stump renderer so natural + planted stumps read identically. */
+export const STUMP_HEIGHT = 0.55;
+
 /** Stable dimensions from species, stage and appearance seed (no RNG draws). */
 export function plantedTreeGeometry(record: PlantedTreeRecord): Pick<Tree, "r" | "height" | "kind"> {
   const unit = ((record.appearanceSeed >>> 8) & 0xffff) / 0xffff;
   const matureHeight = (record.species === "conifer" ? 8.2 : 7.2) * (0.9 + unit * 0.2);
   const matureRadius = record.species === "conifer" ? 0.34 : 0.42;
+  // Stump: the felled remainder — full trunk footprint (movement keeps blocking
+  // exactly like the natural felled-tree posture), stub height. NOT age-scaled.
+  if (record.stage === "stump") {
+    return { kind: record.species, height: STUMP_HEIGHT, r: matureRadius };
+  }
   const scale = record.stage === "sapling" ? 0.16 : record.stage === "young" ? 0.52 : 1;
   return {
     kind: record.species,

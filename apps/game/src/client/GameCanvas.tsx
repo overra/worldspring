@@ -21,6 +21,7 @@ import { Structures } from "./render/world/Structures";
 import { Containers } from "./render/world/Containers";
 import { Trees } from "./render/world/Trees";
 import { PlantedTrees } from "./render/world/PlantedTrees";
+import { Stumps } from "./render/world/Stumps";
 import { Scatter } from "./render/world/Scatter";
 import { Grass } from "./render/world/Grass";
 import { RainLayer } from "./render/world/RainLayer";
@@ -90,6 +91,7 @@ export function GameCanvas(): React.ReactElement {
           <BuildPreview />
           <Trees />
           <PlantedTrees />
+          <Stumps />
           <Scatter />
           <Grass />
           <RainLayer />

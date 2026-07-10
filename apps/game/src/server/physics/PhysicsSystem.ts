@@ -205,6 +205,10 @@ export class PhysicsSystem {
   /** Felled tree indices — excluded from the static build at attach (restored
    * worlds) and removed live after it (fresh fells). Grows monotonically. */
   private felledTrees = new Set<number>();
+  /** Bodies reaped by cap eviction since the last drain — position captured at
+   * removal so systems can pay out (persistent trunks drop their wood instead
+   * of silently vanishing). Bounded by eviction rate, drained every tick. */
+  private evicted: Array<{ id: number; kind: BodyKind; x: number; y: number; z: number }> = [];
   private statics: PhysicsStaticsSource;
   private cfg: PhysicsConfig;
   private gameTime = 0;
@@ -703,8 +707,20 @@ export class PhysicsSystem {
         }
       }
       if (!victim) return;
+      // Report before removal so the payout position is the resting pose.
+      const t = victim.body.translation();
+      this.evicted.push({ id: victim.id, kind: victim.kind, x: t.x, y: t.y, z: t.z });
       this.removeBody(victim.id);
       evictable--;
     }
+  }
+
+  /** Drain bodies reaped by cap eviction since the last call (tickTrunks pays
+   * evicted trunks' wood out of this — eviction must not eat the bonus). */
+  drainEvicted(): Array<{ id: number; kind: BodyKind; x: number; y: number; z: number }> {
+    if (this.evicted.length === 0) return this.evicted;
+    const out = this.evicted;
+    this.evicted = [];
+    return out;
   }
 }

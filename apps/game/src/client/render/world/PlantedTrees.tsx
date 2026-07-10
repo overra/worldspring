@@ -44,6 +44,9 @@ function buildPlanted(variants: VariantTable, trees: Iterable<PlantedTree>): THR
     oak: [[], []],
   };
   for (const tree of trees) {
+    // Stumps are drawn by Stumps.tsx (shared with natural felled stumps) — a
+    // stump-stage record must NOT render as a miniature full tree here.
+    if (tree.stage === "stump") continue;
     const pair = variants[tree.kind];
     let v = variantOf(tree.appearanceSeed);
     if (!pair[v]) v = 1 - v; // missing node — sibling variant covers

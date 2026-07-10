@@ -41,7 +41,7 @@ import {
   type Zombie,
 } from "./state";
 import { damagePlayer } from "./survival";
-import { tryChopTree } from "./trees";
+import { tryBreakTrunk, tryChopTree } from "./trees";
 import { killDeer } from "./wildlife";
 import { killZombie } from "./zombies";
 
@@ -265,13 +265,15 @@ function meleeAttack(
   if (!hitPos) {
     // Whiffed every living target: a directly-aimed structure piece takes the
     // swing (doc 06 M7 — raiding), else an axe swing may fell a tree trunk (doc
-    // 13 M2), else a swing may shove/break a physics barrel (doc 13 M3). Living
-    // targets in front of any of them always win the swing; each fallback is
-    // static or server-auth, so no rewind. Order is least-disruptive: the
-    // barrel shove is the last additive fallback, so it never steals an
-    // axe-chop from a tree in the same cone.
+    // 13 M2) or break a RESTING felled trunk (tree lifecycle), else a swing may
+    // shove/break a physics barrel (doc 13 M3). Living targets in front of any
+    // of them always win the swing; each fallback is static or server-auth, so
+    // no rewind. Order is least-disruptive: standing trees beat lying trunks
+    // (an axe aimed at the forest keeps felling), and the barrel shove stays
+    // the last additive fallback so it never steals an axe swing.
     if (tryHitStructure(state, player, def)) return;
     if (tryChopTree(state, player)) return;
+    if (tryBreakTrunk(state, player)) return;
     tryShoveProp(state, player);
     return;
   }

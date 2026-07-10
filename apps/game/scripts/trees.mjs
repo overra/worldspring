@@ -23,9 +23,13 @@ import { fileURLToPath } from "node:url";
 import {
   MELEE_RANGE,
   PLANTED_TREE_CAP,
+  STUMP_HITS_TO_CLEAR,
+  STUMP_WOOD,
   TREE_CHOPS_TO_FELL,
   TREE_PLANT_DIST,
   TREE_SEED_LOOSE_CAP,
+  TRUNK_HITS_TO_BREAK,
+  TRUNK_WOOD_BONUS,
 } from "@worldspring/shared/constants";
 import { yawToDir } from "@worldspring/shared/math";
 import { parseClientMsg, PROTOCOL_VERSION } from "@worldspring/shared/protocol";
@@ -65,12 +69,12 @@ const shared = await bundleModule(
 const { createWorld, DEFAULT_CONFIG, worldParamsOf } = shared;
 
 const sys = await bundleModule(
-  'export { plantSeed, tryChopTree, tickTreeGrowth, tickAmbientSeeds } from "./trees.ts";\n' +
+  'export { plantSeed, tryChopTree, tryBreakTrunk, tickTreeGrowth, tickAmbientSeeds, tickTrunks } from "./trees.ts";\n' +
     'export { useItem } from "./players.ts";\n',
   systemsDir,
   "trees-systems-entry.ts",
 );
-const { plantSeed, tryChopTree, tickTreeGrowth, tickAmbientSeeds, useItem } = sys;
+const { plantSeed, tryChopTree, tryBreakTrunk, tickTreeGrowth, tickAmbientSeeds, tickTrunks, useItem } = sys;
 
 // --- helpers ----------------------------------------------------------------
 
@@ -79,12 +83,32 @@ function makePhysics() {
   let bodyId = 5000;
   return {
     calls,
+    // Trunk bodies the fake world exposes to bodyPositions("trunk") — tests
+    // push {id,x,y,z} entries in to stage a resting felled trunk.
+    trunks: [],
+    // Evicted-body queue drained by tickTrunks — tests stage cap evictions here.
+    evictedQueue: [],
     addPlantedTree: (id, x, gy, z, r, h) => calls.push(["addPlanted", id, r, h]),
     removePlantedTree: (id) => calls.push(["removePlanted", id]),
     fellTree: (i) => calls.push(["fellTree", i]),
     spawnBody: () => ++bodyId,
     applyImpulseAtPoint: () => calls.push(["impulse"]),
-    expireSettled: () => [],
+    bodyPositions(kind) {
+      return kind === "trunk" ? [...this.trunks] : [];
+    },
+    bodyPose(id) {
+      const b = this.trunks.find((t) => t.id === id);
+      return b ? { x: b.x, y: b.y, z: b.z, q: [0, 0, 0, 1] } : null;
+    },
+    removeBody(id) {
+      calls.push(["removeBody", id]);
+      this.trunks = this.trunks.filter((t) => t.id !== id);
+    },
+    drainEvicted() {
+      const out = this.evictedQueue;
+      this.evictedQueue = [];
+      return out;
+    },
   };
 }
 
@@ -109,6 +133,7 @@ function makeState(world) {
     plantedTreeDelta: [],
     seedDropAt: new Map(),
     treeGrowthNextAtMs: 0,
+    propHits: new Map(),
     physics: makePhysics(),
   };
 }
@@ -368,17 +393,106 @@ const [OX, OZ] = findOpenSpot(world);
   check(world.plantedTrees.trees.has(600002) && state.plantedTreeChops.get(600002) === 2, "still standing at 2 chops");
   check(TREE_CHOPS_TO_FELL === 3, "sanity: 3 chops to fell");
   tryChopTree(state, chopper); // chop 3 → fell
-  check(!world.plantedTrees.trees.has(600002), "the mature planted tree is felled (removed from the index)");
+  const stump = world.plantedTrees.trees.get(600002);
+  check(stump?.stage === "stump", "the felled planted tree re-stages as a STUMP (not removed)");
+  check(stump && stump.r > 0 && stump.height < 1, "stump keeps its trunk footprint at stub height");
+  check(
+    state.plantedTreeDelta.some((d) => d.op === "upsert" && d.tree.id === 600002 && d.tree.stage === "stump"),
+    "felling queued a stump upsert delta",
+  );
+  check(
+    state.physics.calls.some((c) => c[0] === "addPlanted" && c[1] === 600002 && c[3] < 1),
+    "felling resized the collider to the stub",
+  );
+  check(state.physics.calls.filter((c) => c[0] === "impulse").length === 1, "a dynamic trunk was toppled");
+
+  // Stump clearing: no per-hit wood; the STUMP_HITS_TO_CLEAR-th hit removes it.
+  const woodBefore = chopper.inventory.reduce((n, s) => n + (s && s.type === "wood" ? s.count : 0), 0);
+  for (let i = 0; i < STUMP_HITS_TO_CLEAR - 1; i++) {
+    check(tryChopTree(state, chopper) === true, `stump hit ${i + 1} lands`);
+    check(world.plantedTrees.trees.has(600002), "stump survives below the clear threshold");
+  }
+  check(tryChopTree(state, chopper) === true, "final stump hit lands");
+  check(!world.plantedTrees.trees.has(600002), "stump cleared (cap slot freed)");
   check(
     state.plantedTreeDelta.some((d) => d.op === "remove" && d.id === 600002),
-    "felling queued a remove delta",
+    "clearing queued the remove delta",
   );
   check(
     state.physics.calls.some((c) => c[0] === "removePlanted" && c[1] === 600002),
-    "felling removed the planted collider",
+    "clearing removed the stub collider",
   );
-  check(state.physics.calls.filter((c) => c[0] === "impulse").length === 1, "a dynamic trunk was toppled");
+  const woodAfter = chopper.inventory.reduce((n, s) => n + (s && s.type === "wood" ? s.count : 0), 0);
+  check(woodAfter === woodBefore, "stump hits grant no per-hit inventory wood (salvage drops as loot)");
+  check(
+    [...state.loot.values()].some((l) => l.type === "wood" && l.count === STUMP_WOOD),
+    `clearing dropped ${STUMP_WOOD} salvage wood`,
+  );
   resetPlanted(world);
+}
+
+// growth guard — a stump is terminal: the wall-clock scan must never regrow it.
+{
+  const state = makeState(world);
+  world.plantedTrees.upsert({
+    id: 610001,
+    species: "oak",
+    appearanceSeed: 77,
+    x: OX,
+    z: OZ,
+    groundY: world.groundHeight(OX, OZ),
+    plantedAtMs: Date.now() - (TREE_MATURE_AT_MS + 60_000), // age says "mature"
+    stage: "stump",
+  });
+  state.treeGrowthNextAtMs = 0;
+  tickTreeGrowth(state);
+  check(world.plantedTrees.trees.get(610001)?.stage === "stump", "growth scan never regrows a stump");
+  check(state.plantedTreeDelta.length === 0, "no delta emitted for a terminal stump");
+  resetPlanted(world);
+}
+
+// trunk break — persistent trunks: axe hits via the props pattern, wood at rest.
+{
+  const state = makeState(world);
+  const [dfx, dfz] = yawToDir(0);
+  const tx = OX + dfx * 1.5;
+  const tz = OZ + dfz * 1.5;
+  state.physics.trunks.push({ id: 9001, x: tx, y: state.world.groundHeight(tx, tz) + 0.4, z: tz });
+  const breaker = makePlayer(state, "tb", OX, OZ, 0, [{ type: "axe", count: 1 }]);
+  for (let i = 0; i < TRUNK_HITS_TO_BREAK - 1; i++) {
+    check(tryBreakTrunk(state, breaker) === true, `trunk hit ${i + 1} lands`);
+    check(state.physics.trunks.length === 1, "trunk survives below the break threshold");
+  }
+  check(tryBreakTrunk(state, breaker) === true, "final trunk hit lands");
+  check(state.physics.trunks.length === 0, "trunk body removed on the final hit");
+  check(
+    state.events.some((e) => e.ev.e === "break" && e.ev.kind === "trunk"),
+    "break{kind:trunk} event emitted with the resting pose",
+  );
+  check(
+    [...state.loot.values()].some((l) => l.type === "wood" && l.count === TRUNK_WOOD_BONUS),
+    `breaking dropped ${TRUNK_WOOD_BONUS} bonus wood`,
+  );
+  // No axe → no break (fists shove barrels, but trunks need the tool).
+  const fists = makePlayer(state, "tf", OX, OZ, 0, [{ type: "bandage", count: 1 }]);
+  state.physics.trunks.push({ id: 9002, x: tx, y: 0.4, z: tz });
+  check(tryBreakTrunk(state, fists) === false, "no axe equipped → the swing ignores trunks");
+  state.physics.trunks.length = 0;
+}
+
+// tickTrunks — cap-evicted trunks pay their wood out instead of vanishing with it.
+{
+  const state = makeState(world);
+  state.physics.evictedQueue.push(
+    { id: 9100, kind: "trunk", x: 5, y: 1, z: 6 },
+    { id: 9101, kind: "barrel", x: 7, y: 1, z: 8 }, // non-trunk: no payout
+  );
+  tickTrunks(state);
+  const woodDrops = [...state.loot.values()].filter((l) => l.type === "wood");
+  check(
+    woodDrops.length === 1 && woodDrops[0].count === TRUNK_WOOD_BONUS && woodDrops[0].x === 5,
+    "evicted trunk dropped its wood at the resting spot; evicted barrel paid nothing",
+  );
 }
 
 // fell-seed drop — Math.random gated, matching species, cap-respecting.
@@ -489,7 +603,10 @@ const persistBase = () => ({
   // wall-clock age says it should be mature on reload).
   g.world.plantedTrees.upsert({ id: 71, species: "oak", appearanceSeed: 11, x: 30, z: 40, groundY: g.world.groundHeight(30, 40), plantedAtMs: nowMs - 60_000, stage: "young" });
   g.world.plantedTrees.upsert({ id: 72, species: "conifer", appearanceSeed: 22, x: -30, z: 10, groundY: g.world.groundHeight(-30, 10), plantedAtMs: nowMs - (TREE_MATURE_AT_MS + 120_000), stage: "sapling" });
-  g.nextEntityId = 73;
+  // A stump whose AGE says "mature" — the terminal stage must survive the
+  // wall-clock re-derivation (a felled tree never resurrects across a restart).
+  g.world.plantedTrees.upsert({ id: 73, species: "oak", appearanceSeed: 33, x: 12, z: -18, groundY: g.world.groundHeight(12, -18), plantedAtMs: nowMs - (TREE_MATURE_AT_MS + 300_000), stage: "stump" });
+  g.nextEntityId = 74;
 
   const fake = makeFakeSql();
   saveWorld(fake.storage, fake.sql, g);
@@ -498,12 +615,13 @@ const persistBase = () => ({
   const g2 = persistBase();
   g2.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
   check(loadWorld(fake.sql, g2) === true, "loadWorld returns true on a snapshot row");
-  check(g2.world.plantedTrees.trees.size === 2, "both planted trees restored");
+  check(g2.world.plantedTrees.trees.size === 3, "all planted trees restored");
   const restoredYoung = g2.world.plantedTrees.trees.get(71);
   const restoredOld = g2.world.plantedTrees.trees.get(72);
   check(restoredYoung?.stage === treeStageAt(restoredYoung.plantedAtMs, Date.now()), "recent tree keeps its wall-clock stage");
   check(restoredOld?.stage === "mature", "a sapling planted long ago restores as MATURE (offline growth)");
-  check(g2.nextEntityId >= 73, `id ceiling folds planted ids (nextEntityId=${g2.nextEntityId})`);
+  check(g2.world.plantedTrees.trees.get(73)?.stage === "stump", "a persisted STUMP restores as a stump (terminal, never re-derived)");
+  check(g2.nextEntityId >= 74, `id ceiling folds planted ids (nextEntityId=${g2.nextEntityId})`);
 
   // Pre-lifecycle snapshot: strip the planted key entirely → must load clean.
   const stripped = JSON.parse(fake.payload());

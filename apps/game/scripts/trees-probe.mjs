@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// Falling-trees probe (doc 13 M2) — drives a real GameRoom over WS and proves
-// the whole chop → fell → settle → despawn-to-loot slice end to end:
+// Falling-trees probe (doc 13 M2 + tree lifecycle) — drives a real GameRoom
+// over WS and proves the whole chop → fell → settle → axe-break-to-loot slice:
 //   1. joins with the "trees" testbed scenario (axe provisioned, inland spawn),
 //   2. walks to the nearest tree (worldgen is shared: createWorld(welcome.seed)
 //      gives the bot the same forest the server has),
 //   3. swings the axe until the fell — asserting wood arrives per chop, the
 //      snap carries a `felled` delta, and a kind:"trunk" body appears,
-//   4. waits out settle + TTL — asserting the trunk despawns AND wood loot
-//      appears near its RESTING pose.
+//   4. waits PAST the old 30s TTL — asserting the trunk PERSISTS (no timer
+//      despawn), then walks to it and axes it TRUNK_HITS_TO_BREAK times —
+//      asserting it breaks AND wood loot appears near its RESTING pose.
 //
 //   node --experimental-strip-types apps/game/scripts/trees-probe.mjs [ws-url]
 //   default url: ws://localhost:5173/ws  (dev server; .dev.vars has TESTBED=1)
@@ -19,7 +20,7 @@ import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import { TREE_CHOPS_TO_FELL, TRUNK_SETTLE_TTL_S } from "@worldspring/shared/constants";
+import { TREE_CHOPS_TO_FELL, TRUNK_HITS_TO_BREAK } from "@worldspring/shared/constants";
 
 // world.ts uses extensionless relative imports, which strip-types cannot
 // resolve — bundle it with esbuild exactly like shared's fingerprint.mjs /
@@ -79,6 +80,10 @@ let felledDeltaSeen = [];
 let trunkId = null;
 let trunkPose = null; // last seen pose of the trunk body
 let trunkAsleepAt = 0;
+let breaksSent = 0;
+/** How long past settle we hold before axing — straddles the OLD 30s TTL so a
+ * regression back to timer-despawn fails loudly here. */
+const PERSIST_HOLD_MS = 35_000;
 
 const results = [];
 const pass = (msg) => {
@@ -193,17 +198,46 @@ ws.addEventListener("message", (ev) => {
 
   if (phase === "trunk") {
     const trunk = m.bodies.find((b) => b.id === trunkId);
-    if (trunk) {
-      trunkPose = trunk;
-      if (trunk.asleep && trunkAsleepAt === 0) {
-        trunkAsleepAt = Date.now();
-        console.log(`  trunk settled at (${trunk.x.toFixed(1)}, ${trunk.y.toFixed(1)}, ${trunk.z.toFixed(1)}) — waiting out the ${TRUNK_SETTLE_TTL_S}s TTL`);
-      }
+    if (!trunk) {
+      // Vanishing on its own is the OLD TTL behavior — a regression now.
+      fail(`trunk ${trunkId} despawned without being axed — timer despawn is supposed to be gone`);
+    }
+    trunkPose = trunk;
+    if (trunk.asleep && trunkAsleepAt === 0) {
+      trunkAsleepAt = Date.now();
+      console.log(`  trunk settled at (${trunk.x.toFixed(1)}, ${trunk.y.toFixed(1)}, ${trunk.z.toFixed(1)}) — holding ${PERSIST_HOLD_MS / 1000}s to straddle the old TTL`);
+    }
+    if (trunkAsleepAt === 0 || Date.now() - trunkAsleepAt < PERSIST_HOLD_MS) return;
+    pass(`trunk persisted ${((Date.now() - trunkAsleepAt) / 1000).toFixed(0)}s past settle (old 30s TTL is gone)`);
+    phase = "break";
+    return;
+  }
+
+  if (phase === "break") {
+    const trunk = m.bodies.find((b) => b.id === trunkId);
+    if (!trunk) {
+      // Gone right after our swings = the axe break landed.
+      if (breaksSent === 0) fail("trunk vanished before any break swing");
+      pass(`trunk broke after ${breaksSent} axe swings (TRUNK_HITS_TO_BREAK=${TRUNK_HITS_TO_BREAK})`);
+      phase = "loot";
       return;
     }
-    // Gone from snapshots at our position = despawned (we stand right there).
-    pass(`trunk despawned after settling (~${trunkAsleepAt ? ((Date.now() - trunkAsleepAt) / 1000).toFixed(0) : "?"}s asleep)`);
-    phase = "loot";
+    trunkPose = trunk;
+    const d = dist2(you.x, you.z, trunk.x, trunk.z);
+    if (d > 1.8) {
+      send({ t: "input", cmds: [inputCmd(yawToward(you.x, you.z, trunk.x, trunk.z), true)] });
+      return;
+    }
+    send({ t: "input", cmds: [inputCmd(yawToward(you.x, you.z, trunk.x, trunk.z), false)] });
+    const now = Date.now();
+    if (now - lastAttackAt > 900 && breaksSent < TRUNK_HITS_TO_BREAK + 4) {
+      lastAttackAt = now;
+      breaksSent++;
+      send({ t: "attack" });
+    }
+    if (breaksSent > TRUNK_HITS_TO_BREAK + 3) {
+      fail(`trunk still standing after ${breaksSent} break swings`);
+    }
     return;
   }
 
