@@ -138,6 +138,9 @@ export function PlantedTrees(): ReactElement {
     () => () => {
       for (const mesh of meshesRef.current) mesh.dispose();
       meshesRef.current = [];
+      // Same Strict-Mode-remount hardening as Stumps.tsx: preserved refs with a
+      // matching version would skip the rebuild and leave the forest empty.
+      appliedVersion.current = -1;
     },
     [],
   );

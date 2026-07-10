@@ -100,6 +100,11 @@ export function Stumps(): ReactElement {
     () => () => {
       meshRef.current?.dispose();
       meshRef.current = null;
+      // Reset the applied versions too: a Strict-Mode remount preserves refs,
+      // and matching versions would skip the rebuild — stumps gone until the
+      // next chop bumps a version.
+      appliedFelled.current = -1;
+      appliedPlanted.current = -1;
     },
     [],
   );
