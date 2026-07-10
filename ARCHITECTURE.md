@@ -7,7 +7,8 @@ server on a Cloudflare Durable Object; React Three Fiber client with prediction.
 ## Stack
 
 - Client: Vite + React 19 + @react-three/fiber 9 + drei + zustand. Low-poly
-  procedural look — **no external 3D assets**, primitives + flat colors + fog.
+  procedural look — primitives plus compact authored/generated GLBs, flat colors,
+  and fog. EZ-Tree is an offline asset tool; Three Pinata is cosmetic client VFX.
 - Server: Cloudflare Worker + `GameRoom` Durable Object (one global room,
   `env.GAME.getByName("main")`), WebSocket at `/ws`, 15Hz tick.
 - Shared deterministic sim in `packages/shared/` (`@worldspring/shared`) — world
@@ -129,8 +130,8 @@ is non-null at mount. You may read it synchronously and keep a local ref).
   opacity animation.
 - `Buildings.tsx` — for each `world.buildings`: boxes for the wall AABBs,
   roof slab, floor slab, simple gable optional; muted colors by kind.
-- `Trees.tsx` — `InstancedMesh` (conifer: cone(s)+trunk, oak: sphere+trunk),
-  matrices from `world.trees`, two instanced meshes per part.
+- `Trees.tsx` — four generated `trees.glb` variants, each with branches + leaves;
+  matrices from `world.trees`, one `InstancedMesh` per variant part (eight draws).
 - `SkyAndLighting.tsx` — reads `clientWorld.timeOfDay` per frame: sun
   direction (directionalLight), ambient + hemisphere intensity, sky color,
   `scene.fog` color/density, stars at night (drei `<Stars>` with fade).

@@ -4,13 +4,16 @@
 // spawn copies event floats into preallocated slot fields.
 //
 // Handled here: "shot" (tracer + muzzle flash), "hit" (expanding sphere),
-// "zdie" (dark-red puff). "swing" and "hurt" are owned elsewhere — ignored.
+// "zdie" (dark-red puff), "break" (pooled barrel debris). "swing" and
+// "hurt" are owned elsewhere — ignored.
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { drainEvents } from "@/client/runtime";
+import { clientWorld, drainEvents } from "@/client/runtime";
+import { QUALITY_CONFIGS, useSettingsStore } from "@/client/state/settings";
+import { BarrelDebrisPool } from "./barrelDebris";
 
 // 18 slots: a shotgun blast lands 6 shot events in one frame — round-robin
 // must absorb a full blast (plus overlap from other shooters) without
@@ -53,6 +56,7 @@ interface FxPool {
   shots: ShotSlot[];
   hits: PointFxSlot[];
   zdies: PointFxSlot[];
+  debris: BarrelDebrisPool;
 }
 
 function fadeMaterial(color: string): THREE.MeshBasicMaterial {
@@ -66,6 +70,8 @@ function fadeMaterial(color: string): THREE.MeshBasicMaterial {
 
 function createPool(): FxPool {
   const root = new THREE.Group();
+  const debris = new BarrelDebrisPool();
+  root.add(debris.root);
 
   const shots: ShotSlot[] = [];
   for (let i = 0; i < SHOT_POOL; i++) {
@@ -97,14 +103,48 @@ function createPool(): FxPool {
     zdies.push({ mesh, mat, start: -1 });
   }
 
-  return { root, shots, hits, zdies };
+  return { root, shots, hits, zdies, debris };
+}
+
+function spawnHit(pool: FxPool, cursors: { hit: number }, x: number, y: number, z: number, now: number): void {
+  const slot = pool.hits[cursors.hit];
+  cursors.hit = (cursors.hit + 1) % HIT_POOL;
+  slot.start = now;
+  slot.mesh.position.set(x, y, z);
+  slot.mesh.scale.set(1, 1, 1);
+  slot.mesh.visible = true;
+  slot.mat.opacity = 0.9;
+}
+
+interface IdleWindow {
+  requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  cancelIdleCallback?: (handle: number) => void;
 }
 
 export function EffectsLayer(): ReactElement {
   const pool = useMemo(createPool, []);
   const cursors = useMemo(() => ({ shot: 0, hit: 0, zdie: 0 }), []);
+  const fragmentBudget = QUALITY_CONFIGS[useSettingsStore((s) => s.quality)].destructionFragments;
 
-  useFrame((state) => {
+  useEffect(() => {
+    if (fragmentBudget === 0) return;
+    const idleWindow = window as unknown as IdleWindow;
+    let cancelled = false;
+    const build = () => {
+      if (!cancelled) pool.debris.buildTemplates();
+    };
+    const idleHandle = idleWindow.requestIdleCallback?.(build, { timeout: 2_000 });
+    const timeoutHandle = idleHandle === undefined ? window.setTimeout(build, 250) : undefined;
+    return () => {
+      cancelled = true;
+      if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);
+      if (timeoutHandle !== undefined) window.clearTimeout(timeoutHandle);
+    };
+  }, [fragmentBudget, pool]);
+
+  useEffect(() => () => pool.debris.dispose(), [pool]);
+
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
 
     // --- Spawn from this frame's events ---
@@ -133,13 +173,7 @@ export function EffectsLayer(): ReactElement {
         slot.flash.visible = true;
         slot.flashMat.opacity = 1;
       } else if (ev.e === "hit") {
-        const slot = pool.hits[cursors.hit];
-        cursors.hit = (cursors.hit + 1) % HIT_POOL;
-        slot.start = t;
-        slot.mesh.position.set(ev.x, ev.y, ev.z);
-        slot.mesh.scale.set(1, 1, 1);
-        slot.mesh.visible = true;
-        slot.mat.opacity = 0.9;
+        spawnHit(pool, cursors, ev.x, ev.y, ev.z, t);
       } else if (ev.e === "zdie") {
         const slot = pool.zdies[cursors.zdie];
         cursors.zdie = (cursors.zdie + 1) % ZDIE_POOL;
@@ -148,6 +182,12 @@ export function EffectsLayer(): ReactElement {
         slot.mesh.scale.set(0.6, 0.6, 0.6);
         slot.mesh.visible = true;
         slot.mat.opacity = 0.85;
+      } else if (ev.e === "break") {
+        if (!pool.debris.spawn(ev, t, fragmentBudget)) {
+          // Mobile / idle templates not ready: preserve immediate feedback
+          // without blocking a frame on Voronoi generation.
+          spawnHit(pool, cursors, ev.x, ev.y, ev.z, t);
+        }
       }
       // "swing" / "hurt": handled elsewhere (HUD vignette etc.) — ignore.
     }
@@ -197,6 +237,8 @@ export function EffectsLayer(): ReactElement {
       slot.mesh.scale.set(s, s, s);
       slot.mat.opacity = 0.85 * (1 - p);
     }
+
+    pool.debris.update(t, delta, clientWorld.world);
   });
 
   return <primitive object={pool.root} />;

@@ -38,7 +38,7 @@ export default defineConfig({
             // (react) and lazy (three) vendors into one menu-blocking chunk.
             {
               name: "vendor-three",
-              test: /node_modules[\\/](three|@react-three|postprocessing|n8ao|@monogrid)[\\/]/,
+              test: /node_modules[\\/](three|@react-three|@dgreenheck[\\/]three-pinata|postprocessing|n8ao|@monogrid)[\\/]/,
               priority: 10,
             },
           ],

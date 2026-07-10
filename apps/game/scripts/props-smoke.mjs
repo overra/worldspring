@@ -113,6 +113,7 @@ let settleObserved = false;
 let settleTime = 0; // game.time at settle
 let restingPose = null;
 let brokeObserved = false;
+const breakEvents = [];
 let swings = 0;
 let lastAttackAt = 0;
 let prevStill = { x: 0, z: 0 };
@@ -192,6 +193,9 @@ ws.addEventListener("message", (ev) => {
   }
   if (m.t !== "snap") return;
   you = { x: m.you.x, y: m.you.y, z: m.you.z };
+  for (const event of m.events ?? []) {
+    if (event.e === "break" && event.id === barrelId) breakEvents.push(event);
+  }
 
   // Locate our barrel body in the interest-filtered snapshot.
   const findBarrel = () => {
@@ -317,6 +321,19 @@ ws.addEventListener("message", (ev) => {
       if (swings >= 1) {
         brokeObserved = true;
         pass(`barrel BROKE after ${swings} swings (body removed from snap.bodies)`);
+        if (breakEvents.length !== 1) {
+          fail(`expected exactly one barrel break event, saw ${breakEvents.length}`);
+        }
+        const event = breakEvents[0];
+        const finitePose = [event.x, event.y, event.z, ...(event.q ?? [])].every(Number.isFinite);
+        if (event.kind !== "barrel" || event.q?.length !== 4 || !finitePose) {
+          fail(`malformed break event: ${JSON.stringify(event)}`);
+        }
+        const poseDelta = lastPose ? dist2(event.x, event.z, lastPose.x, lastPose.z) : Infinity;
+        if (poseDelta >= 0.5 || !lastPose || Math.abs(event.y - lastPose.y) >= 0.5) {
+          fail(`break event pose diverged from final body pose by ${poseDelta.toFixed(2)}m`);
+        }
+        pass("one break event carried the barrel's final position + quaternion");
         phase = "loot";
       }
       return;

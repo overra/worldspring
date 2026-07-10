@@ -524,6 +524,16 @@ export class PhysicsSystem {
     return out;
   }
 
+  /** Final unquantized pose for a server-confirmed interaction such as a
+   * barrel break. Read-only; callers capture it before removeBody(). */
+  bodyPose(id: number): { x: number; y: number; z: number; q: [number, number, number, number] } | null {
+    const rec = this.bodies.get(id);
+    if (!rec) return null;
+    const t = rec.body.translation();
+    const r = rec.body.rotation();
+    return { x: t.x, y: t.y, z: t.z, q: [r.x, r.y, r.z, r.w] };
+  }
+
   /** Poses for the snapshot path (unquantized — GameRoom round2's). */
   *poses(): IterableIterator<WireBody> {
     if (this.engine) {
