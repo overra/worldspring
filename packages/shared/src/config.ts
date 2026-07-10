@@ -10,9 +10,9 @@
 // runtime cycle.
 
 import {
+  ANIMAL_SPECIES,
   CABIN_COUNT,
   DAY_DURATION_S,
-  DEER_COUNT,
   LOGOUT_LINGER_S,
   MAP_ACQUIRE_DEFAULT,
   MAP_MINIMAP_DEFAULT,
@@ -30,6 +30,7 @@ import {
   WORLD_SIZE,
   WORLDGEN_VERSION,
   ZOMBIE_MAX,
+  type AnimalSpecies,
 } from "./constants";
 import { gameHours } from "./protocol";
 import type { LootTier } from "./items";
@@ -115,10 +116,11 @@ export interface TimeConfig {
 export interface WildlifeConfig {
   /** Multiplies DEER_COUNT. 0 = no deer (and no venison economy). */
   deerDensity: number; // 0..3
-  // Reserved for doc 07's species (validated 0..3, default 1, NO-OP until
-  // doc 07 M8/M9 land): rabbitDensity, boarDensity, wolfPackDensity.
+  /** Multiplies doc 07 M8 rabbit population. 0 = no rabbits. */
   rabbitDensity: number; // 0..3
+  /** Reserved for doc 07 M9 boars; validated/carried until the behavior lands. */
   boarDensity: number; // 0..3
+  /** Reserved for doc 07 M9 wolf packs; validated/carried until the behavior lands. */
   wolfPackDensity: number; // 0..3
 }
 
@@ -910,9 +912,36 @@ export function effectiveZombieMax(cfg: ServerConfig): number {
     : 0;
 }
 
+function wildlifeDensityFor(cfg: ServerConfig, species: AnimalSpecies): number {
+  switch (species) {
+    case "deer":
+      return cfg.wildlife.deerDensity;
+    case "rabbit":
+      return cfg.wildlife.rabbitDensity;
+    case "boar":
+      return cfg.wildlife.boarDensity;
+    case "wolf":
+      return cfg.wildlife.wolfPackDensity;
+  }
+}
+
+/** Effective animal population for one species (server cap AND client pool hint). */
+export function effectiveAnimalMax(cfg: ServerConfig, species: AnimalSpecies): number {
+  const def = ANIMAL_SPECIES[species];
+  return Math.round(def.baseCount[cfg.world.sizeTier] * wildlifeDensityFor(cfg, species));
+}
+
 /** Effective deer population (server cap AND client pool hint). */
 export function effectiveDeerMax(cfg: ServerConfig): number {
-  return Math.round(DEER_COUNT * cfg.wildlife.deerDensity);
+  return effectiveAnimalMax(cfg, "deer");
+}
+
+/** Total effective animal population across every species. */
+export function effectiveAnimalTotalMax(cfg: ServerConfig): number {
+  return (Object.keys(ANIMAL_SPECIES) as AnimalSpecies[]).reduce(
+    (sum, species) => sum + effectiveAnimalMax(cfg, species),
+    0,
+  );
 }
 
 /** Game-time → hour of day, honoring fixedHour and the configured day length /

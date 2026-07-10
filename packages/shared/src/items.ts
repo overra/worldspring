@@ -196,11 +196,11 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
   axe: { type: "axe", name: "Fire Axe", kind: "melee", stack: 1, color: "#a33327", power: 35, structDmg: 6 },
   campfire_kit: { type: "campfire_kit", name: "Campfire Kit", kind: "placeable", stack: 2, color: "#7a5230", power: 0 },
   flashlight: { type: "flashlight", name: "Flashlight", kind: "tool", stack: 1, color: "#c8c23a", power: 0 },
-  // Raw venison: migrated from the hardcoded branch in players.ts — now data-driven
-  // via cooksTo / rawPenaltyHp (doc 05 M1).
+  // Land animal meat: persisted under the original raw_venison id, but the
+  // display name is species-neutral now that rabbits/deer share the economy.
   raw_venison: {
     type: "raw_venison",
-    name: "Raw Venison",
+    name: "Raw Meat",
     kind: "food",
     stack: 3,
     color: "#9e4a4a",
@@ -208,7 +208,7 @@ export const ITEM_DEFS: Record<ItemType, ItemDef> = {
     cooksTo: "cooked_venison",
     rawPenaltyHp: 8,
   },
-  cooked_venison: { type: "cooked_venison", name: "Cooked Venison", kind: "food", stack: 3, color: "#7a4a2e", power: 65 },
+  cooked_venison: { type: "cooked_venison", name: "Cooked Meat", kind: "food", stack: 3, color: "#7a4a2e", power: 65 },
 
   // --- 16 new items (doc 05 M1) ---
 

@@ -3,6 +3,7 @@
 // discriminated unions on `t`.
 
 import type { ServerConfig } from "./config";
+import type { AnimalSpecies } from "./constants";
 import type { ItemStack, ItemType } from "./items";
 import type { PieceKind, PieceTier, StructurePiece } from "./structures";
 
@@ -378,10 +379,12 @@ export interface WireDrop {
   falling: boolean;
 }
 
-export type AnimalState = "idle" | "wander" | "flee";
+export type AnimalState = "idle" | "wander" | "flee" | "stalk" | "charge" | "attack";
 
 export interface WireAnimal {
   id: number;
+  /** Additive doc 07 M8 field. Absent means deer for old snapshots/fixtures. */
+  species?: AnimalSpecies;
   x: number;
   y: number;
   z: number;
@@ -456,6 +459,16 @@ export type GameEvent =
   | { e: "swing"; id: string } // player id swung a melee weapon
   | { e: "hit"; x: number; y: number; z: number } // impact effect
   | { e: "zdie"; x: number; y: number; z: number }
+  | {
+      /** Additive cosmetic destruction cue; authoritative removal still rides bodies. */
+      e: "break";
+      id: number;
+      kind: "barrel";
+      x: number;
+      y: number;
+      z: number;
+      q: [number, number, number, number];
+    }
   | { e: "hurt" }; // YOU took damage (vignette flash); only sent to the victim
 
 export type ServerMsg =

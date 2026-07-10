@@ -1,0 +1,6 @@
+[mcp_servers.ElevenLabs]
+command = "uvx"
+args = ["elevenlabs-mcp"]
+
+[mcp_servers.ElevenLabs.env]
+ELEVENLABS_API_KEY = "sk_2b875a2cc5e010279b196a3a36b2dfbd4fbd33ffd78b7560"

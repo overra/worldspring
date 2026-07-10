@@ -10,6 +10,7 @@
 
 import {
   ATTACK_COOLDOWN_S,
+  ANIMAL_SPECIES,
   FIST_DMG,
   FIST_STRUCT_DMG,
   HIT_CAPSULE_RADIUS,
@@ -42,7 +43,7 @@ import {
 } from "./state";
 import { damagePlayer } from "./survival";
 import { tryChopTree } from "./trees";
-import { killDeer } from "./wildlife";
+import { damageAnimal } from "./wildlife";
 import { killZombie } from "./zombies";
 
 /** Contract gap: ANIM_ATTACKING duration is specified as "~0.3s" in prose. */
@@ -292,8 +293,7 @@ function meleeAttack(
     return;
   }
   if (hitDeer) {
-    hitDeer.hp -= dmg;
-    if (hitDeer.hp <= 0) killDeer(state, hitDeer);
+    damageAnimal(state, hitDeer, dmg, player.id);
     return;
   }
   if (hitPlayer) {
@@ -443,14 +443,15 @@ function fireRanged(
     }
     for (const deer of state.animals.values()) {
       const pos = rewind.deer(deer);
+      const hit = ANIMAL_SPECIES[deer.species];
       const t = rayVerticalCylinder(
         origin,
         dir,
         pos.x,
         pos.z,
         pos.y,
-        pos.y + PLAYER_HEIGHT,
-        HIT_CAPSULE_RADIUS,
+        pos.y + hit.hitHeight,
+        hit.hitRadius,
         maxT,
       );
       if (t !== null && t < hitT) {
@@ -512,7 +513,7 @@ function fireRanged(
     }
 
     // Kill credit lands at most once per victim per trigger pull: killZombie/
-    // killDeer remove the target (later pellets can't re-hit it) and
+    // damageAnimal removes the target (later pellets can't re-hit it) and
     // damagePlayer returns true only on the living->dead transition (dead
     // players are skipped above).
     if (hitZombie) {
@@ -524,8 +525,7 @@ function fireRanged(
       continue;
     }
     if (hitDeer) {
-      hitDeer.hp -= def.power;
-      if (hitDeer.hp <= 0) killDeer(state, hitDeer);
+      damageAnimal(state, hitDeer, def.power, player.id);
       continue;
     }
     if (

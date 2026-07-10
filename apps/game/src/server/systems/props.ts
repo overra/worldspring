@@ -16,15 +16,13 @@
 import {
   BARREL_HALF_Y,
   BARREL_HITS_TO_BREAK,
-  DROPPED_LOOT_TTL_S,
   MELEE_HALF_ANGLE_RAD,
   MELEE_RANGE,
 } from "@worldspring/shared/constants";
-import { BARREL_LOOT_TABLE } from "@worldspring/shared/items";
 import { distSq2D, inMeleeCone, yawToDir } from "@worldspring/shared/math";
 import { barrelSpawns } from "@worldspring/shared/props";
+import { breakBarrel } from "./barrelBreak";
 import { meleeBlocked } from "./combat";
-import { rollFromTable } from "./loot";
 import { queueEvent, type GameState, type ServerPlayer } from "./state";
 
 /** Half the barrel's X/Z extent — extends melee reach so grazing swings land
@@ -110,7 +108,7 @@ export function tryShoveProp(state: GameState, player: ServerPlayer): boolean {
 
   const hits = (state.propHits.get(hit.id) ?? 0) + 1;
   if (hits >= BARREL_HITS_TO_BREAK) {
-    breakBarrel(state, hit.id, hit.x, hit.z);
+    breakBarrel(state, hit.id, hit.x, hit.y, hit.z);
     return true;
   }
   state.propHits.set(hit.id, hits);
@@ -125,28 +123,4 @@ export function tryShoveProp(state: GameState, player: ServerPlayer): boolean {
     dz * BARREL_MASS * BARREL_SHOVE_SPEED,
   );
   return true;
-}
-
-/**
- * Break a barrel: remove the dynamic body and spill one rolled loot stack where
- * it stood (dropAtFeet shape — spawnId null so it never respawns, TTL'd like
- * any dropped stack). Server-authoritative; the hit counter is transient
- * (state.propHits), so a room restart "heals" a partly-broken barrel exactly
- * like a partly-chopped tree (the treeChops posture).
- */
-function breakBarrel(state: GameState, id: number, x: number, z: number): void {
-  state.physics.removeBody(id);
-  state.propHits.delete(id);
-  const stack = rollFromTable(BARREL_LOOT_TABLE);
-  const lootId = state.nextEntityId++;
-  state.loot.set(lootId, {
-    id: lootId,
-    type: stack.type,
-    count: stack.count,
-    x,
-    y: state.world.groundHeight(x, z),
-    z,
-    spawnId: null,
-    ttl: DROPPED_LOOT_TTL_S,
-  });
 }

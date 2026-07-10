@@ -853,6 +853,11 @@ M7 + doc 05's rod. Each milestone is one focused session, PR-sized.
    Accept: deer behavior unchanged side-by-side; rabbits one-shot, hard to hit at range;
    animals >260m from every player consume zero AI time (counter in /api/health debug).
 
+   **Result 2026-07-09:** implemented the species framework, rabbits, and dormancy without
+   a `PROTOCOL_VERSION` bump. Deer and rabbits spawn from dedicated hash-salted streams
+   so dry world fingerprints remain unchanged; boar and wolf species data is present for
+   M9, but their AI/spawn behavior remains intentionally disabled until that milestone.
+
 9. **M9 — Boars + wolf packs** *(Sonnet 4.8)*
    Files: `wildlife.ts` (boar retaliation, pack machine, promotion), `constants.ts`,
    `protocol.ts` (`howl` event), audio manifest entries.

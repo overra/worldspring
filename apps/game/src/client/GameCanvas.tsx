@@ -4,6 +4,7 @@
 // from eager (menu-phase) code or the split is defeated.
 
 import { Canvas } from "@react-three/fiber";
+import { effectiveAnimalTotalMax } from "@worldspring/shared/config";
 import { useSettingsStore, QUALITY_CONFIGS } from "./state/settings";
 import { useUIStore } from "./state/store";
 import { clientWorld } from "./runtime";
@@ -99,7 +100,7 @@ export function GameCanvas(): React.ReactElement {
       {cfg.threats.zombies && <Zombies />}
       <LootItems />
       <Corpses />
-      {cfg.wildlife.deerDensity > 0 && <Animals />}
+      {effectiveAnimalTotalMax(cfg) > 0 && <Animals />}
       <Airdrops />
       <Campfires />
       <Portals />

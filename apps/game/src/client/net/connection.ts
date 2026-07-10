@@ -653,8 +653,11 @@ function onSnap(msg: SnapMsg): void {
   ui.setVehicleSeat(msg.you.seat ?? null); // doc 13 M4 seat + driver HUD readout
   ui.setPlayerCount(msg.count);
   ui.setClockHours(effectiveGameHour(clientWorld.config.time, msg.time));
-  if (msg.events.length > 0) {
-    clientWorld.events.push(...msg.events);
-    clientWorld.audioEvents.push(...msg.events);
+  // Body-break events are released from interpolation.ts when the body-removal
+  // snapshot reaches the render cursor. Combat/audio events remain immediate.
+  const immediateEvents = msg.events.filter((event) => event.e !== "break");
+  if (immediateEvents.length > 0) {
+    clientWorld.events.push(...immediateEvents);
+    clientWorld.audioEvents.push(...immediateEvents);
   }
 }

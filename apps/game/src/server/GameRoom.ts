@@ -149,7 +149,7 @@ import {
 import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
 import { tickTrunks } from "./systems/trees";
 import { tickWeather } from "./systems/weather";
-import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
+import { spawnInitialAnimals, tickAnimalRespawns, tickWildlife } from "./systems/wildlife";
 import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/zombies";
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -345,6 +345,7 @@ export class GameRoom extends DurableObject<Env> {
           players: game?.players.size ?? 0,
           zombies: game?.zombies.size ?? 0,
           animals: game?.animals.size ?? 0,
+          activeAnimals: game?.activeAnimals ?? 0,
           drops: game?.drops.size ?? 0,
           corpses: game?.corpses.size ?? 0,
           loot: game?.loot.size ?? 0,
@@ -751,9 +752,9 @@ export class GameRoom extends DurableObject<Env> {
       // `bodies` + `vehicles` snapshots instead, so this never double-spawns.
       spawnInitialVehicles(game);
     }
-    // Zombies and deer are never persisted — they always spawn fresh.
+    // Zombies and animals are never persisted — they always spawn fresh.
     spawnInitialZombies(game);
-    spawnInitialDeer(game);
+    spawnInitialAnimals(game);
     // doc 06 M7 — boot decay sweep: an abandoned base disappears the first
     // time anyone wakes the room past the window (idle-server gaps). Runs
     // AFTER loadWorld restored the pieces; the tick's tickStructures owns the
@@ -1237,6 +1238,7 @@ export class GameRoom extends DurableObject<Env> {
       saveCharacter(sql, player, game.time);
       game.players.delete(player.id);
     }
+    game.activeAnimals = 0;
     this.persistAll(game);
     this.stopTicking();
     // Directory beat: the occupied→idle transition (doc 03 §6 "quiet") —
@@ -1329,7 +1331,7 @@ export class GameRoom extends DurableObject<Env> {
     tickWeather(game, dt);
     tickAirdrops(game, dt);
     tickWildlife(game, dt);
-    tickDeerRespawns(game, dt);
+    tickAnimalRespawns(game, dt);
     tickFires(game, dt);
     tickLootRespawns(game, dt);
     tickCorpses(game, dt);
@@ -1511,15 +1513,16 @@ export class GameRoom extends DurableObject<Env> {
     }
 
     const animals: WireAnimal[] = [];
-    for (const deer of game.animals.values()) {
-      if (distSq2D(px, pz, deer.x, deer.z) > interestSq) continue;
+    for (const animal of game.animals.values()) {
+      if (distSq2D(px, pz, animal.x, animal.z) > interestSq) continue;
       animals.push({
-        id: deer.id,
-        x: round2(deer.x),
-        y: round2(deer.y),
-        z: round2(deer.z),
-        yaw: round3(deer.yaw),
-        state: deer.state,
+        id: animal.id,
+        species: animal.species,
+        x: round2(animal.x),
+        y: round2(animal.y),
+        z: round2(animal.z),
+        yaw: round3(animal.yaw),
+        state: animal.state,
       });
     }
 

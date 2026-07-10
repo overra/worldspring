@@ -260,6 +260,22 @@ export const WEATHER_RAMP_S = 20; // seconds to fade in/out
 export const RAIN_TEMP_FALL_PER_S = 0.02;
 
 // --- Wildlife ---
+export type AnimalSpecies = "deer" | "rabbit" | "boar" | "wolf";
+
+export interface AnimalSpeciesDef {
+  /** Per-tier base population before the deploy-time density multiplier. */
+  baseCount: { standard: number; large: number; huge: number };
+  hp: number;
+  wanderSpeed: number;
+  runSpeed: number;
+  hitRadius: number;
+  hitHeight: number;
+  fleeRadius: number;
+  meatMin: number;
+  meatMax: number;
+  respawnS: number;
+}
+
 export const DEER_COUNT = 10;
 export const DEER_HP = 25;
 export const DEER_FLEE_RADIUS = 22;
@@ -269,6 +285,74 @@ export const DEER_RESPAWN_S = 120;
 export const VENISON_PER_DEER_MIN = 2;
 export const VENISON_PER_DEER_MAX = 3;
 export const DEER_CORPSE_TTL_S = 180;
+export const RABBIT_COUNT = 16;
+export const RABBIT_HP = 5;
+export const RABBIT_FLEE_RADIUS = 14;
+export const RABBIT_FLEE_SPEED = 9.5;
+export const RABBIT_WANDER_SPEED = 0.8;
+export const RABBIT_RESPAWN_S = 90;
+export const BOAR_COUNT = 4;
+export const WOLF_PACK_COUNT = 2;
+export const WOLF_PACK_SIZE = 3;
+/** Animals without a player inside this radius sleep instead of running AI. */
+export const WILDLIFE_ACTIVE_RADIUS = 260;
+/** Hard render cap per species against hostile snapshots/configs. */
+export const ANIMAL_POOL_MAX = 64;
+
+export const ANIMAL_SPECIES: Record<AnimalSpecies, AnimalSpeciesDef> = {
+  deer: {
+    baseCount: { standard: DEER_COUNT, large: 24, huge: 64 },
+    hp: DEER_HP,
+    wanderSpeed: DEER_WANDER_SPEED,
+    runSpeed: DEER_FLEE_SPEED,
+    hitRadius: 0.55,
+    hitHeight: 1.2,
+    fleeRadius: DEER_FLEE_RADIUS,
+    meatMin: VENISON_PER_DEER_MIN,
+    meatMax: VENISON_PER_DEER_MAX,
+    respawnS: DEER_RESPAWN_S,
+  },
+  rabbit: {
+    baseCount: { standard: RABBIT_COUNT, large: 40, huge: 96 },
+    hp: RABBIT_HP,
+    wanderSpeed: RABBIT_WANDER_SPEED,
+    runSpeed: RABBIT_FLEE_SPEED,
+    hitRadius: 0.25,
+    hitHeight: 0.4,
+    fleeRadius: RABBIT_FLEE_RADIUS,
+    meatMin: 1,
+    meatMax: 1,
+    respawnS: RABBIT_RESPAWN_S,
+  },
+  boar: {
+    baseCount: { standard: BOAR_COUNT, large: 10, huge: 32 },
+    hp: 70,
+    wanderSpeed: 1.0,
+    runSpeed: 7.8,
+    hitRadius: 0.5,
+    hitHeight: 1.0,
+    fleeRadius: 0,
+    meatMin: 3,
+    meatMax: 5,
+    respawnS: 240,
+  },
+  wolf: {
+    baseCount: { standard: WOLF_PACK_COUNT * WOLF_PACK_SIZE, large: 5 * WOLF_PACK_SIZE, huge: 14 * WOLF_PACK_SIZE },
+    hp: 45,
+    wanderSpeed: 1.4,
+    runSpeed: 7.5,
+    hitRadius: 0.45,
+    hitHeight: 0.9,
+    fleeRadius: 0,
+    meatMin: 1,
+    meatMax: 2,
+    respawnS: 300,
+  },
+};
+
+export function isAnimalSpecies(value: unknown): value is AnimalSpecies {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(ANIMAL_SPECIES, value);
+}
 
 // --- Fishing (interim mechanic — doc 05 M1; superseded by doc 07 M12) ---
 /** Distance ahead (along player yaw) where water is tested for fishing/filling. */

@@ -5,11 +5,12 @@
 // (drained by GameRoom after each handled message and each tick).
 
 import type { ServerConfig } from "@worldspring/shared/config";
-import { LAG_COMP_MAX_REWIND_S } from "@worldspring/shared/constants";
+import { LAG_COMP_MAX_REWIND_S, type AnimalSpecies } from "@worldspring/shared/constants";
 import type { ExploredGrid } from "@worldspring/shared/fog";
 import type { ItemStack, ItemType } from "@worldspring/shared/items";
 import type {
   ChannelKind,
+  AnimalState,
   DeathRecap,
   GameEvent,
   InputCmd,
@@ -236,21 +237,34 @@ export interface Airdrop {
   contents: ItemStack[];
 }
 
-export type DeerState = "idle" | "wander" | "flee";
-
-export interface Deer {
+export interface Animal {
   id: number;
+  species: AnimalSpecies;
+  packId?: number;
+  targetId?: string;
+  attackCooldown: number;
   x: number;
   y: number;
   z: number;
   yaw: number;
   hp: number;
-  state: DeerState;
+  state: AnimalState;
   homeX: number;
   homeZ: number;
   wanderX: number;
   wanderZ: number;
   wanderWait: number;
+  nextFleeTurnAt: number;
+  fleeYawOffset: number;
+}
+
+export type Deer = Animal;
+
+export interface AnimalRespawn {
+  species: AnimalSpecies;
+  /** Seconds remaining; held at <= 0 while a spawn point is blocked. */
+  t: number;
+  packId?: number;
 }
 
 export interface Campfire {
@@ -412,7 +426,9 @@ export interface GameState {
   /** Placed red portals (linked pairs, persistent for the room's lifetime). */
   portals: Portal[];
   drops: Map<number, Airdrop>;
-  animals: Map<number, Deer>;
+  animals: Map<number, Animal>;
+  /** Animals that ran AI last tick; sleeping animals still render/take damage. */
+  activeAnimals: number;
   /** Rain intensity 0..1 (ramped by the weather machine). */
   weather: number;
   /** Game-time of the next weather flip and next airdrop. */
@@ -422,8 +438,8 @@ export interface GameState {
   lootRespawns: LootRespawnTimer[];
   /** Pending zombie respawns (countdown + variant). */
   zombieRespawns: ZombieRespawn[];
-  /** Pending deer respawns — seconds remaining, one entry per dead deer. */
-  deerRespawns: number[];
+  /** Pending wildlife respawns — seconds remaining, one entry per dead animal. */
+  animalRespawns: AnimalRespawn[];
   events: QueuedEvent[];
   outbox: OutboundMsg[];
   /** Shared id counter for zombies, loot entities and campfires. */
@@ -495,13 +511,14 @@ export function createGameState(
     portals: [],
     drops: new Map(),
     animals: new Map(),
+    activeAnimals: 0,
     weather: 0,
     weatherNextAt: 0,
     weatherRaining: false,
     airdropNextAt: 0,
     lootRespawns: [],
     zombieRespawns: [],
-    deerRespawns: [],
+    animalRespawns: [],
     events: [],
     outbox: [],
     nextEntityId: 1,

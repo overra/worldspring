@@ -21,6 +21,7 @@ import type {
   WirePortal,
   ZombieState,
 } from "@worldspring/shared/protocol";
+import type { AnimalSpecies } from "@worldspring/shared/constants";
 import type { ExploredGrid } from "@worldspring/shared/fog";
 import type { ItemType } from "@worldspring/shared/items";
 import type { PieceTier, PlaceRejection, PlaceTarget } from "@worldspring/shared/structures";
@@ -142,6 +143,7 @@ export interface ZombieView {
 
 export interface AnimalView {
   id: number;
+  species: AnimalSpecies;
   x: number;
   y: number;
   z: number;

@@ -255,9 +255,10 @@ Everything else fans out from here.
 
 ### Wave 3 — finish and launch
 
-13. **Doc 07 M8–M12** — wildlife framework, boars/wolves, visuals + birds (plus an Adam
-    Blender session), huge-tier loadtest, fishing (supersedes doc 05 §4.3's interim
-    mechanic). *(All Sonnet 4.8.)*
+13. **Doc 07 M9–M12** — M8 wildlife framework/rabbits/dormancy shipped 2026-07-09;
+    remaining work is boars/wolves, visuals + birds (plus an Adam Blender session),
+    huge-tier loadtest, fishing (supersedes doc 05 §4.3's interim mechanic). *(All
+    Sonnet 4.8.)*
 14. **Doc 02 M8 + Doc 01 M9** — launch wiring, official-instance registration,
     SELF_HOSTING docs, the one-way public-OAuth promotion. *(Sonnet 4.8 + Adam manual
     steps. Hard-blocked on the custom-domain decision.)*

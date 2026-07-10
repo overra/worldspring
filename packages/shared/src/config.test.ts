@@ -12,6 +12,8 @@ import {
   ANCHOR_MS,
   clampConfig,
   DEFAULT_CONFIG,
+  effectiveAnimalMax,
+  effectiveAnimalTotalMax,
   effectiveDeerMax,
   effectiveGameHour,
   effectiveZombieMax,
@@ -26,6 +28,7 @@ import {
 } from "./config";
 import type { ServerConfig } from "./config";
 import {
+  ANIMAL_SPECIES,
   CABIN_COUNT,
   DAY_DURATION_S,
   DEER_COUNT,
@@ -119,6 +122,14 @@ describe("DEFAULT_CONFIG equals the shipped constants field-by-field", () => {
   it("derivations match the raw constants at default", () => {
     expect(effectiveZombieMax(DEFAULT_CONFIG)).toBe(ZOMBIE_MAX);
     expect(effectiveDeerMax(DEFAULT_CONFIG)).toBe(DEER_COUNT);
+    expect(effectiveAnimalMax(DEFAULT_CONFIG, "deer")).toBe(DEER_COUNT);
+    expect(effectiveAnimalMax(DEFAULT_CONFIG, "rabbit")).toBe(ANIMAL_SPECIES.rabbit.baseCount.standard);
+    expect(effectiveAnimalTotalMax(DEFAULT_CONFIG)).toBe(
+      ANIMAL_SPECIES.deer.baseCount.standard +
+        ANIMAL_SPECIES.rabbit.baseCount.standard +
+        ANIMAL_SPECIES.boar.baseCount.standard +
+        ANIMAL_SPECIES.wolf.baseCount.standard,
+    );
     // effectiveGameHour at default must equal the legacy gameHours call exactly.
     for (const t of [0, 100, DAY_DURATION_S / 2, DAY_DURATION_S, 99999]) {
       expect(effectiveGameHour(DEFAULT_CONFIG.time, t)).toBe(

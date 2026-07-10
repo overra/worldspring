@@ -476,7 +476,7 @@ export interface PersistedStructure extends StructurePiece {
  * Persist the dynamic world (loot, corpses, campfires, loot-respawn timers,
  * airdrop crates) plus game time/tick, the entity-id counter, and weather/
  * airdrop scheduling — as ONE `snapshot` JSON row inside transactionSync.
- * Zombies + deer are intentionally NOT persisted (respawned fresh on boot).
+ * Zombies + animals are intentionally NOT persisted (respawned fresh on boot).
  * Airdrop crates ARE kept: their timestamps are game-time, which is in the
  * snapshot, so landsAt/expiresAt stay coherent across a restart.
  */
