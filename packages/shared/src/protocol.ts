@@ -5,6 +5,7 @@
 import type { ServerConfig } from "./config";
 import type { ItemStack, ItemType } from "./items";
 import type { PieceKind, PieceTier, StructurePiece } from "./structures";
+import type { PlantedTreeDelta, PlantedTreeRecord, TreeSpecies } from "./trees";
 
 /**
  * doc 06 — parse-time whitelist of placeable piece kinds. A LITERAL mirror of
@@ -95,7 +96,9 @@ const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
 // `wrecked`, and YouState `seat` — would NOT bump on its own (the trunk/barrel
 // BodyKind precedent + the fog/felled optional-field posture); the new
 // messages do. So 10 → 11.
-export const PROTOCOL_VERSION: number = 11;
+// Tree lifecycle: planted-tree state changes predicted collision, so clients
+// must understand the new welcome/snapshot fields. 11 -> 12.
+export const PROTOCOL_VERSION: number = 12;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -466,6 +469,16 @@ export type GameEvent =
       z: number;
       q: [number, number, number, number];
     }
+  | {
+      /** Cosmetic only: Three Pinata fractures a sealed proxy, never EZ-Tree. */
+      e: "treeCut";
+      id: number;
+      species: TreeSpecies;
+      final: boolean;
+      x: number;
+      y: number;
+      z: number;
+    }
   | { e: "hurt" }; // YOU took damage (vignette flash); only sent to the victim
 
 export type ServerMsg =
@@ -508,6 +521,8 @@ export type ServerMsg =
        * trees standing, a render-only divergence with no sim impact (felled
        * trees stay kinematic-solid for movement on BOTH ends — see doc 13 M2). */
       felled?: number[];
+      /** Full persistent planted-tree collection, separate from natural indices. */
+      planted?: PlantedTreeRecord[];
     }
   | {
       t: "snap";
@@ -539,6 +554,8 @@ export type ServerMsg =
        * same posture as `fog`; the full set rides in welcome). Omitted when
        * empty. Additive optional → no PROTOCOL_VERSION bump. */
       felled?: number[];
+      /** Additive planted-tree upserts/removals, applied on the render timeline. */
+      planted?: PlantedTreeDelta[];
     }
   /** `worn` (doc 05 M6): the equipped body/back items. Additive optional —
    * `slots` length is INVENTORY_SLOTS, or INVENTORY_SLOTS + extraSlots while

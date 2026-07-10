@@ -234,6 +234,11 @@ export interface ClientWorldState {
   /** doc 06 — bumped on every structure mutation (sFull/sAdd/sRemove/sState
    * and world rebuild) so renderers re-stamp on an integer compare. */
   structuresVersion: number;
+  /** Tree lifecycle — bumped on every planted-tree mutation (welcome.planted +
+   * snap.planted plant/grow/remove deltas, and world rebuild) so the
+   * PlantedTrees renderer rebuilds its instances on an integer compare. The
+   * planted set itself lives in world.plantedTrees (shared collision index). */
+  plantedVersion: number;
 }
 
 export const clientWorld: ClientWorldState = {
@@ -266,6 +271,7 @@ export const clientWorld: ClientWorldState = {
   felledTrees: new Set(),
   felledVersion: 0,
   structuresVersion: 0,
+  plantedVersion: 0,
 };
 
 // --- Build mode (doc 06) ---
@@ -363,6 +369,9 @@ export function resetClientWorld(): void {
   clientWorld.promptCrateId = null;
   clientWorld.unlockedDoors.clear();
   clientWorld.structuresVersion++;
+  // Planted set lives in world.plantedTrees (rebuilt empty on the next welcome's
+  // createWorld); just bump so the renderer drops its stale instances.
+  clientWorld.plantedVersion++;
   buildState.active = false;
   buildState.target = null;
   buildState.valid = false;

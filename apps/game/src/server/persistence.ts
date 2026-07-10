@@ -67,6 +67,8 @@ import type {
   ServerPlayer,
   VehicleMeta,
 } from "./systems/state";
+import { toPlantedRecord, treeStageAt } from "@worldspring/shared/trees";
+import type { PlantedTreeRecord, TreeGrowthStage, TreeSpecies } from "@worldspring/shared/trees";
 
 /** doc 13 M4 — a fresh/restored vehicle meta: persisted fuel/hp/wrecked from the
  * caller; seats empty + input idle (transient, never seated across a restart). */
@@ -433,6 +435,8 @@ interface WorldSnapshot {
    * ADDITIVE like bodies: older snapshots normalize to [], older code ignores
    * the key — no SCHEMA_VERSION bump. */
   felled: number[];
+  /** Stable planted entities; stage is re-derived from plantedAtMs on load. */
+  planted: PlantedTreeRecord[];
   /** doc 06 — player structures: the shared StructurePiece plus the server's
    * ownership meta, one entry per piece. ADDITIVE (the bodies/felled posture):
    * older snapshots normalize to [], a rollback drops the key ("no
@@ -536,6 +540,9 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     airdropNextAt: game.airdropNextAt,
     bodies: game.physics.serialize(),
     felled: [...game.felledTrees],
+    // Defensive optional-chain like serializeStructures: some probes save a
+    // worldless minimal game. The real server always has world.plantedTrees.
+    planted: [...(game.world?.plantedTrees?.trees.values() ?? [])].map(toPlantedRecord),
     structures: serializeStructures(game),
     vehicles: serializeVehicles(game),
   };
@@ -612,7 +619,7 @@ function normalizeContents(raw: unknown): (ItemStack | null)[] {
 function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled", "structures", "vehicles"] as const) {
+  for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled", "planted", "structures", "vehicles"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
@@ -764,6 +771,31 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     if (!Number.isInteger(idx) || idx < 0) continue;
     game.felledTrees.add(idx);
     game.physics.fellTree(idx);
+  }
+
+  // Planted identities never enter world.trees. Wall-clock age advances while
+  // the Durable Object is idle, so restore directly into the current stage.
+  const nowMs = Date.now();
+  for (const entry of snapshot.planted) {
+    if (!hasNumericId(entry)) continue;
+    const raw = entry as Partial<PlantedTreeRecord> & { id: number };
+    const species: TreeSpecies | null = raw.species === "conifer" || raw.species === "oak" ? raw.species : null;
+    if (!species || !Number.isFinite(raw.x) || !Number.isFinite(raw.z) || !Number.isFinite(raw.groundY)) continue;
+    if (!Number.isFinite(raw.plantedAtMs) || !Number.isInteger(raw.appearanceSeed)) continue;
+    // Wall-clock re-stage: offline/idle time counts toward growth (treeStageAt
+    // is the single source of the stage thresholds, shared with the tick scan).
+    const stage: TreeGrowthStage = treeStageAt(raw.plantedAtMs as number, nowMs);
+    game.world.plantedTrees.upsert({
+      id: raw.id,
+      species,
+      appearanceSeed: raw.appearanceSeed as number,
+      x: raw.x as number,
+      z: raw.z as number,
+      groundY: raw.groundY as number,
+      plantedAtMs: raw.plantedAtMs as number,
+      stage,
+    });
+    maxId = Math.max(maxId, raw.id);
   }
 
   if (Number.isFinite(snapshot.time)) game.time = snapshot.time;
