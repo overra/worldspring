@@ -26,15 +26,17 @@ export interface QualityConfig {
   shadowMapSize: number;
   /** Grass blade density multiplier (0..1). */
   grassDensity: number;
+  /** Three Pinata barrel fragments per cosmetic break burst. */
+  destructionFragments: 0 | 6 | 8;
 }
 
 // Three edit sites must stay in sync when adding a preset: the union above,
 // this table, and EscapeMenu's QUALITY_PRESETS list.
 export const QUALITY_CONFIGS: Record<QualityPreset, QualityConfig> = {
-  mobile: { maxDpr: 1, postFx: false, shadows: false, shadowMapSize: 1024, grassDensity: 0.25 },
-  low: { maxDpr: 1, postFx: false, shadows: false, shadowMapSize: 1024, grassDensity: 0.35 },
-  medium: { maxDpr: 1.5, postFx: true, shadows: true, shadowMapSize: 1024, grassDensity: 0.7 },
-  high: { maxDpr: 2, postFx: true, shadows: true, shadowMapSize: 2048, grassDensity: 1 },
+  mobile: { maxDpr: 1, postFx: false, shadows: false, shadowMapSize: 1024, grassDensity: 0.25, destructionFragments: 0 },
+  low: { maxDpr: 1, postFx: false, shadows: false, shadowMapSize: 1024, grassDensity: 0.35, destructionFragments: 6 },
+  medium: { maxDpr: 1.5, postFx: true, shadows: true, shadowMapSize: 1024, grassDensity: 0.7, destructionFragments: 8 },
+  high: { maxDpr: 2, postFx: true, shadows: true, shadowMapSize: 2048, grassDensity: 1, destructionFragments: 8 },
 };
 
 // GPU-class heuristics for detectTier(), matched against the (possibly

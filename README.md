@@ -5,8 +5,9 @@ loot towns, manage hunger/thirst/temperature, and outlast zombies and other play
 DayZ-inspired at its core, but built to grow into a platform for worlds you host and
 configure — community servers, presets, base-building, and bigger worlds are on the
 roadmap (see [docs/plans](docs/plans/)). Persistent authoritative server on a Cloudflare
-Durable Object; React Three Fiber client with client-side prediction. No 3D assets —
-everything is low-poly primitives generated in code.
+Durable Object; React Three Fiber client with client-side prediction. The visual
+style mixes low-poly primitives with compact authored/generated GLBs; procedural
+tree variants are baked offline and instanced at runtime.
 
 ## Run
 
@@ -53,5 +54,9 @@ Space jump
 - **Combat** — melee (fists/axe, server-side cone check) and a hitscan pistol
   (ray vs capsules with wall occlusion, consumes 9mm). Death drops your whole
   inventory as a lootable bag; you respawn fresh on a random beach.
+- **Assets and physics** — `pnpm --filter @worldspring/game models:trees` bakes
+  EZ-Tree variants into `trees.glb`; EZ-Tree never ships in the client. Rapier is
+  the sole authoritative rigid-body engine. Three Pinata runs only in the lazy
+  client scene to create bounded, cosmetic debris after a server-confirmed break.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for module contracts and conventions.

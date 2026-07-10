@@ -7,11 +7,12 @@
 import { INTERP_DELAY_MS } from "@worldspring/shared/constants";
 import { angleLerp, clamp, lerp } from "@worldspring/shared/math";
 import { effectiveGameHour } from "@worldspring/shared/config";
-import type { ServerMsg, WireAnimal, WireBody, WirePlayer, WireZombie } from "@worldspring/shared/protocol";
+import type { GameEvent, ServerMsg, WireAnimal, WireBody, WirePlayer, WireZombie } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 import type { AnimalView, RemotePlayerView, ZombieView } from "@/client/runtime";
 
 export type SnapMsg = Extract<ServerMsg, { t: "snap" }>;
+type BreakEvent = Extract<GameEvent, { e: "break" }>;
 
 interface BufferedSnap {
   arrival: number; // performance.now() at receipt
@@ -32,6 +33,9 @@ interface BufferedSnap {
    * appears on (folding at receipt blanks the tree INTERP_DELAY_MS early). */
   felled: number[] | undefined;
   felledApplied: boolean;
+  /** Cosmetic body-break events share the body's delayed render timeline. */
+  breaks: BreakEvent[];
+  breaksApplied: boolean;
   weather: number;
 }
 
@@ -71,13 +75,18 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
     bodyById,
     felled: snap.felled,
     felledApplied: false,
+    breaks: snap.events.filter((event): event is BreakEvent => event.e === "break"),
+    breaksApplied: false,
     weather: snap.weather,
   });
   if (buffer.length > MAX_BUFFERED_SNAPS) {
     // Never let a trimmed buffer drop a felled delta (idempotent no-op if the
     // cursor already consumed it).
     const evicted = buffer.shift();
-    if (evicted) applyFelled(evicted);
+    if (evicted) {
+      applyFelled(evicted);
+      applyBreaks(evicted);
+    }
   }
 
   // Loot, corpses, fires and drops are discrete — always show the newest set.
@@ -97,6 +106,15 @@ function applyFelled(s: BufferedSnap): void {
   if (!s.felled || s.felled.length === 0) return;
   for (const idx of s.felled) clientWorld.felledTrees.add(idx);
   clientWorld.felledVersion++;
+}
+
+/** Release cosmetic debris when the body-removal snapshot reaches the render
+ * cursor. Unlike ordinary combat events, these must not lead the body by the
+ * interpolation delay. */
+function applyBreaks(s: BufferedSnap): void {
+  if (s.breaksApplied) return;
+  s.breaksApplied = true;
+  if (s.breaks.length > 0) clientWorld.events.push(...s.breaks);
 }
 
 // Dropping the buffer can discard unapplied felled deltas — safe only because
@@ -148,7 +166,10 @@ export function updateInterpolation(nowMs: number): void {
   const b = buffer[bIdx];
   // doc 13 M2 — fold felled deltas through the newer rendered snap: bodies
   // draw from `b`, so the trunk and the vanishing static tree share a frame.
-  for (let i = 0; i <= bIdx; i++) applyFelled(buffer[i]);
+  for (let i = 0; i <= bIdx; i++) {
+    applyFelled(buffer[i]);
+    applyBreaks(buffer[i]);
+  }
   const span = b.arrival - a.arrival;
   const t = span > 0 ? clamp((renderTime - a.arrival) / span, 0, 1) : 1;
 

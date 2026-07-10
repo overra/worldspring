@@ -1,4 +1,5 @@
-// Forest: four modeled props.glb variants (tree_conifer_a/b, tree_oak_a/b)
+// Forest: four EZ-Tree-generated trees.glb variants
+// (tree_conifer_a/b, tree_oak_a/b)
 // drawn with one InstancedMesh per (variant x GLB primitive) — trunk +
 // foliage, so 8 instanced draws for the whole ~700-tree forest. Geometry and
 // materials come straight from the shared GLTF cache (never cloned per
@@ -19,8 +20,8 @@ import * as THREE from "three";
 import type { Tree } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
 
-const PROPS_MODEL_URL = "/models/props.glb";
-useGLTF.preload(PROPS_MODEL_URL);
+const TREES_MODEL_URL = "/models/trees.glb";
+useGLTF.preload(TREES_MODEL_URL);
 
 // Golden-angle increment gives a deterministic, non-repeating yaw per index.
 const YAW_STEP = 2.3999632;
@@ -39,6 +40,7 @@ interface TreeInstance {
 interface VariantPart {
   geometry: THREE.BufferGeometry;
   material: THREE.Material | THREE.Material[];
+  role: "branches" | "leaves";
 }
 
 interface VariantAssets {
@@ -56,16 +58,22 @@ function variantOf(index: number): number {
   return h & 1;
 }
 
-/** Pulls shared geometry + material pairs out of a GLB node's mesh children
- * (multi-primitive nodes load as Groups of Meshes). Nothing is cloned. */
+/** Pulls the generated branches/leaves pair out of a variant node. Role comes
+ * from the generator's stable node suffixes, never traversal order. */
 function extractVariant(scene: THREE.Group, name: string): VariantAssets | null {
   const node = scene.getObjectByName(name);
   if (!node) return null;
   const parts: VariantPart[] = [];
   node.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) parts.push({ geometry: obj.geometry, material: obj.material });
+    if (!(obj instanceof THREE.Mesh)) return;
+    const role = obj.name.endsWith("_branches")
+      ? "branches"
+      : obj.name.endsWith("_leaves")
+        ? "leaves"
+        : null;
+    if (role) parts.push({ geometry: obj.geometry, material: obj.material, role });
   });
-  if (parts.length === 0) return null;
+  if (parts.length !== 2) return null;
   const box = new THREE.Box3().setFromObject(node);
   return { parts, nativeHeight: Math.max(box.max.y, 1e-3) };
 }
@@ -85,12 +93,11 @@ function buildBucketMeshes(
   byIndex: Map<number, InstanceSlots>,
 ): THREE.InstancedMesh[] {
   const meshes: THREE.InstancedMesh[] = [];
-  assets.parts.forEach((part, partIndex) => {
+  assets.parts.forEach((part) => {
     const mesh = new THREE.InstancedMesh(part.geometry, part.material, instances.length);
     mesh.frustumCulled = false;
     mesh.castShadow = true;
-    // Part 0 is the trunk (matches the old trunk mesh's receiveShadow).
-    mesh.receiveShadow = partIndex === 0;
+    mesh.receiveShadow = part.role === "branches";
     instances.forEach(({ tree, index }, slot) => {
       const s = tree.height / assets.nativeHeight;
       const yaw = (index * YAW_STEP) % (Math.PI * 2);
@@ -160,7 +167,7 @@ function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
 }
 
 export function Trees(): ReactElement | null {
-  const gltf = useGLTF(PROPS_MODEL_URL);
+  const gltf = useGLTF(TREES_MODEL_URL);
   const world = clientWorld.world;
 
   const forest = useMemo(() => {

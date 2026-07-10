@@ -456,6 +456,16 @@ export type GameEvent =
   | { e: "swing"; id: string } // player id swung a melee weapon
   | { e: "hit"; x: number; y: number; z: number } // impact effect
   | { e: "zdie"; x: number; y: number; z: number }
+  | {
+      /** Additive cosmetic destruction cue; authoritative removal still rides bodies. */
+      e: "break";
+      id: number;
+      kind: "barrel";
+      x: number;
+      y: number;
+      z: number;
+      q: [number, number, number, number];
+    }
   | { e: "hurt" }; // YOU took damage (vignette flash); only sent to the victim
 
 export type ServerMsg =

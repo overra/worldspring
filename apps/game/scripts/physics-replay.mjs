@@ -22,6 +22,7 @@ import { PhysicsSystem } from "../src/server/physics/PhysicsSystem.ts";
 // doc 13 M3 — the REAL server-side barrel-break loot roller + table, so the
 // break→loot section below exercises production code, not a re-implementation.
 import { rollFromTable } from "../src/server/systems/loot.ts";
+import { breakBarrel } from "../src/server/systems/barrelBreak.ts";
 import { BARREL_LOOT_TABLE } from "@worldspring/shared/items";
 
 let failures = 0;
@@ -229,6 +230,44 @@ const dt = 1 / 15;
     if (!rollOk) check(false, `barrel loot roll out of range: ${JSON.stringify(stack)}`);
   }
   if (rollOk) check(true, "barrel break loot rolls valid server-side stacks (300 rolls, all in range)");
+
+  // f) The production break path captures the body's FINAL unquantized pose,
+  //    queues exactly one additive cosmetic event, then removes the body and
+  //    spills authoritative loot at that same location. This direct probe is
+  //    independent of the websocket smoke harness's route to a distant prop.
+  const sysE = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
+  sysE.attachEngine(RAPIER, dt);
+  sysE.spawnBody(42, "barrel", -100, 0.7, -100);
+  for (let i = 0; i < 200; i++) sysE.step(dt, i * dt);
+  sysE.applyImpulse(42, shoveMass * 2.5, shoveMass * 1.2, shoveMass * 0.7);
+  for (let i = 200; i < 225; i++) sysE.step(dt, i * dt);
+  const finalPose = sysE.bodyPose(42);
+  const breakState = {
+    physics: sysE,
+    propHits: new Map([[42, 2]]),
+    events: [],
+    nextEntityId: 500,
+    loot: new Map(),
+    world: { groundHeight: fakeWorld.heightAt },
+  };
+  breakBarrel(breakState, 42, 999, 999, 999);
+  const breakEvent = breakState.events[0]?.ev;
+  const samePose = breakEvent?.e === "break" && finalPose !== null
+    && Math.abs(breakEvent.x - finalPose.x) < 1e-9
+    && Math.abs(breakEvent.y - finalPose.y) < 1e-9
+    && Math.abs(breakEvent.z - finalPose.z) < 1e-9
+    && breakEvent.q.every((v, i) => Number.isFinite(v) && Math.abs(v - finalPose.q[i]) < 1e-9);
+  check(
+    breakState.events.length === 1 && breakEvent?.e === "break" && breakEvent.id === 42 && breakEvent.kind === "barrel",
+    "barrel break queues exactly one typed break event",
+  );
+  check(samePose, "break event carries the body's exact final position and quaternion");
+  check(sysE.bodyPose(42) === null && !breakState.propHits.has(42), "break removes the authoritative body and transient hit counter");
+  const spilled = breakState.loot.get(500);
+  check(
+    breakState.loot.size === 1 && spilled?.spawnId === null && spilled.x === finalPose?.x && spilled.z === finalPose?.z,
+    "break spills one authoritative loot stack at the captured final pose",
+  );
 }
 
 // --- 1.7 vehicles: driven-body controller (doc 13 M4) ------------------------
