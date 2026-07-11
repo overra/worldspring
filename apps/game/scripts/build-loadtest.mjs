@@ -767,7 +767,8 @@ async function main() {
   const tickEmaSteady = median(emaSamples);
   const allTainted = maxSamples.length > 0 && steadyMaxSamples.length === 0;
   const steadyPool = allTainted ? maxSamples : steadyMaxSamples;
-  const tickMaxSteady = steadyPool.length ? Math.min(...steadyPool) : 0;
+  // Empty pool → Infinity so tickPass fails closed (0 would silently PASS the budget).
+  const tickMaxSteady = steadyPool.length ? Math.min(...steadyPool) : Infinity;
   const tickMaxSavePeak = Math.max(0, ...maxSamples);
   const excludedSaveSamples = maxSamples.length - steadyMaxSamples.length;
   const persistSpike = Math.max(0, round3(tickMaxSavePeak - tickMaxSteady));
