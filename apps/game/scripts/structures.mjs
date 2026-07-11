@@ -28,7 +28,12 @@ import {
   WORLD_PIECE_CAP,
 } from "@worldspring/shared/constants";
 import { parseClientMsg, PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import { saveWorld, loadWorld } from "../src/server/persistence.ts";
+import {
+  saveWorld,
+  loadWorld,
+  structureBucketOf,
+  STRUCTURE_BUCKET_COUNT,
+} from "../src/server/persistence.ts";
 
 let failures = 0;
 const check = (ok, msg) => {
@@ -313,7 +318,7 @@ console.log(`  (buildable cell at gx=${BGX}, gz=${BGZ})`);
 console.log("systems (handlePlace/handleDemolish/handleDoor):");
 
 const sys = await bundleModule(
-  'export { handlePlace, handleDemolish, handleDoor, handleSetCode, handleTryCode, handleContainerOpen, handleContainerMove, damageStructure, ownerOnline, sweepDecay, tickStructures, removePiece, toWirePiece, structuresFullMsgs } from "./structures.ts";\n' +
+  'export { handlePlace, handleDemolish, handleDoor, handleSetCode, handleTryCode, handleContainerOpen, handleContainerMove, damageStructure, ownerOnline, sweepDecay, tickStructures, removePiece, toWirePiece, touchPiece, structuresFullMsgs } from "./structures.ts";\n' +
     'export { performAttack } from "./combat.ts";\n',
   systemsDir,
   "structures-harness-entry.ts",
@@ -351,6 +356,8 @@ function makeState(buildingOverrides = {}) {
     felledTrees: new Set(),
     felledDelta: [],
     treeChops: new Map(),
+    dirtyStructureBuckets: new Set(),
+    treesDirty: false,
     posHistory: [],
     physics: {
       addStructure: (id, aabbs) => physicsCalls.push(["add", id, aabbs.length]),
@@ -1135,22 +1142,130 @@ console.log("wire secrecy (sFull/sAdd serialized JSON):");
   sysWorld.structures.remove(8202);
 }
 
+// --- 3g. persistence dirty tracking (doc 06 M8 follow-up) --------------------
+// The split-row save (persistence.saveWorld) SKIPS clean structure buckets, so
+// its correctness rests on EVERY mutation path marking its bucket via
+// touchPiece. This section pins each handler: a missed mark here means a
+// mutation silently lost across a DO restart.
+console.log("dirty tracking (every mutation marks its persistence bucket):");
+{
+  const state = makeState();
+  const cx = BGX * BUILD_CELL + BUILD_CELL / 2;
+  const cz = BGZ * BUILD_CELL + BUILD_CELL / 2;
+  const bucket = structureBucketOf(BGX, BGZ);
+  const dirty = () => state.dirtyStructureBuckets;
+  const clearAndCheck = (what) => {
+    check(dirty().has(bucket), `${what} marks bucket ${bucket} dirty`);
+    dirty().clear();
+  };
+
+  const owner = makePlayer(state, "own", "hash-own", cx, cz + 0.5, [
+    { type: "hammer", count: 1 },
+    { type: "wood", count: 8 },
+    { type: "wood", count: 8 },
+    { type: "wood", count: 8 },
+    { type: "wood", count: 8 },
+  ]);
+  const stranger = makePlayer(state, "str", "hash-str", cx, cz + 0.5, []);
+
+  // place
+  sys.handlePlace(state, owner, { kind: "foundation", tier: 0, gx: BGX, gz: BGZ });
+  const foundationId = state.nextEntityId - 1;
+  clearAndCheck("handlePlace");
+
+  sys.handlePlace(state, owner, { kind: "doorway", tier: 0, gx: BGX, gz: BGZ, edge: 0 });
+  const doorwayId = state.nextEntityId - 1;
+  sys.handlePlace(state, owner, { kind: "door", tier: 0, gx: BGX, gz: BGZ, edge: 0 });
+  const doorId = state.nextEntityId - 1;
+  dirty().clear();
+
+  // door toggle (open, then close)
+  sys.handleDoor(state, owner, doorId);
+  clearAndCheck("handleDoor (open)");
+  sys.handleDoor(state, owner, doorId);
+  clearAndCheck("handleDoor (close)");
+
+  // setCode
+  sys.handleSetCode(state, owner, doorId, "1234");
+  clearAndCheck("handleSetCode");
+
+  // tryCode grant with the door ALREADY open: isolates the authorized-list
+  // mark from the door-state mark (setDoorOpen early-returns on no change).
+  state.world.structures.setOpen(doorId, true);
+  state.time += 2;
+  sys.handleTryCode(state, stranger, doorId, "1234");
+  check(state.structureMeta.get(doorId)?.authorized.includes("hash-str"), "tryCode grant landed");
+  clearAndCheck("handleTryCode (authorized grant)");
+  state.world.structures.setOpen(doorId, false);
+
+  // crate contents (cMove)
+  sys.handlePlace(state, owner, { kind: "crate", tier: 0, gx: BGX, gz: BGZ, x: cx, z: cz });
+  const crateId = state.nextEntityId - 1;
+  dirty().clear();
+  sys.handleContainerMove(state, owner, { id: crateId, from: 1, to: 0, dir: "in" });
+  check(state.structureMeta.get(crateId)?.contents?.[0]?.type === "wood", "cMove landed");
+  clearAndCheck("handleContainerMove");
+  // a REJECTED move (occupied target) must NOT mark
+  sys.handleContainerMove(state, owner, { id: crateId, from: 2, to: 0, dir: "in" });
+  check(!dirty().has(bucket), "a rejected cMove does not mark the bucket");
+
+  // damage (hp change), including the pinned-foundation clamp branch
+  sys.damageStructure(state, doorId, 6, 0);
+  clearAndCheck("damageStructure (hp)");
+  state.world.structures.pieces.get(foundationId).hp = 4;
+  sys.damageStructure(state, foundationId, 6, 0); // pinned → clamps at 1 hp
+  check(state.world.structures.pieces.get(foundationId)?.hp === 1, "clamp branch taken");
+  clearAndCheck("damageStructure (pinned clamp)");
+
+  // destruction (hp<=0 → removePiece), cascading the door
+  state.world.structures.pieces.get(doorwayId).hp = 1;
+  sys.damageStructure(state, doorwayId, 6, 0);
+  check(!state.world.structures.pieces.has(doorwayId), "destruction landed");
+  clearAndCheck("damageStructure (destroy → removePiece)");
+
+  // demolish
+  sys.handleDemolish(state, owner, crateId);
+  check(!state.world.structures.pieces.has(crateId), "demolish landed");
+  clearAndCheck("handleDemolish");
+
+  // decay removal
+  sys.sweepDecay(state, () => null); // every owner reads as decayed
+  check(state.world.structures.pieces.size === 0, "decay removed the rest");
+  clearAndCheck("sweepDecay (decay removal)");
+
+  // touchPiece itself is bucket-accurate + fixture-tolerant
+  sys.touchPiece(state, { gx: 100, gz: 4 });
+  check(dirty().has(structureBucketOf(100, 4)), "touchPiece marks the piece's own bucket");
+  sys.touchPiece({}, { gx: 0, gz: 0 }); // fixture without the set: must not throw
+  check(true, "touchPiece tolerates fixtures without dirty tracking");
+  check(
+    structureBucketOf(-1, -1) >= 0 && structureBucketOf(-1, -1) < STRUCTURE_BUCKET_COUNT,
+    "negative cells map into the bucket range",
+  );
+}
+
 // --- 4. persistence ---------------------------------------------------------
-console.log("persistence (additive WorldSnapshot field):");
+console.log("persistence (split structures:<b> bucket rows):");
 
 function makeFakeSql() {
-  let rows = [];
+  let rows = []; // { kind, payload }
   return {
     sql: {
       exec(query, ...bindings) {
-        if (/^DELETE FROM world_state/.test(query)) { rows = []; return { toArray: () => [] }; }
-        if (/^INSERT INTO world_state/.test(query)) { rows.push({ payload: bindings[0] }); return { toArray: () => [] }; }
-        if (/SELECT payload FROM world_state/.test(query)) return { toArray: () => rows.map((r) => ({ payload: r.payload })) };
+        if (/^DELETE FROM world_state WHERE kind = \?/.test(query)) {
+          rows = rows.filter((r) => r.kind !== bindings[0]);
+          return { toArray: () => [] };
+        }
+        if (/^DELETE FROM world_state$/.test(query)) { rows = []; return { toArray: () => [] }; }
+        if (/^INSERT INTO world_state/.test(query)) { rows.push({ kind: bindings[0], payload: bindings[1] }); return { toArray: () => [] }; }
+        if (/SELECT kind, payload FROM world_state/.test(query)) return { toArray: () => rows.map((r) => ({ kind: r.kind, payload: r.payload })) };
         return { toArray: () => [] };
       },
     },
     storage: { transactionSync: (fn) => fn() },
-    payload: () => rows[0]?.payload,
+    rowOf: (kind) => rows.find((r) => r.kind === kind),
+    allPayloads: () => rows.map((r) => r.payload).join("\n"),
+    insert: (kind, payload) => rows.push({ kind, payload }),
   };
 }
 
@@ -1170,6 +1285,8 @@ const persistBase = () => ({
   physics: { serialize: () => [], restore: () => {}, fellTree: () => {} },
   felledTrees: new Set(),
   structureMeta: new Map(),
+  dirtyStructureBuckets: new Set(),
+  treesDirty: false,
 });
 
 {
@@ -1191,10 +1308,18 @@ const persistBase = () => ({
   });
   g.nextEntityId = 44;
 
+  // Pieces persist through their spatial bucket rows — mark them dirty the
+  // way live mutations (touchPiece) would have.
+  for (const p of g.world.structures.pieces.values()) {
+    g.dirtyStructureBuckets.add(structureBucketOf(p.gx, p.gz));
+  }
+
   const fake = makeFakeSql();
   saveWorld(fake.storage, fake.sql, g);
-  check(fake.payload().includes('"structures"'), "snapshot payload carries the structures key");
-  check(fake.payload().includes("own-a"), "persisted pieces carry ownerHash (server-side only)");
+  const bucketKind = `structures:${structureBucketOf(BGX, BGZ)}`;
+  check(fake.rowOf(bucketKind) !== undefined, "pieces persist into their structures:<b> bucket row");
+  check(!fake.rowOf("snapshot").payload.includes('"structures"'), "snapshot row is slim (no inline structures key)");
+  check(fake.rowOf(bucketKind).payload.includes("own-a"), "persisted pieces carry ownerHash (server-side only)");
 
   const g2 = persistBase();
   g2.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
@@ -1222,14 +1347,33 @@ const persistBase = () => ({
   check(pieceAabbs(gate).length === 0, "open gate derives zero boxes after restore");
   void gateBoxes;
 
-  // Old snapshot (no structures key) loads clean.
+  // Old snapshot (no structures key, no bucket rows) loads clean.
   const oldFake = makeFakeSql();
-  const oldSnapshot = JSON.parse(fake.payload());
-  delete oldSnapshot.structures;
-  oldFake.sql.exec("INSERT INTO world_state (kind, payload) VALUES ('snapshot', ?)", JSON.stringify(oldSnapshot));
+  oldFake.insert("snapshot", fake.rowOf("snapshot").payload);
   const g3 = persistBase();
   g3.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
   check(loadWorld(oldFake.sql, g3) === true && g3.world.structures.pieces.size === 0, "pre-structures snapshot loads clean (no pieces)");
+  check(g3.dirtyStructureBuckets.size === 0, "nothing to migrate ⇒ nothing marked dirty");
+
+  // LEGACY fat snapshot (inline structures key, the pre-split format): loads
+  // fully AND marks every bucket dirty so the next save materializes the
+  // split rows (the one-transaction migration).
+  const legacyFake = makeFakeSql();
+  const legacySnapshot = JSON.parse(fake.rowOf("snapshot").payload);
+  legacySnapshot.structures = JSON.parse(fake.rowOf(bucketKind).payload);
+  legacyFake.insert("snapshot", JSON.stringify(legacySnapshot));
+  const gL = persistBase();
+  gL.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
+  check(
+    loadWorld(legacyFake.sql, gL) === true && gL.world.structures.pieces.size === 3 && gL.structureMeta.get(42)?.code === "7788",
+    "legacy inline-structures snapshot hydrates fully (pieces + meta)",
+  );
+  check(gL.dirtyStructureBuckets.size === STRUCTURE_BUCKET_COUNT, "legacy load marks ALL buckets dirty (migration)");
+  saveWorld(legacyFake.storage, legacyFake.sql, gL);
+  check(
+    legacyFake.rowOf(bucketKind) !== undefined && !legacyFake.rowOf("snapshot").payload.includes('"structures"'),
+    "first save after a legacy load materializes bucket rows + slims the snapshot",
+  );
 
   // Garbage entries are skipped per-entry, not fatal. review: an edge-kind
   // piece with a corrupt/missing edge would restore as an invisible,
@@ -1237,8 +1381,9 @@ const persistBase = () => ({
   // counts toward every cap — skip it; a cell piece with a stray edge would
   // shift pieceCenter 1.5m — strip the edge instead.
   const dirtyFake = makeFakeSql();
-  const dirty = JSON.parse(fake.payload());
-  dirty.structures.push(
+  dirtyFake.insert("snapshot", fake.rowOf("snapshot").payload);
+  const dirtyPieces = JSON.parse(fake.rowOf(bucketKind).payload);
+  dirtyPieces.push(
     null,
     { id: "x" },
     { id: 99, kind: "nonsense", gx: 0, gz: 0, floorY: 0 },
@@ -1246,7 +1391,7 @@ const persistBase = () => ({
     { id: 97, kind: "wall", tier: 0, gx: 0, gz: 0, edge: 1, floorY: 1, hp: 400 }, // edge corrupt
     { id: 96, kind: "foundation", tier: 0, gx: 30, gz: 30, edge: 0, floorY: 1, hp: 600 }, // stray edge
   );
-  dirtyFake.sql.exec("INSERT INTO world_state (kind, payload) VALUES ('snapshot', ?)", JSON.stringify(dirty));
+  dirtyFake.insert(bucketKind, JSON.stringify(dirtyPieces));
   const g4 = persistBase();
   g4.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
   check(loadWorld(dirtyFake.sql, g4) === true && g4.world.structures.pieces.size === 4, "garbage structure entries skipped, good ones kept");

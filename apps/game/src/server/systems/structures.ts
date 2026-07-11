@@ -37,6 +37,7 @@ import {
   type StructurePiece,
 } from "@worldspring/shared/structures";
 import type { ServerMsg, WirePiece } from "@worldspring/shared/protocol";
+import { structureBucketOf } from "../persistence";
 import { countOf, removeFromInventory, sendInventory } from "./players";
 import {
   broadcast,
@@ -48,6 +49,21 @@ import {
 
 /** sFull batch size (doc 06: ~45KB per 500-piece message). */
 const SFULL_BATCH = 500;
+
+/**
+ * Mark a piece's persistence bucket dirty so the next periodic save rewrites
+ * its `structures:<b>` row (persistence.saveWorld skips clean buckets). EVERY
+ * structure mutation — index add/remove, hp, open state, code/authorized,
+ * crate contents — MUST pass through here; a missed site is silently stale on
+ * disk until the bucket's next mutation, i.e. lost across a DO restart in
+ * that window. All mutation paths currently funnel through this module (the
+ * structures.mjs dirty-coverage harness pins each one); any FUTURE mutation
+ * path added elsewhere must call this too. The `?.` tolerates untyped .mjs
+ * harness fixtures that predate the dirty tracking (the wornWire precedent).
+ */
+export function touchPiece(game: GameState, piece: Pick<StructurePiece, "gx" | "gz">): void {
+  game.dirtyStructureBuckets?.add(structureBucketOf(piece.gx, piece.gz));
+}
 
 /** Cap on the per-door authorized list — FIFO eviction (doc 06 M5). */
 const AUTHORIZED_CAP = 16;
@@ -219,6 +235,7 @@ export function handlePlace(
     contents: msg.kind === "crate" ? Array.from({ length: CRATE_SLOTS }, () => null) : null,
   };
   game.structureMeta.set(id, meta);
+  touchPiece(game, piece);
   game.physics.addStructure(id, pieceAabbs(piece));
   broadcast(game, { t: "sAdd", piece: toWirePiece(piece, meta) });
 }
@@ -390,6 +407,7 @@ export function removePiece(game: GameState, id: number, spillContents: boolean)
         if (stack) spillStack(game, cx, cz, stack);
       }
     }
+    if (p) touchPiece(game, p);
     index.remove(rid);
     game.structureMeta.delete(rid);
     game.doorBackoff.delete(rid);
@@ -424,6 +442,7 @@ function isDoorAuthorized(meta: StructureMeta | undefined, player: ServerPlayer)
 function setDoorOpen(game: GameState, piece: StructurePiece, open: boolean): void {
   if (piece.open === open) return;
   game.world.structures.setOpen(piece.id, open);
+  touchPiece(game, piece);
   // Collision swap on the physics side too, or a trunk rolls up against an
   // invisible box in an open doorway (doc 06 §physics interaction).
   game.physics.setStructureOpen(piece.id, pieceAabbs(piece));
@@ -468,6 +487,7 @@ export function handleSetCode(
   }
   meta.code = code === "" ? null : code;
   meta.authorized = []; // revocation: share the NEW code to re-grant
+  touchPiece(game, piece);
   // A fresh code starts a fresh guessing budget; removal clears the lockout.
   game.doorBackoff.delete(id);
   broadcast(game, { t: "sState", id, locked: meta.code !== null });
@@ -522,6 +542,7 @@ export function handleTryCode(
     if (!meta.authorized.includes(player.tokenHash)) {
       meta.authorized.push(player.tokenHash);
       if (meta.authorized.length > AUTHORIZED_CAP) meta.authorized.shift(); // FIFO
+      touchPiece(game, piece); // the grant persists even if the door was already open
     }
     setDoorOpen(game, piece, true);
     notice(game, player, "The code clicks — you are in");
@@ -612,6 +633,7 @@ export function handleContainerMove(
   const source = msg.dir === "in" ? inv[invSlot] : contents[crateSlot];
   const targetOccupied = msg.dir === "in" ? contents[crateSlot] !== null : inv[invSlot] !== null;
   if (source && !targetOccupied) {
+    touchPiece(game, crate.piece); // crate contents changed — persist the bucket
     if (msg.dir === "in") {
       // Moving the stack a cast is bound to cancels it (the dropSlot rule:
       // the cast's source stack is gone from that slot).
@@ -678,6 +700,7 @@ export function damageStructure(
   if (dmg <= 0) return true; // hit landed; the shield ate it (mult 0)
 
   piece.hp -= dmg;
+  touchPiece(game, piece); // hp changed (covers the clamp branch too; removePiece re-marks)
   if (piece.hp <= 0) {
     if (foundationPinned(game, piece)) {
       // The no-orphan rule holds on the damage path too: raiders clear the
