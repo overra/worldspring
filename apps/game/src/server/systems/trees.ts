@@ -234,6 +234,7 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
     state.plantedTreeChops.delete(best.key);
     state.world.plantedTrees.remove(best.key);
     state.plantedTreeDelta.push({ op: "remove", id: best.key });
+    state.treesDirty = true;
     state.physics.removePlantedTree(best.key);
     dropWoodAt(state, hitTree.x, hitTree.z, STUMP_WOOD);
     return true;
@@ -264,15 +265,18 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
 
 /** Spawn the dynamic falling-trunk body for a felled tree and topple it AWAY
  * from the chopper. Shared by natural and planted felling — same footprint as
- * the static collider it replaces, base lifted a hair above the sampled
- * heightfield seam. */
+ * the static collider it replaces, base lifted `baseLift` above the sampled
+ * heightfield seam. Planted fells pass a taller lift: their stump collider is
+ * already in place at the same x/z, and spawning the trunk inside it would let
+ * Rapier's depenetration kick fight the tuned topple impulse. */
 function spawnFallingTrunk(
   state: GameState,
   player: ServerPlayer,
   tree: Pick<Tree, "x" | "z" | "groundY" | "r" | "height">,
+  baseLift: number = TRUNK_SPAWN_LIFT,
 ): void {
   const halfH = tree.height / 2;
-  const y = tree.groundY + halfH + TRUNK_SPAWN_LIFT;
+  const y = tree.groundY + halfH + baseLift;
   const id = state.physics.spawnBody(state.nextEntityId++, "trunk", tree.x, y, tree.z, [tree.r, halfH, tree.r]);
   if (id === null) return;
   // Topple AWAY from the chopper: horizontal impulse at the trunk TOP (the
@@ -301,6 +305,7 @@ function fellTree(state: GameState, player: ServerPlayer, index: number): void {
   const tree = state.world.trees[index];
   state.felledTrees.add(index);
   state.felledDelta.push(index);
+  state.treesDirty = true;
   state.physics.fellTree(index);
   spawnFallingTrunk(state, player, tree);
   maybeDropFellSeed(state, tree.kind, tree.x, tree.z);
@@ -324,8 +329,11 @@ function fellPlantedTree(state: GameState, player: ServerPlayer, tree: PlantedTr
   const record: PlantedTreeRecord = { ...toPlantedRecord(tree), stage: "stump" };
   const stump = state.world.plantedTrees.upsert(record);
   state.plantedTreeDelta.push({ op: "upsert", tree: record });
+  state.treesDirty = true;
   state.physics.addPlantedTree(stump.id, stump.x, stump.groundY, stump.z, stump.r, stump.height);
-  spawnFallingTrunk(state, player, tree);
+  // Clear the just-added stump collider (stump.height tall) so the trunk does
+  // not materialize interpenetrating it — the cut line is the stump top anyway.
+  spawnFallingTrunk(state, player, tree, stump.height + TRUNK_SPAWN_LIFT);
   maybeDropFellSeed(state, tree.species, tree.x, tree.z);
   queueEvent(
     state,
@@ -423,6 +431,7 @@ export function plantSeed(state: GameState, player: ServerPlayer, species: TreeS
   // young/mature collider (the growth scan re-adds/resizes at each transition).
   state.physics.addPlantedTree(tree.id, tree.x, tree.groundY, tree.z, tree.r, tree.height);
   state.plantedTreeDelta.push({ op: "upsert", tree: record });
+  state.treesDirty = true;
   return true;
 }
 
@@ -492,6 +501,7 @@ export function tickTreeGrowth(state: GameState): void {
     const grown = state.world.plantedTrees.upsert(record);
     state.physics.addPlantedTree(grown.id, grown.x, grown.groundY, grown.z, grown.r, grown.height);
     state.plantedTreeDelta.push({ op: "upsert", tree: record });
+    state.treesDirty = true;
   }
 }
 

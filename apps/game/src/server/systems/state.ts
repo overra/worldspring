@@ -465,6 +465,13 @@ export interface GameState {
   plantedTreeChops: Map<number, number>;
   /** Loss-free additive planted-tree state sent in the next snapshot. */
   plantedTreeDelta: PlantedTreeDelta[];
+  /** Set at EVERY felled/planted mutation site (fell, stump-clear, plant,
+   * growth). Write-only today — saveWorld persists trees state unconditionally
+   * — but the dirty-gated split-row persistence (PR 89) skips rewriting the
+   * `trees` row unless this is set, so keeping the markers exhaustive here is
+   * what makes the two changes compose in either merge order. Cleared by the
+   * save path once that lands. */
+  treesDirty: boolean;
   /** Per-player ambient seed roll deadline (game-time, transient). */
   seedDropAt: Map<string, number>;
   /** Wall-clock growth scan deadline (epoch ms, transient). */
@@ -528,6 +535,7 @@ export function createGameState(
     treeChops: new Map(),
     plantedTreeChops: new Map(),
     plantedTreeDelta: [],
+    treesDirty: false,
     seedDropAt: new Map(),
     treeGrowthNextAtMs: 0,
     propHits: new Map(),

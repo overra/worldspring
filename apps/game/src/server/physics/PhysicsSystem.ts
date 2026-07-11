@@ -691,10 +691,15 @@ export class PhysicsSystem {
     const cap = Math.max(0, this.cfg.bodyCap);
     let evictable = 0;
     for (const rec of this.bodies.values()) if (rec.kind !== "vehicle") evictable++;
-    while (evictable > cap) {
+    // Victim preference: TRUNKS first. Trunks are the only unbounded population
+    // now that they persist until axed (the TTL is gone), so they pay their own
+    // cap cost; barrels/crates are bounded loot fixtures (MAX_BARRELS etc.) and
+    // must not be silently deleted by someone else's logging spree. Within a
+    // kind class: oldest-settled first, then oldest-created (unchanged).
+    const pickVictim = (pred: (rec: BodyRec) => boolean): BodyRec | null => {
       let victim: BodyRec | null = null;
       for (const rec of this.bodies.values()) {
-        if (rec.kind === "vehicle") continue;
+        if (rec.kind === "vehicle" || !pred(rec)) continue;
         const settled = rec.sleptAt !== null && this.gameTime - rec.sleptAt >= SETTLED_AFTER_S;
         if (settled && (victim === null || (victim.sleptAt ?? Infinity) > (rec.sleptAt ?? Infinity))) {
           victim = rec;
@@ -702,10 +707,14 @@ export class PhysicsSystem {
       }
       if (!victim) {
         for (const rec of this.bodies.values()) {
-          if (rec.kind === "vehicle") continue;
+          if (rec.kind === "vehicle" || !pred(rec)) continue;
           if (victim === null || rec.createdAt < victim.createdAt) victim = rec;
         }
       }
+      return victim;
+    };
+    while (evictable > cap) {
+      const victim = pickVictim((rec) => rec.kind === "trunk") ?? pickVictim(() => true);
       if (!victim) return;
       // Report before removal so the payout position is the resting pose.
       const t = victim.body.translation();

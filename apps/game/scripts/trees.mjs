@@ -91,7 +91,10 @@ function makePhysics() {
     addPlantedTree: (id, x, gy, z, r, h) => calls.push(["addPlanted", id, r, h]),
     removePlantedTree: (id) => calls.push(["removePlanted", id]),
     fellTree: (i) => calls.push(["fellTree", i]),
-    spawnBody: () => ++bodyId,
+    spawnBody: (_id, kind, x, y, z) => {
+      calls.push(["spawnBody", kind, x, y, z]);
+      return ++bodyId;
+    },
     applyImpulseAtPoint: () => calls.push(["impulse"]),
     bodyPositions(kind) {
       return kind === "trunk" ? [...this.trunks] : [];
@@ -131,6 +134,7 @@ function makeState(world) {
     treeChops: new Map(),
     plantedTreeChops: new Map(),
     plantedTreeDelta: [],
+    treesDirty: false,
     seedDropAt: new Map(),
     treeGrowthNextAtMs: 0,
     propHits: new Map(),
@@ -386,6 +390,7 @@ const [OX, OZ] = findOpenSpot(world);
 
   // mature: three chops fell it.
   upsertPlanted(world, 600002, tx, tz, "mature");
+  const matureHeight = world.plantedTrees.trees.get(600002).height;
   const chopper = makePlayer(state, "pm", OX, OZ, 0, [{ type: "axe", count: 1 }]);
   check(tryChopTree(state, chopper) === true, "chop 1 lands on a mature planted tree");
   check(state.plantedTreeChops.get(600002) === 1, "planted chop counter increments (keyed by id)");
@@ -405,8 +410,21 @@ const [OX, OZ] = findOpenSpot(world);
     "felling resized the collider to the stub",
   );
   check(state.physics.calls.filter((c) => c[0] === "impulse").length === 1, "a dynamic trunk was toppled");
+  check(state.treesDirty === true, "felling a planted tree marks treesDirty (the `trees` row rewrites)");
+  // The trunk must clear the just-added stump collider: its base (spawn y
+  // minus half the MATURE height it was spawned with) must sit at or above
+  // the stump top, never interpenetrating it.
+  const trunkSpawn = state.physics.calls.find((c) => c[0] === "spawnBody" && c[1] === "trunk");
+  check(trunkSpawn !== undefined, "planted fell spawned a trunk body");
+  check(
+    trunkSpawn !== undefined &&
+      stump !== undefined &&
+      trunkSpawn[3] - matureHeight / 2 >= stump.groundY + stump.height - 1e-6,
+    "trunk spawns with its base above the stump collider (no interpenetration)",
+  );
 
   // Stump clearing: no per-hit wood; the STUMP_HITS_TO_CLEAR-th hit removes it.
+  state.treesDirty = false; // isolate the clear-path marker from the fell above
   const woodBefore = chopper.inventory.reduce((n, s) => n + (s && s.type === "wood" ? s.count : 0), 0);
   for (let i = 0; i < STUMP_HITS_TO_CLEAR - 1; i++) {
     check(tryChopTree(state, chopper) === true, `stump hit ${i + 1} lands`);
@@ -422,6 +440,7 @@ const [OX, OZ] = findOpenSpot(world);
     state.physics.calls.some((c) => c[0] === "removePlanted" && c[1] === 600002),
     "clearing removed the stub collider",
   );
+  check(state.treesDirty === true, "clearing a stump marks treesDirty (the `trees` row rewrites)");
   const woodAfter = chopper.inventory.reduce((n, s) => n + (s && s.type === "wood" ? s.count : 0), 0);
   check(woodAfter === woodBefore, "stump hits grant no per-hit inventory wood (salvage drops as loot)");
   check(
