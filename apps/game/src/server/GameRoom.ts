@@ -239,6 +239,14 @@ export class GameRoom extends DurableObject<Env> {
   private tickMsWindowMax = 0;
   private tickMsPrevWindowMax = 0;
   private tickMsWindowStart = 0;
+  // Per-phase tick cost (additive /api/health `tickPhases`): EMA + rotating
+  // window max per labelled call group in tick(), same alpha and window as the
+  // whole-tick numbers above so the phase breakdown sums to ~tickMsEma. A gap
+  // between the sum and tickMsEma is time OUTSIDE the buckets (GC pauses,
+  // workerd stalls) — that gap is itself a diagnostic signal.
+  private tickPhaseEma = new Map<string, number>();
+  private tickPhaseWindowMax = new Map<string, number>();
+  private tickPhasePrevWindowMax = new Map<string, number>();
   /** Monotonic count of inbound WS messages received — exposed via /api/health
    * for external inbound-rate monitoring (Δ inMsgCount / Δ now); used by the
    * load-test harness to tell server CPU load apart from undelivered load. */
@@ -378,6 +386,24 @@ export class GameRoom extends DurableObject<Env> {
           // Additive: per-phase cost of the most recent periodic save (the
           // split-row persist, doc 06 M8 follow-up). Read by build-loadtest.
           lastSave: this.lastSave,
+          // Additive: per-phase tick cost breakdown — { label: { ema, max } },
+          // same EMA alpha / max-window semantics as tickMsEma / tickMsMax.
+          // Sum of emas ≈ tickMsEma; the shortfall is un-bucketed stall time
+          // (GC / workerd), which is the point of comparing them.
+          tickPhases: Object.fromEntries(
+            [...this.tickPhaseEma].map(([label, ema]) => [
+              label,
+              {
+                ema: round2(ema),
+                max: round2(
+                  Math.max(
+                    this.tickPhaseWindowMax.get(label) ?? 0,
+                    this.tickPhasePrevWindowMax.get(label) ?? 0,
+                  ),
+                ),
+              },
+            ]),
+          ),
         }),
         {
           headers: {
@@ -845,6 +871,8 @@ export class GameRoom extends DurableObject<Env> {
       this.tickMsPrevWindowMax = this.tickMsWindowMax;
       this.tickMsWindowMax = 0;
       this.tickMsWindowStart = nowMs;
+      this.tickPhasePrevWindowMax = this.tickPhaseWindowMax;
+      this.tickPhaseWindowMax = new Map();
     }
     if (ms > this.tickMsWindowMax) this.tickMsWindowMax = ms;
     if (ms > TICK_OVERRUN_WARN_MS) {
@@ -1304,6 +1332,21 @@ export class GameRoom extends DurableObject<Env> {
 
   // --- Tick ---
 
+  /** Stamp the cost since the previous stamp into the named phase bucket
+   * (EMA + window max — see the tickPhase* fields). tick() calls this at each
+   * call-group boundary; the labels are the /api/health `tickPhases` keys. */
+  private phaseTimer(): (label: string) => void {
+    let last = performance.now();
+    return (label) => {
+      const now = performance.now();
+      const d = now - last;
+      last = now;
+      const prev = this.tickPhaseEma.get(label);
+      this.tickPhaseEma.set(label, prev === undefined ? d : prev + TICK_EMA_ALPHA * (d - prev));
+      if (d > (this.tickPhaseWindowMax.get(label) ?? 0)) this.tickPhaseWindowMax.set(label, d);
+    };
+  }
+
   private tick(): void {
     const game = this.game;
     if (!game) return;
@@ -1314,6 +1357,7 @@ export class GameRoom extends DurableObject<Env> {
       return;
     }
     const dt = TICK_MS / 1000;
+    const phase = this.phaseTimer();
 
     // Logged-out bodies past the linger window are saved and removed —
     // no corpse, no notice; they simply fade from the world. The save is a
@@ -1343,14 +1387,17 @@ export class GameRoom extends DurableObject<Env> {
         }
       }
     }
+    phase("upkeep");
 
     applyQueuedInputs(game, dt);
+    phase("inputs");
     // Fog-of-war: reveal cells around each player's just-updated position
     // (no-op unless map.reveal === "explored").
     markExploration(game);
     // doc 06 M7 — stamp owner presence (the offline-shield grace window reads
     // it) BEFORE attacks resolve, and run the decay sweep on its cadence.
     tickStructures(game, (hash) => lastSeenMs(this.ctx.storage.sql, hash));
+    phase("structures");
     // Channeled actions (doc 11) advance HERE — load-bearing ordering: this MUST
     // run AFTER applyQueuedInputs (so it reads THIS tick's freshly-computed
     // movedThisTick for the move-cancel rule, which applyQueuedInputs resets to
@@ -1369,6 +1416,7 @@ export class GameRoom extends DurableObject<Env> {
     }
     // Portal crossings resolve against this tick's post-movement positions.
     stepPortals(game);
+    phase("actions");
     // doc 13 M4 — apply each driven vehicle's control to its hull BEFORE the
     // physics step, so the impulses ride this tick's substeps.
     stepVehicles(game, dt);
@@ -1377,23 +1425,29 @@ export class GameRoom extends DurableObject<Env> {
     // doc 13 M4 — POST-step: crash + ram damage, wreck handling, and seated
     // riders follow the hull (kinematic — their walking was short-circuited).
     tickVehicles(game, dt);
+    phase("physics");
     // doc 13 M2 — settled felled trunks despawn to wood loot after their TTL.
     tickTrunks(game);
     // Tree lifecycle — budgeted ambient seed rain (per-player, game-time
     // cadence) + the wall-clock growth-stage scan (coarse, planted-cap bounded).
     tickAmbientSeeds(game);
     tickTreeGrowth(game);
+    phase("trees");
     tickZombies(game, dt);
     tickZombieRespawns(game, dt);
+    phase("zombies");
     tickSurvival(game, dt);
     tickWeather(game, dt);
     tickAirdrops(game, dt);
+    phase("survival");
     tickWildlife(game, dt);
     tickDeerRespawns(game, dt);
+    phase("wildlife");
     tickFires(game, dt);
     tickLootRespawns(game, dt);
     tickCorpses(game, dt);
     tickDroppedLoot(game, dt);
+    phase("world");
     game.time += dt;
     game.tick++;
 
@@ -1402,15 +1456,19 @@ export class GameRoom extends DurableObject<Env> {
     // one clock. capturePosHistory prunes frames past the rewind window — the
     // buffer stays bounded at ~9 tiny frames at 15Hz.
     capturePosHistory(game);
+    phase("lagComp");
 
     // Periodic durable snapshot of the world + every character.
     if (game.time - this.lastSaveTime >= WORLD_SAVE_INTERVAL_S) {
       this.lastSaveTime = game.time;
       this.persistAll(game);
     }
+    phase("persist");
 
     this.flushOutbox(game);
+    phase("flush");
     this.broadcastSnapshots(game);
+    phase("broadcast");
     game.events.length = 0;
     // Felled-tree delta was serialized into every snapshot above (doc 13 M2).
     // A tick that threw before sending re-broadcasts it next tick — harmless,
