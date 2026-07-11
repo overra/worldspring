@@ -1,5 +1,6 @@
 // Regenerate the authored GLBs in apps/game/public/models/ ({items,building_kit,
-// props}.glb) from apps/game/assets/items.blend via headless Blender.
+// props}.glb) from apps/game/assets/items.blend via headless Blender, then
+// compress them with the version-pinned gltf-transform CLI (meshopt + WebP).
 //
 //   pnpm --filter @worldspring/game models:export
 //
@@ -9,7 +10,7 @@
 // the per-collection / at-origin rules and docs/plans/research/ for the asset
 // conventions CharacterRig.ts consumes (node name == ItemType, +Y up).
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,4 +49,54 @@ if (r.error) {
   console.error(`models:export: failed to launch Blender — ${r.error.message}`);
   process.exit(1);
 }
-process.exit(r.status ?? 1);
+if ((r.status ?? 1) !== 0) process.exit(r.status ?? 1);
+
+// Post-export: gltf-transform optimize (meshopt + 512px WebP), version-pinned
+// via the @gltf-transform/cli devDependency — same settings as the Meshy asset
+// pipeline (crate.glb, items/*.glb). Structural passes stay OFF: the runtime
+// fetches nodes by name and clones them (CharacterRig.ts conventions), so
+// flatten/join/instance/palette must not rewrite the scene graph, and simplify
+// is pointless on these low-poly meshes. drei's useGLTF decodes meshopt by
+// default, proven in-app by the already-compressed crate.glb.
+const gltfTransform = join(gameRoot, "node_modules", ".bin", "gltf-transform");
+// Keep in sync with MANIFEST in export-models.py.
+const EXPORTED_GLBS = ["items.glb", "building_kit.glb", "props.glb"];
+
+if (!existsSync(gltfTransform)) {
+  console.error(
+    "models:export: gltf-transform CLI missing — run `pnpm install` (@gltf-transform/cli is a devDependency of @worldspring/game)",
+  );
+  process.exit(1);
+}
+for (const fname of EXPORTED_GLBS) {
+  const glbPath = join(outDir, fname);
+  const before = statSync(glbPath).size;
+  const o = spawnSync(
+    gltfTransform,
+    [
+      "optimize",
+      glbPath,
+      glbPath,
+      "--compress", "meshopt",
+      "--texture-compress", "webp",
+      "--texture-size", "512",
+      "--flatten", "false",
+      "--join", "false",
+      "--instance", "false",
+      "--palette", "false",
+      "--simplify", "false",
+    ],
+    { stdio: ["ignore", "ignore", "inherit"] },
+  );
+  if (o.error || (o.status ?? 1) !== 0) {
+    console.error(
+      `models:export: gltf-transform optimize failed for ${fname}${o.error ? ` — ${o.error.message}` : ""}`,
+    );
+    process.exit(o.status ?? 1);
+  }
+  const after = statSync(glbPath).size;
+  console.log(
+    `models:export: optimized ${fname} ${(before / 1024).toFixed(1)}KB -> ${(after / 1024).toFixed(1)}KB`,
+  );
+}
+process.exit(0);

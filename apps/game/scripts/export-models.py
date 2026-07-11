@@ -8,8 +8,10 @@
 # AT ORIGIN — held items positioned by GRIP_TRANSFORMS (CharacterRig.ts), world
 # props by placement. Parented children (e.g. the deer's legs, parented to `deer`)
 # keep their relative offset, so assemblies stay intact. The .blend on disk is
-# never modified (headless, no save). Khronos glTF, +Y up, no Draco/meshopt — the
-# conventions CharacterRig.ts documents (node name == ItemType, business-end +Z).
+# never modified (headless, no save). Khronos glTF, +Y up — the conventions
+# CharacterRig.ts documents (node name == ItemType, business-end +Z). Blender
+# writes uncompressed GLBs; the .mjs wrapper then applies meshopt/WebP via
+# gltf-transform without touching node names or hierarchy.
 import bpy
 import os
 import sys
