@@ -138,6 +138,7 @@ function makeState(world) {
     seedDropAt: new Map(),
     treeGrowthNextAtMs: 0,
     propHits: new Map(),
+    dirtyStructureBuckets: new Set(),
     physics: makePhysics(),
   };
 }
@@ -265,6 +266,7 @@ const [OX, OZ] = findOpenSpot(world);
     state.physics.calls.some((c) => c[0] === "addPlanted"),
     "physics.addPlantedTree was called (sapling collider is a no-op, but the call is made)",
   );
+  check(state.treesDirty === true, "planting marks treesDirty (the split `trees` row rewrites)");
   resetPlanted(world);
 }
 
@@ -305,6 +307,7 @@ const [OX, OZ] = findOpenSpot(world);
   check(world.plantedTrees.trees.size === PLANTED_TREE_CAP, "index filled to the planted cap");
   check(plantSeed(state, pcap, "oak") === false, "plantSeed rejects at the planted cap");
   check(noticeText(state).length >= 3, "each rejection sent a player notice");
+  check(state.treesDirty === false, "rejected plants never mark treesDirty");
   resetPlanted(world);
 }
 
@@ -366,6 +369,7 @@ const [OX, OZ] = findOpenSpot(world);
     state.plantedTreeDelta.some((d) => d.op === "upsert" && d.tree.id === 700001 && d.tree.stage === "mature"),
     "growth queued a mature upsert delta",
   );
+  check(state.treesDirty === true, "a growth transition marks treesDirty");
   // Cadence gate: a not-yet-due scan is a no-op.
   state.plantedTreeDelta.length = 0;
   state.treeGrowthNextAtMs = Date.now() + 10 * 60_000;
@@ -514,6 +518,29 @@ const [OX, OZ] = findOpenSpot(world);
   );
 }
 
+// fellTree (natural world tree) — the persisted felled set + treesDirty both mark.
+{
+  const state = makeState(world);
+  // An isolated natural tree (no neighbor statics within 5m) so it is the
+  // sole chop candidate; mirrors the planted-fell geometry above.
+  const idx = world.trees.findIndex((t) => {
+    if (world.waterAt(t.x, t.z) !== null) return false;
+    const near = world.queryStatics(t.x, t.z, 5);
+    return near.trees.length === 1 && near.walls.length === 0;
+  });
+  check(idx >= 0, "found an isolated natural tree at seed 1337");
+  const t = world.trees[idx];
+  const [dfx, dfz] = yawToDir(0);
+  const lumberjack = makePlayer(state, "pw", t.x - dfx * 1.4, t.z - dfz * 1.4, 0, [{ type: "axe", count: 1 }]);
+  state.treesDirty = false;
+  for (let i = 0; i < TREE_CHOPS_TO_FELL; i++) {
+    check(tryChopTree(state, lumberjack) === true, `world-tree chop ${i + 1} lands`);
+  }
+  check(state.felledTrees.has(idx), "the felled world tree lands in the persisted felled set");
+  check(state.physics.calls.some((c) => c[0] === "fellTree" && c[1] === idx), "felling removed the natural tree's collider");
+  check(state.treesDirty === true, "felling a world tree marks treesDirty (the `trees` row rewrites)");
+}
+
 // fell-seed drop — Math.random gated, matching species, cap-respecting.
 {
   const realRandom = Math.random;
@@ -572,27 +599,31 @@ const [OX, OZ] = findOpenSpot(world);
 console.log("persistence (save/load + offline growth):");
 
 function makeFakeSql() {
-  let rows = [];
+  let rows = []; // { kind, payload }
   return {
     sql: {
       exec(query, ...bindings) {
-        if (/^DELETE FROM world_state/.test(query)) {
+        if (/^DELETE FROM world_state WHERE kind = \?/.test(query)) {
+          rows = rows.filter((r) => r.kind !== bindings[0]);
+          return { toArray: () => [] };
+        }
+        if (/^DELETE FROM world_state$/.test(query)) {
           rows = [];
           return { toArray: () => [] };
         }
         if (/^INSERT INTO world_state/.test(query)) {
-          rows.push({ payload: bindings[0] });
+          rows.push({ kind: bindings[0], payload: bindings[1] });
           return { toArray: () => [] };
         }
-        if (/SELECT payload FROM world_state/.test(query)) return { toArray: () => rows.map((r) => ({ payload: r.payload })) };
+        if (/SELECT kind, payload FROM world_state/.test(query)) {
+          return { toArray: () => rows.map((r) => ({ kind: r.kind, payload: r.payload })) };
+        }
         return { toArray: () => [] };
       },
     },
     storage: { transactionSync: (fn) => fn() },
-    payload: () => rows[0]?.payload,
-    setPayload: (p) => {
-      rows = [{ payload: p }];
-    },
+    rowOf: (kind) => rows.find((r) => r.kind === kind),
+    insert: (kind, payload) => rows.push({ kind, payload }),
   };
 }
 
@@ -612,6 +643,8 @@ const persistBase = () => ({
   physics: { serialize: () => [], restore: () => {}, fellTree: () => {} },
   felledTrees: new Set(),
   structureMeta: new Map(),
+  dirtyStructureBuckets: new Set(),
+  treesDirty: false,
 });
 
 {
@@ -626,10 +659,20 @@ const persistBase = () => ({
   // wall-clock re-derivation (a felled tree never resurrects across a restart).
   g.world.plantedTrees.upsert({ id: 73, species: "oak", appearanceSeed: 33, x: 12, z: -18, groundY: g.world.groundHeight(12, -18), plantedAtMs: nowMs - (TREE_MATURE_AT_MS + 300_000), stage: "stump" });
   g.nextEntityId = 74;
+  g.treesDirty = true; // live mutations would have marked this (plantSeed/fell/growth)
 
   const fake = makeFakeSql();
   saveWorld(fake.storage, fake.sql, g);
-  check(fake.payload().includes('"planted"'), "snapshot payload carries the planted key");
+  check(fake.rowOf("trees")?.payload.includes('"planted"'), "the split `trees` row carries the planted records");
+  check(!fake.rowOf("snapshot").payload.includes('"planted"'), "the snapshot row is slim (no inline planted key)");
+
+  // A save with treesDirty=false must leave the trees row byte-identical.
+  g.treesDirty = false;
+  g.world.plantedTrees.remove(71); // memory changed but NOT marked — the row must not follow
+  const treesRowBefore = fake.rowOf("trees").payload;
+  saveWorld(fake.storage, fake.sql, g);
+  check(fake.rowOf("trees").payload === treesRowBefore, "a clean save skips the trees row entirely");
+  g.world.plantedTrees.upsert({ id: 71, species: "oak", appearanceSeed: 11, x: 30, z: 40, groundY: g.world.groundHeight(30, 40), plantedAtMs: nowMs - 60_000, stage: "young" });
 
   const g2 = persistBase();
   g2.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
@@ -641,12 +684,36 @@ const persistBase = () => ({
   check(restoredOld?.stage === "mature", "a sapling planted long ago restores as MATURE (offline growth)");
   check(g2.world.plantedTrees.trees.get(73)?.stage === "stump", "a persisted STUMP restores as a stump (terminal, never re-derived)");
   check(g2.nextEntityId >= 74, `id ceiling folds planted ids (nextEntityId=${g2.nextEntityId})`);
+  check(g2.treesDirty === false, "loading a clean trees row does not mark treesDirty");
 
-  // Pre-lifecycle snapshot: strip the planted key entirely → must load clean.
-  const stripped = JSON.parse(fake.payload());
+  // LEGACY fat snapshot (inline planted key, no trees row): loads fully and
+  // marks treesDirty so the next save materializes the split row.
+  const legacySnapshot = JSON.parse(fake.rowOf("snapshot").payload);
+  legacySnapshot.planted = JSON.parse(fake.rowOf("trees").payload).planted;
+  const legacyFake = makeFakeSql();
+  legacyFake.insert("snapshot", JSON.stringify(legacySnapshot));
+  const gL = persistBase();
+  gL.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
+  check(
+    loadWorld(legacyFake.sql, gL) === true && gL.world.plantedTrees.trees.size === 3,
+    "legacy inline-planted snapshot hydrates fully",
+  );
+  check(
+    gL.world.plantedTrees.trees.get(73)?.stage === "stump",
+    "a stump survives the LEGACY hydration path too (never re-derived by age)",
+  );
+  check(gL.treesDirty === true, "legacy load marks treesDirty (migration)");
+  saveWorld(legacyFake.storage, legacyFake.sql, gL);
+  check(
+    legacyFake.rowOf("trees") !== undefined && !legacyFake.rowOf("snapshot").payload.includes('"planted"'),
+    "first save after a legacy load materializes the trees row + slims the snapshot",
+  );
+
+  // Pre-lifecycle snapshot: no planted key anywhere → must load clean.
+  const stripped = JSON.parse(fake.rowOf("snapshot").payload);
   delete stripped.planted;
   const oldFake = makeFakeSql();
-  oldFake.setPayload(JSON.stringify(stripped));
+  oldFake.insert("snapshot", JSON.stringify(stripped));
   const g3 = persistBase();
   g3.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
   check(

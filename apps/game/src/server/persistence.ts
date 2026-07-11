@@ -3,18 +3,32 @@
 // `exec(query, ...bindings)` returning a cursor) and
 // `ctx.storage.transactionSync(closure)` are available.
 //
-// Schema choice: the entire dynamic world is persisted as ONE `world_state`
-// row — kind `snapshot`, payload a single JSON object holding loot/corpses/
-// fires/timers/drops plus game time/tick and scheduling. It is never queried
-// per-column, so one JSON blob keeps the save/load code trivially in sync with
-// the in-memory structs AND keeps rows-written per save at O(1): the prior
-// wipe-and-reinsert wrote one row per entity every 20s and exhausted the
-// Cloudflare free-plan SQLite rows-written cap ~80 min into a session.
+// Schema choice: the dynamic world is persisted as a FEW `world_state` rows,
+// split by write cadence (doc 06 M8 follow-up):
+//   - kind `snapshot`  — everything that drifts every tick (loot/corpses/
+//     fires/timers/drops/bodies/vehicles + time/tick/ids/scheduling),
+//     rewritten on every save;
+//   - kind `trees`     — felled indices + planted records, rewritten only when
+//     game.treesDirty (tree events are rare);
+//   - kind `structures:<b>` (b in 0..STRUCTURE_BUCKET_COUNT-1) — fixed spatial
+//     buckets of the player structures, rewriting only the buckets in
+//     game.dirtyStructureBuckets. At the 3000-piece cap structures were ~97%
+//     of a 564 KB per-save blob (~158 ms in-tick on miniflare) while being
+//     near-static — dirty-skipping them makes the steady save ~20 KB.
+// Nothing is queried per-column, so JSON payloads keep the save/load code
+// trivially in sync with the in-memory structs, and rows written per save stay
+// O(1)+O(dirty): the original wipe-and-reinsert wrote one row per entity every
+// 20s and exhausted the Cloudflare free-plan SQLite rows-written cap ~80 min
+// into a session.
 //
-// Forward-compatible with the old per-entity rows: loadWorld looks only for the
-// `snapshot` row, so a pre-migration database reads as "no snapshot" -> a fresh
-// dynamic world, and the next save clears the stale rows. So this change does
-// NOT bump SCHEMA_VERSION (characters survive; only the dynamic world resets).
+// Forward/backward compatible without a SCHEMA_VERSION bump: a legacy fat
+// `snapshot` row (inline structures/felled/planted keys) hydrates fully and
+// migrates to the split rows on its first save (loadWorld marks everything
+// dirty); a ROLLBACK binary reads only the `snapshot` row (drops structures/
+// trees — the sanctioned doc-06 posture, not a wipe) and its next save
+// wholesale-deletes world_state, clearing the split rows it can't read. A
+// pre-single-row database (per-entity rows, no snapshot) reads as "no
+// snapshot" -> a fresh dynamic world, stale rows cleared on that load.
 //
 // Versioning: meta rows `schema_version` and `world_seed`. When either
 // mismatches the current constants, characters + world state are cleared
@@ -65,6 +79,7 @@ import type {
   LootRespawnTimer,
   PlayerStats,
   ServerPlayer,
+  StructureMeta,
   VehicleMeta,
 } from "./systems/state";
 import { toPlantedRecord, treeStageAt } from "@worldspring/shared/trees";
@@ -412,7 +427,21 @@ export async function captureBookmark(storage: {
 
 // --- World snapshot ---
 
-/** The whole persisted dynamic world — stored as the single `snapshot` row. */
+/**
+ * The per-save dynamic world — the `snapshot` row. Everything here genuinely
+ * changes between saves (loot/corpses/timers/physics/scheduling), so the row
+ * is rewritten on every save. The mostly-STATIC subsystems moved to their own
+ * dirty-skipped rows (doc 06 M8 follow-up — the 158 ms in-tick save at the
+ * 3000-piece cap was ~97% re-serialized unchanged structures):
+ *   - `trees`            felled indices + planted records (TreesRow);
+ *   - `structures:<b>`   spatial bucket b of the player structures.
+ * Old snapshots may still carry the three keys INLINE (LegacyWorldSnapshot);
+ * loadWorld migrates them by marking everything dirty so the first save
+ * materializes the split rows atomically. A ROLLBACK binary reads only this
+ * row, normalizes the absent keys to [] (drops structures/trees — the
+ * sanctioned doc-06 posture), and its next save wholesale-deletes world_state,
+ * cleanly removing the split rows. SCHEMA_VERSION stays 2.
+ */
 interface WorldSnapshot {
   loot: LootEntity[];
   corpses: Corpse[];
@@ -430,25 +459,72 @@ interface WorldSnapshot {
    * older snapshots lack it (normalized to []), older code ignores it — no
    * SCHEMA_VERSION bump (same posture as weather/airdrop fields above). */
   bodies: PersistedBody[];
-  /** doc 13 M2 — felled tree indices (into the seed-derived world.trees; the
-   * fingerprint gate guarantees indices stay valid for a persisted world).
-   * ADDITIVE like bodies: older snapshots normalize to [], older code ignores
-   * the key — no SCHEMA_VERSION bump. */
-  felled: number[];
-  /** Stable planted entities; stage is re-derived from plantedAtMs on load. */
-  planted: PlantedTreeRecord[];
-  /** doc 06 — player structures: the shared StructurePiece plus the server's
-   * ownership meta, one entry per piece. ADDITIVE (the bodies/felled posture):
-   * older snapshots normalize to [], a rollback drops the key ("no
-   * structures") — no SCHEMA_VERSION bump. ~100 B/piece ⇒ ≈300 KB at the
-   * 3000-piece world cap, far under the 2 MB row cap; row count unchanged. */
-  structures: PersistedStructure[];
   /** doc 13 M4 — vehicle GAMEPLAY meta (fuel/hp/wrecked); the hull POSE rides
    * the `bodies` array like any body. Seats are NOT persisted (players aren't
-   * seated across a restart — doc 13 §5). ADDITIVE (the bodies/felled posture):
+   * seated across a restart — doc 13 §5). ADDITIVE (the bodies posture):
    * older snapshots normalize to [], older code ignores the key — no
    * SCHEMA_VERSION bump, old saves load clean (no vehicles). */
   vehicles: PersistedVehicle[];
+}
+
+/** A legacy fat snapshot's READ shape: the split-row subsystems inline. Never
+ * written anymore; asWorldSnapshot normalizes absent keys to [] so both a
+ * legacy row (keys present) and a current row (keys absent) parse to this. */
+interface LegacyWorldSnapshot extends WorldSnapshot {
+  /** doc 13 M2 — felled tree indices (into the seed-derived world.trees). */
+  felled: number[];
+  /** Stable planted entities; stage is re-derived from plantedAtMs on load. */
+  planted: PlantedTreeRecord[];
+  /** doc 06 — player structures (shared piece + server ownership meta). */
+  structures: PersistedStructure[];
+}
+
+/** The `trees` row payload: felled indices + planted records, written only
+ * when game.treesDirty (tree events are rare vs the 20 s save cadence). */
+interface TreesRow {
+  felled: number[];
+  planted: PlantedTreeRecord[];
+}
+
+// --- Structure buckets -------------------------------------------------------
+// Structures are persisted as up to STRUCTURE_BUCKET_COUNT `structures:<b>`
+// rows keyed by a FIXED spatial hash of the piece's build cell: 8×8 regions of
+// 16×16 cells (48 m at BUILD_CELL 3 m), so one base spans a handful of buckets
+// and a door toggle / raid hit rewrites ~8.5 KB instead of the whole ~545 KB
+// piece set. STABILITY CONTRACT: persisted bucket keys must keep meaning the
+// same region across deploys — changing the shift/count requires rewriting
+// every bucket on first save (the markAllStructureBucketsDirty migration).
+
+export const STRUCTURE_BUCKET_COUNT = 64;
+const STRUCTURES_KIND_PREFIX = "structures:";
+
+/** The persistence bucket of build cell (gx, gz). `>>` keeps negative cells
+ * deterministic (arithmetic shift), `& 7` folds the world into the 8×8 tile. */
+export function structureBucketOf(gx: number, gz: number): number {
+  return ((gx >> 4) & 7) | (((gz >> 4) & 7) << 3);
+}
+
+/** Mark every structure bucket dirty — the legacy-snapshot migration and the
+ * only sanctioned way to force a full structure rewrite. `?.`-style guard:
+ * untyped harness fixtures predating the dirty tracking simply skip it. */
+function markAllStructureBucketsDirty(game: GameState): void {
+  const dirty: Set<number> | undefined = game.dirtyStructureBuckets;
+  if (!dirty) return;
+  for (let b = 0; b < STRUCTURE_BUCKET_COUNT; b++) dirty.add(b);
+}
+
+/** Per-phase saveWorld instrumentation, surfaced additively on /api/health via
+ * GameRoom.persistAll (the doc 06 M8 measurement loop). Bytes are JSON string
+ * lengths (ASCII-dominated payloads — close enough to bytes for budgeting). */
+export interface SaveWorldStats {
+  snapshotMs: number;
+  treesMs: number;
+  structuresMs: number;
+  /** Buckets rewritten this save (0 on a steady save with idle bases). */
+  dirtyBuckets: number;
+  snapshotBytes: number;
+  treesBytes: number;
+  structuresBytes: number;
 }
 
 /** doc 13 M4 — a persisted vehicle's gameplay state, keyed to its `bodies` row
@@ -477,42 +553,44 @@ export interface PersistedStructure extends StructurePiece {
 }
 
 /**
- * Persist the dynamic world (loot, corpses, campfires, loot-respawn timers,
- * airdrop crates) plus game time/tick, the entity-id counter, and weather/
- * airdrop scheduling — as ONE `snapshot` JSON row inside transactionSync.
+ * Persist the dynamic world inside transactionSync (nested inside
+ * persistAll's — the whole save stays ONE transaction):
+ *   - `snapshot` row: loot/corpses/fires/timers/drops/bodies/vehicles + game
+ *     time/tick/ids/scheduling — rewritten EVERY save (it all drifts per tick);
+ *   - `trees` row: only when game.treesDirty;
+ *   - `structures:<b>` rows: only the buckets in game.dirtyStructureBuckets
+ *     (one O(pieces) partition scan; a dirty bucket with zero pieces just
+ *     deletes its row).
+ * Skipping a clean row is sound because the on-disk row is byte-equivalent to
+ * its in-memory serialization — every mutation marks dirty (systems/
+ * structures.ts touchPiece, systems/trees.ts treesDirty) and every prior
+ * write was atomic. The CALLER clears the dirty sets after its enclosing
+ * transaction commits (GameRoom.persistAll) — never here, where a later
+ * rollback of the outer transaction would strand cleared flags.
  * Zombies + deer are intentionally NOT persisted (respawned fresh on boot).
  * Airdrop crates ARE kept: their timestamps are game-time, which is in the
  * snapshot, so landsAt/expiresAt stay coherent across a restart.
  */
-/** doc 06 — compose persisted pieces from the shared index (collision truth)
- * + the server-only meta map (ownership). A piece whose meta somehow vanished
- * persists with an empty owner rather than being dropped. The `?.` chain
- * tolerates the untyped .mjs harness fixtures that predate structures (the
- * wornWire precedent) — production GameStates always carry both. */
-function serializeStructures(game: GameState): PersistedStructure[] {
-  const out: PersistedStructure[] = [];
-  const pieces = game.world?.structures?.pieces;
-  if (!pieces) return out;
-  for (const piece of pieces.values()) {
-    const meta = game.structureMeta?.get(piece.id);
-    out.push({
-      ...piece,
-      ownerHash: meta?.ownerHash ?? "",
-      placedAtMs: meta?.placedAtMs ?? 0,
-      // doc 06 M5/M6 — locks + crate contents ride the same blob so items
-      // moving between a player and a crate snapshot atomically with the
-      // character rows (the persistAll no-dupe invariant). Omit-when-empty
-      // keeps pre-lock pieces byte-identical.
-      ...(meta?.code != null ? { code: meta.code } : {}),
-      ...(meta?.authorized && meta.authorized.length > 0 ? { authorized: meta.authorized } : {}),
-      ...(meta?.contents ? { contents: meta.contents } : {}),
-    });
-  }
-  return out;
+/** doc 06 — compose a persisted piece from the shared record (collision
+ * truth) + the server-only meta (ownership). A piece whose meta somehow
+ * vanished persists with an empty owner rather than being dropped. */
+function serializePiece(piece: StructurePiece, meta: StructureMeta | undefined): PersistedStructure {
+  return {
+    ...piece,
+    ownerHash: meta?.ownerHash ?? "",
+    placedAtMs: meta?.placedAtMs ?? 0,
+    // doc 06 M5/M6 — locks + crate contents ride the same transaction so items
+    // moving between a player and a crate snapshot atomically with the
+    // character rows (the persistAll no-dupe invariant). Omit-when-empty
+    // keeps pre-lock pieces byte-identical.
+    ...(meta?.code != null ? { code: meta.code } : {}),
+    ...(meta?.authorized && meta.authorized.length > 0 ? { authorized: meta.authorized } : {}),
+    ...(meta?.contents ? { contents: meta.contents } : {}),
+  };
 }
 
 /** doc 13 M4 — persist each vehicle's gameplay state. The `?.` tolerates the
- * untyped .mjs harness fixtures that predate vehicleMeta (the serializeStructures
+ * untyped .mjs harness fixtures that predate vehicleMeta (the serializePiece
  * precedent); production GameStates always carry the map. */
 function serializeVehicles(game: GameState): PersistedVehicle[] {
   const out: PersistedVehicle[] = [];
@@ -524,7 +602,12 @@ function serializeVehicles(game: GameState): PersistedVehicle[] {
   return out;
 }
 
-export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: GameState): void {
+export function saveWorld(
+  storage: DurableObjectStorage,
+  sql: SqlStorage,
+  game: GameState,
+): SaveWorldStats {
+  const t0 = performance.now();
   const snapshot: WorldSnapshot = {
     loot: [...game.loot.values()],
     corpses: [...game.corpses.values()],
@@ -539,22 +622,80 @@ export function saveWorld(storage: DurableObjectStorage, sql: SqlStorage, game: 
     weatherRaining: game.weatherRaining,
     airdropNextAt: game.airdropNextAt,
     bodies: game.physics.serialize(),
-    felled: [...game.felledTrees],
-    // Defensive optional-chain like serializeStructures: some probes save a
-    // worldless minimal game. The real server always has world.plantedTrees.
-    planted: [...(game.world?.plantedTrees?.trees.values() ?? [])].map(toPlantedRecord),
-    structures: serializeStructures(game),
     vehicles: serializeVehicles(game),
   };
+  const snapshotJson = JSON.stringify(snapshot);
+  const stats: SaveWorldStats = {
+    snapshotMs: 0,
+    treesMs: 0,
+    structuresMs: 0,
+    dirtyBuckets: 0,
+    snapshotBytes: snapshotJson.length,
+    treesBytes: 0,
+    structuresBytes: 0,
+  };
   storage.transactionSync(() => {
-    // O(1) rows written: delete the prior single snapshot row, insert the new
-    // one — vs the old wipe-and-reinsert that wrote one row per entity.
-    sql.exec("DELETE FROM world_state");
-    sql.exec(
-      "INSERT INTO world_state (kind, payload) VALUES ('snapshot', ?)",
-      JSON.stringify(snapshot),
-    );
+    // Per-kind delete + insert: O(1)+O(dirty) rows written per save. The old
+    // wholesale `DELETE FROM world_state` here would nuke the clean split rows
+    // this save deliberately skips — the wipe paths (wipeWorld/scheduled wipe)
+    // keep the wholesale delete, which covers every kind including these.
+    sql.exec("DELETE FROM world_state WHERE kind = ?", "snapshot");
+    sql.exec("INSERT INTO world_state (kind, payload) VALUES (?, ?)", "snapshot", snapshotJson);
+    stats.snapshotMs = performance.now() - t0;
+
+    // Trees: felled indices + planted records, rewritten only on a tree event
+    // (fell/plant/growth). Defensive optional-chain like serializePiece: some
+    // probes save a worldless minimal game.
+    if (game.treesDirty) {
+      const t1 = performance.now();
+      sql.exec("DELETE FROM world_state WHERE kind = ?", "trees");
+      const trees: TreesRow = {
+        felled: [...game.felledTrees],
+        planted: [...(game.world?.plantedTrees?.trees.values() ?? [])].map(toPlantedRecord),
+      };
+      if (trees.felled.length > 0 || trees.planted.length > 0) {
+        const treesJson = JSON.stringify(trees);
+        stats.treesBytes = treesJson.length;
+        sql.exec("INSERT INTO world_state (kind, payload) VALUES (?, ?)", "trees", treesJson);
+      }
+      stats.treesMs = performance.now() - t1;
+    }
+
+    // Structures: rewrite ONLY the dirty buckets. One O(pieces) partition scan
+    // (~0.1 ms at the 3000-piece cap) gathers each dirty bucket's pieces; a
+    // dirty bucket that ended up empty just loses its row.
+    const dirty: Set<number> | undefined = game.dirtyStructureBuckets;
+    if (dirty && dirty.size > 0) {
+      const t2 = performance.now();
+      stats.dirtyBuckets = dirty.size;
+      const byBucket = new Map<number, PersistedStructure[]>();
+      const pieces = game.world?.structures?.pieces;
+      if (pieces) {
+        for (const piece of pieces.values()) {
+          const b = structureBucketOf(piece.gx, piece.gz);
+          if (!dirty.has(b)) continue;
+          let arr = byBucket.get(b);
+          if (!arr) byBucket.set(b, (arr = []));
+          arr.push(serializePiece(piece, game.structureMeta?.get(piece.id)));
+        }
+      }
+      for (const b of dirty) {
+        sql.exec("DELETE FROM world_state WHERE kind = ?", STRUCTURES_KIND_PREFIX + b);
+        const arr = byBucket.get(b);
+        if (arr !== undefined && arr.length > 0) {
+          const json = JSON.stringify(arr);
+          stats.structuresBytes += json.length;
+          sql.exec(
+            "INSERT INTO world_state (kind, payload) VALUES (?, ?)",
+            STRUCTURES_KIND_PREFIX + b,
+            json,
+          );
+        }
+      }
+      stats.structuresMs = performance.now() - t2;
+    }
   });
+  return stats;
 }
 
 /**
@@ -616,30 +757,63 @@ function normalizeContents(raw: unknown): (ItemStack | null)[] {
  * but wrong-typed collection rejects the whole snapshot (null -> caller starts
  * fresh). Scalars are left as-is; loadWorld finite-guards each as it applies it.
  */
-function asWorldSnapshot(raw: unknown): WorldSnapshot | null {
+function asWorldSnapshot(raw: unknown): LegacyWorldSnapshot | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
+  // felled/planted/structures are normalized here for LEGACY rows only —
+  // current saves never write them (they live in the split rows), so on a
+  // current row all three normalize to [].
   for (const key of ["loot", "corpses", "fires", "lootRespawns", "drops", "bodies", "felled", "planted", "structures", "vehicles"] as const) {
     const v = s[key];
     if (v === undefined || v === null) s[key] = [];
     else if (!Array.isArray(v)) return null;
   }
-  return s as unknown as WorldSnapshot;
+  return s as unknown as LegacyWorldSnapshot;
 }
 
 export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   const rows = sql
-    .exec<{ payload: string }>("SELECT payload FROM world_state WHERE kind = 'snapshot'")
+    .exec<{ kind: string; payload: string }>("SELECT kind, payload FROM world_state")
     .toArray();
   if (rows.length === 0) return false;
 
+  // Route every row by kind in the one query. Unknown kinds (pre-single-row
+  // per-entity legacy rows) are ignored — and cleared with everything else on
+  // the fresh-world path below.
+  let snapshotRaw: string | null = null;
+  let treesRaw: string | null = null;
+  const bucketRows: Array<{ bucket: number; payload: string }> = [];
+  for (const row of rows) {
+    if (row.kind === "snapshot") snapshotRaw = row.payload;
+    else if (row.kind === "trees") treesRaw = row.payload;
+    else if (row.kind.startsWith(STRUCTURES_KIND_PREFIX)) {
+      const b = Number(row.kind.slice(STRUCTURES_KIND_PREFIX.length));
+      if (Number.isInteger(b) && b >= 0 && b < STRUCTURE_BUCKET_COUNT) {
+        bucketRows.push({ bucket: b, payload: row.payload });
+      }
+    }
+  }
+
+  // The snapshot row anchors the load (time/tick/id counter). Absent or
+  // corrupt ⇒ fresh world — and the OTHER world_state rows must go with it:
+  // the per-kind save no longer wholesale-deletes, so stale split rows left
+  // behind would resurrect structures into a reset world on a later boot.
+  const startFresh = (): false => {
+    sql.exec("DELETE FROM world_state");
+    return false;
+  };
+  if (snapshotRaw === null) {
+    console.error("persistence: world_state rows without a snapshot row, starting fresh");
+    return startFresh();
+  }
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(rows[0].payload);
+    parsed = JSON.parse(snapshotRaw);
   } catch (err) {
     // A corrupt snapshot must not brick boot — start the world fresh.
     console.error("persistence: corrupt world snapshot, starting fresh", err);
-    return false;
+    return startFresh();
   }
 
   // Guard the shape before touching `game`: a snapshot that is valid JSON but
@@ -648,7 +822,65 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   const snapshot = asWorldSnapshot(parsed);
   if (!snapshot) {
     console.error("persistence: malformed world snapshot, starting fresh");
-    return false;
+    return startFresh();
+  }
+
+  // Structures: the split `structures:<b>` rows are the current format; a
+  // non-empty inline `structures` key is a LEGACY row — hydrate from it and
+  // mark EVERY bucket dirty so the first save materializes the split rows
+  // (and the never-again-written inline key slims away) in one transaction.
+  // A crash before that save leaves the intact legacy row — no window. When
+  // both exist (impossible via any supported write path), the split rows win.
+  // Each entry keeps its source bucket so a rejected or misbucketed entry can
+  // mark that row dirty — the next save then rewrites it from in-memory truth,
+  // scrubbing the entry from disk instead of re-skipping it on every boot (or,
+  // for a stale misbucketed copy, resurrecting a demolished piece). bucket ===
+  // null is the legacy inline-snapshot path, already covered by the all-dirty
+  // migration mark below.
+  let structureEntries: Array<{ entry: unknown; bucket: number | null }> = [];
+  if (bucketRows.length > 0) {
+    for (const { bucket, payload } of bucketRows) {
+      try {
+        const arr: unknown = JSON.parse(payload);
+        if (!Array.isArray(arr)) throw new Error("bucket payload is not an array");
+        for (const entry of arr as unknown[]) structureEntries.push({ entry, bucket });
+      } catch (err) {
+        // Per-row degrade (the per-entry skip posture): this bucket's pieces
+        // are lost, and marking it dirty makes the next save replace the
+        // corrupt row with the in-memory truth instead of keeping it forever.
+        console.error(`persistence: corrupt structures bucket ${bucket}, dropping it`, err);
+        game.dirtyStructureBuckets?.add(bucket);
+      }
+    }
+  } else if (snapshot.structures.length > 0) {
+    structureEntries = snapshot.structures.map((entry) => ({ entry, bucket: null }));
+    markAllStructureBucketsDirty(game);
+  }
+
+  // Trees: same split-row-wins / legacy-migrates / corrupt-degrades routing.
+  let felledEntries: unknown[] = [];
+  let plantedEntries: unknown[] = [];
+  if (treesRaw !== null) {
+    try {
+      const t: unknown = JSON.parse(treesRaw);
+      if (typeof t !== "object" || t === null) throw new Error("trees payload is not an object");
+      const rec = t as { felled?: unknown; planted?: unknown };
+      // saveWorld always writes both keys as arrays; anything else is a
+      // corrupt row. Coercing it to [] here would keep the row clean-looking
+      // forever (treesDirty never set → never rewritten) while the world
+      // silently diverges from disk — throw into the drop-and-dirty path.
+      if (!Array.isArray(rec.felled) || !Array.isArray(rec.planted))
+        throw new Error("trees collections are not arrays");
+      felledEntries = rec.felled;
+      plantedEntries = rec.planted;
+    } catch (err) {
+      console.error("persistence: corrupt trees row, dropping it", err);
+      game.treesDirty = true;
+    }
+  } else if (snapshot.felled.length > 0 || snapshot.planted.length > 0) {
+    felledEntries = snapshot.felled;
+    plantedEntries = snapshot.planted;
+    game.treesDirty = true;
   }
 
   // Collections are guaranteed arrays by asWorldSnapshot; the per-entry id
@@ -715,12 +947,46 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   // attachEngine builds static colliders for every piece already in the index.
   // The world/meta guards tolerate pre-structures harness fixtures (wornWire
   // precedent); production GameStates always carry both.
-  for (const entry of game.world?.structures && game.structureMeta ? snapshot.structures : []) {
-    if (!hasNumericId(entry)) continue;
+  for (const { entry, bucket: sourceBucket } of game.world?.structures && game.structureMeta
+    ? structureEntries
+    : []) {
+    // Every skip scrubs: marking the entry's source row dirty makes the next
+    // save rewrite it without the entry, so a rejected entry cannot outlive
+    // this boot on disk. Legacy-path entries (sourceBucket null) are already
+    // covered by the all-buckets migration mark.
+    const scrub = (): void => {
+      if (sourceBucket !== null) game.dirtyStructureBuckets?.add(sourceBucket);
+    };
+    if (!hasNumericId(entry)) {
+      scrub();
+      continue;
+    }
     const raw = entry as Partial<PersistedStructure> & { id: number };
-    if (typeof raw.kind !== "string" || !PIECE_KINDS.has(raw.kind)) continue;
-    if (!Number.isInteger(raw.gx) || !Number.isInteger(raw.gz)) continue;
-    if (!Number.isFinite(raw.floorY)) continue;
+    if (typeof raw.kind !== "string" || !PIECE_KINDS.has(raw.kind)) {
+      scrub();
+      continue;
+    }
+    if (!Number.isInteger(raw.gx) || !Number.isInteger(raw.gz)) {
+      scrub();
+      continue;
+    }
+    if (!Number.isFinite(raw.floorY)) {
+      scrub();
+      continue;
+    }
+    // Misbucketed entry: a piece stored under the wrong `structures:<b>` row
+    // is a stale copy — its computed bucket rewrites without ever touching
+    // this row, so after a demolish the copy would resurrect the piece on the
+    // next boot. Skip it and dirty BOTH rows: the source rewrite scrubs the
+    // stale copy; the computed rewrite is a harmless no-op-or-refresh.
+    if (sourceBucket !== null) {
+      const computed = structureBucketOf(raw.gx as number, raw.gz as number);
+      if (computed !== sourceBucket) {
+        scrub();
+        game.dirtyStructureBuckets?.add(computed);
+        continue;
+      }
+    }
     // Edge-kind pieces (wall/doorway/window/door/gate) MUST carry a canonical
     // edge — restoring one without it would mint an invisible, collisionless
     // phantom (pieceAabbs returns [], no edge occupancy) that still counts
@@ -728,7 +994,10 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     // instead (the placement invariant). Cell pieces (foundation/crate) must
     // NOT carry one — a stray edge would shift pieceCenter 1.5m; strip it.
     const isEdgeKind = raw.kind !== "foundation" && raw.kind !== "crate";
-    if (isEdgeKind && raw.edge !== 0 && raw.edge !== 2) continue;
+    if (isEdgeKind && raw.edge !== 0 && raw.edge !== 2) {
+      scrub();
+      continue;
+    }
     const piece: StructurePiece = {
       id: raw.id,
       kind: raw.kind as PieceKind,
@@ -767,8 +1036,8 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   // doc 13 M2 — felled trees: rebuild the set AND tell the physics system
   // (pre-attach: fellTree just records the index, and attachEngine skips
   // building those static colliders). Per-entry guard mirrors hasNumericId.
-  for (const idx of snapshot.felled) {
-    if (!Number.isInteger(idx) || idx < 0) continue;
+  for (const idx of felledEntries) {
+    if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0) continue;
     game.felledTrees.add(idx);
     game.physics.fellTree(idx);
   }
@@ -776,7 +1045,7 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   // Planted identities never enter world.trees. Wall-clock age advances while
   // the Durable Object is idle, so restore directly into the current stage.
   const nowMs = Date.now();
-  for (const entry of snapshot.planted) {
+  for (const entry of plantedEntries) {
     if (!hasNumericId(entry)) continue;
     const raw = entry as Partial<PlantedTreeRecord> & { id: number };
     const species: TreeSpecies | null = raw.species === "conifer" || raw.species === "oak" ? raw.species : null;

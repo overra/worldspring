@@ -385,6 +385,29 @@ Reading the numbers:
 - **Persisted blob**: the doc's §Persistence estimate ("~100 B/piece ⇒ ≈300 KB") **under-counts by ~1.85×** — each `PersistedStructure` carries the placer's 64-char `ownerHash` (+ `placedAtMs`), so a foundation persists at ~186 B/piece and the full-cap structures blob is 545 KB (total snapshot row 564 KB, the remaining ~20 KB being loot/corpse/timer state). Still ONE row, still far under the 2 MB SQLite row cap and the free-plan row-write budget — the design is unchanged, only the byte estimate was low. A crate-heavy world persists larger still (each crate adds a 12-slot `contents` array); foundations here are the representative ~80 B **wire** piece.
 - **Fill honesty**: reaching the cap by bot placement is intrinsically slow on miniflare (~32 min for 3000). Each fresh-token life triggers a `persistAll` on join AND on disconnect plus a full `sFull` build — all O(pieces) — so the fill cost is ~quadratic and join throughput falls as the world fills. This is a property of the load driver (fresh-token refill), NOT of normal play, where a base fills over days at ~1 piece / few seconds. The *measured server limits above* are what matter and all pass.
 
+### M8 follow-up — split-row persistence (dirty-skipped structures/trees), measured 2026-07-10
+
+The ~158 ms in-tick `persistAll` above was ~97% re-serialized **unchanged** structures (544.6 KB of the 564 KB blob; steady no-save ticks were 3–4 ms). Fix shipped in `perf/persist-off-hot-tick`: the one `world_state` snapshot row was split by write cadence —
+
+- `snapshot` — everything that drifts every tick (loot/corpses/fires/timers/drops/bodies/vehicles + time/tick/ids/scheduling), rewritten every save (~20 KB at cap);
+- `trees` — felled indices + planted records, rewritten only on a tree event (`game.treesDirty`);
+- `structures:<b>` (b∈0..63) — fixed 48 m spatial buckets (`(gx>>4)&7 | ((gz>>4)&7)<<3`; avg ~8.5 KB/bucket at cap), rewriting **only buckets whose pieces changed** since the last committed save. Every structure mutation funnels through `systems/structures.ts touchPiece` (place/remove/door/hp/code/authorized/contents — pinned one-by-one by the `structures.mjs` dirty-coverage section).
+
+`persistAll` stays exactly ONE `transactionSync` (the no-dupe invariant), wipes are untouched (`DELETE FROM world_state` covers every kind; `persist-wipe.mjs` passes unmodified), `SCHEMA_VERSION` stays 2. A legacy fat snapshot loads fully and migrates on its first save (all-buckets-dirty, one transaction); a rollback binary reads the slim snapshot, drops structures/trees (the sanctioned posture above), and its next save cleanly deletes the split rows. Per-phase save cost + bytes are now on `/api/health` as `lastSave`.
+
+Re-measured with the extended harness (`--churn=N` adds door-toggling bots so periodic saves exercise the dirty-bucket path), miniflare dev, Node 22.21.1:
+
+| metric | before (M8, 3000 pieces) | after | notes |
+|---|---|---|---|
+| steady save (idle bases) | ~158 ms, 564 KB rewritten | **0–1 ms, ~26 KB** (snapshot delete+insert only) | full harness run @197 pieces, 10 bots: `RESULT: PASS` incl. the new `persistAll < 10 ms` acceptance |
+| dirty-bucket save (door churn) | same ~158 ms (any change forced the full blob) | **1 ms, +8.5 KB** (1 bucket) | churn bot toggling a door every 400 ms across 2 saves |
+| save-tick peak (tickMsMax window) | 162 ms — 71 tick overruns | **39 ms** (< 66.7 ms budget, < 40 ms overrun-warn) | zero overrun logs in the measurement window |
+| mid-fill spot check @~1200 pieces | — | world rows 1 ms (snapshot 1 / trees 0 / structures 0); 14 bucket rows on disk, 223 KB total, max 33 KB | fill-phase saves with ~93 lingering fill characters showed `charactersMs` 12 ms — character rows are the next lever (they cannot be dirty-skipped; vitals drift every tick) |
+
+The steady-save cost is piece-count-independent **by construction**: clean buckets are never serialized or written (the only O(pieces) work on a save is the partition scan, and only when ≥1 bucket is dirty), so the at-cap steady save equals the measured ~26 KB snapshot write. The full 3000-piece fill was still in flight when this session's measurement window closed (the fill driver's O(pieces) `sFull`-per-join cost still makes it ~30 min of bot time — though visibly faster now that the per-join `persistAll` is no longer O(pieces)); re-run `build-loadtest.mjs --churn=3` at full cap to confirm before relying on the at-cap number, and per the verify-on-prod rule, watch `/api/health lastSave` + `tickMsMax` on the live world after deploy.
+
+Residual risks (unchanged from the design review): a map-wide event dirtying all 64 buckets in one 20 s window (mass decay sweep) still writes the full ~545 KB once — rare, event-driven, accepted; a mega-base concentrated in one 48 m region fattens its bucket (density caps bound it); bucket keys are a STABILITY CONTRACT — changing the scheme post-deploy requires an all-buckets rewrite on first save (same mechanism as the legacy migration).
+
 ## Open questions
 
 1. **Should crates collide?** Recommendation: **no** in v1 (campfire precedent, keeps them out of the collision-sync surface and kills crate-stair exploits); revisit with a 0.55m-tall steppable collider if walk-through crates feel bad.

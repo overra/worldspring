@@ -6,11 +6,11 @@
 // calls for:
 //
 //   * server tick EMA + tick MAX at cap with N online bots (read from the
-//     server's own /api/health — the tick timing the DO already tracks;
-//     NO server code was touched, prod stays byte-identical);
-//   * persistAll cost at cap (derived from the periodic-save tick spike —
-//     persistAll runs INSIDE the tick on the WORLD_SAVE_INTERVAL_S cadence, so
-//     the save shows up as a tickMsMax spike above the steady tickMsEma);
+//     server's own /api/health — the tick timing the DO already tracks);
+//   * persistAll cost at cap — BOTH derived from the periodic-save tick spike
+//     AND read directly from /api/health `lastSave` (per-phase ms + bytes of
+//     the split-row save: snapshot / trees / dirty structure buckets /
+//     characters — the doc 06 M8 follow-up instrumentation);
 //   * join time for a FRESH bot doing a full sFull sync against the cap-full
 //     world, and the wire size of that sFull batch.
 //
@@ -21,6 +21,14 @@
 //   --cap=N              stop filling at N pieces (default WORLD_PIECE_CAP; a
 //                        smaller value gives a fast dev smoke of the whole flow)
 //   --bots=N             online bots held during the measurement (default 20)
+//   --churn=N            N extra bots that build a foundation+doorway+door in
+//                        their own patch and TOGGLE the door through the whole
+//                        measurement — every toggle dirties that piece's
+//                        persistence bucket, so the periodic saves exercise the
+//                        dirty-bucket rewrite path (the "active base use"
+//                        scenario). The fill target drops by 3*N so their
+//                        pieces fit under the world cap. Default 0 (steady
+//                        idle-bases measurement).
 //   --fillers=N          concurrent builder workers during the fill (default 16;
 //                        1 observer + fillers must stay < MAX_PLAYERS 24)
 //   --measure-seconds=N  measurement hold length (default 55; must span >= one
@@ -122,6 +130,9 @@ if (typeof WebSocket === "undefined") {
 }
 const CAP = Math.max(1, Math.min(WORLD_PIECE_CAP, Math.floor(numFlag("cap", WORLD_PIECE_CAP))));
 const BOTS = Math.max(1, Math.floor(numFlag("bots", 20)));
+const CHURN = Math.max(0, Math.floor(numFlag("churn", 0)));
+// Leave world-cap headroom for each churn bot's foundation+doorway+door.
+const FILL_TARGET = Math.max(1, CAP - 3 * CHURN);
 const FILLERS = Math.max(1, Math.floor(numFlag("fillers", 16)));
 const MEASURE_S = Math.max(WORLD_SAVE_INTERVAL_S + 5, Math.floor(numFlag("measure-seconds", 55)));
 const DRAIN_S = Math.max(0, Math.floor(numFlag("drain-seconds", 65)));
@@ -433,7 +444,7 @@ async function fillerLife(worker) {
 
     const tried = new Set();
     let stepOuts = 0;
-    while (placed < budget && pieceCount() < CAP && !capReached && stepOuts < 14) {
+    while (placed < budget && pieceCount() < FILL_TARGET && !capReached && stepOuts < 14) {
       const hit = pickGreenCell(bot, tried);
       if (!hit) {
         // No fresh cell within reach — NUDGE ~1.5 cells further out along the
@@ -541,7 +552,7 @@ async function main() {
   observer._ka = setInterval(() => observer.send({ t: "ping", ts: Date.now() }), 5000);
   console.log(
     `observer synced: ${pieceCount()} pre-existing pieces | spawn (${SPAWN.x.toFixed(0)},${SPAWN.z.toFixed(0)})` +
-      ` | fill target ${CAP} foundations`,
+      ` | fill target ${FILL_TARGET} foundations`,
   );
 
   const fillStart = Date.now();
@@ -550,15 +561,15 @@ async function main() {
   const progressTimer = setInterval(() => {
     const c = pieceCount();
     const rate = ((c - lastProgress.count) / Math.max((Date.now() - lastProgress.at) / 1000, 0.001)).toFixed(1);
-    console.log(`  [fill] ${c}/${CAP} pieces (+${rate}/s)`);
+    console.log(`  [fill] ${c}/${FILL_TARGET} pieces (+${rate}/s)`);
     if (c > lastProgress.count) lastProgress = { at: Date.now(), count: c };
     else if (Date.now() - lastProgress.at > 150_000)
-      fail(`fill stalled at ${c}/${CAP} for 150s — aborting`);
+      fail(`fill stalled at ${c}/${FILL_TARGET} for 150s — aborting`);
   }, 3000);
 
   await Promise.all(
     workers.map(async (worker) => {
-      while (pieceCount() < CAP && !capReached) {
+      while (pieceCount() < FILL_TARGET && !capReached) {
         worker.lives++;
         await fillerLife(worker);
       }
@@ -622,6 +633,63 @@ async function main() {
     }, 50);
     bot._ping = setInterval(() => bot.send({ t: "ping", ts: Date.now() }), 2000);
   }
+
+  // --- Phase 2c (--churn): active-base bots. Each builds its own foundation +
+  // doorway + door on the frontier, then toggles the door for the whole window
+  // — every toggle dirties that piece's persistence bucket, so the periodic
+  // saves exercise the dirty-bucket rewrite path on top of the steady snapshot.
+  const churners = [];
+  let churnDoors = 0;
+  for (let i = 0; i < CHURN; i++) {
+    const bot = new Bot(`churn-${i}`);
+    try {
+      await bot.connect();
+      await bot.waitFor((m) => m.t === "welcome", "churn welcome", 20000);
+      await bot.waitFor((m) => m.t === "snap", "churn snap", 20000);
+      const welcome = bot.frames.find((m) => m.t === "welcome") ?? { inv: [] };
+      const hammer = (welcome.inv ?? []).findIndex((s) => s && s.type === "hammer");
+      if (hammer !== -1) bot.send({ t: "equip", slot: hammer });
+      // Walk out between the fill sectors so the cell under it is likely free.
+      const a = ((i + 0.25) / Math.max(CHURN, 1)) * 2 * Math.PI;
+      const r = 20 + i * 4;
+      await bot.walk(SPAWN.x + Math.cos(a) * r, SPAWN.z + Math.sin(a) * r, 2.0, 20000);
+      const tried = new Set();
+      let doorId = null;
+      for (let attempt = 0; attempt < 10 && doorId === null; attempt++) {
+        const hit = pickGreenCell(bot, tried);
+        if (!hit) {
+          await bot.walk(bot.you.x + BUILD_CELL * 1.5, bot.you.z + BUILD_CELL * 1.5, 1.5, 6000);
+          continue;
+        }
+        tried.add(`${hit.c.gx},${hit.c.gz}`);
+        const f = await bot.placeTry(hit.target);
+        if (!f.piece) continue;
+        // Doorway + door on whichever canonical edge accepts them.
+        for (const edge of [0, 2]) {
+          const dwTarget = { kind: "doorway", tier: 0, gx: hit.c.gx, gz: hit.c.gz, edge };
+          if (canPlace(shared.world, dwTarget, bot.occupants()) !== null) continue;
+          const dw = await bot.placeTry(dwTarget);
+          if (!dw.piece) continue;
+          const d = await bot.placeTry({ kind: "door", tier: 0, gx: hit.c.gx, gz: hit.c.gz, edge });
+          if (d.piece) {
+            doorId = d.piece.id;
+            break;
+          }
+        }
+      }
+      if (doorId !== null) {
+        churnDoors++;
+        bot._churn = setInterval(() => bot.send({ t: "door", id: doorId }), 400);
+      }
+      bot._ping = setInterval(() => bot.send({ t: "ping", ts: Date.now() }), 2000);
+      churners.push(bot);
+    } catch (err) {
+      console.log(`  churn-${i} setup failed (${err.message}) — continuing without it`);
+      bot.close();
+    }
+  }
+  if (CHURN > 0) console.log(`churn: ${churnDoors}/${CHURN} door-toggling bots active`);
+
   await sleep(5000); // settle: let the join wave's per-join persists age out
 
   console.log(`measuring for ${MEASURE_S}s (>= WORLD_SAVE_INTERVAL_S ${WORLD_SAVE_INTERVAL_S}s => captures periodic saves)...`);
@@ -629,6 +697,8 @@ async function main() {
   const maxSamples = [];
   const playerSamples = [];
   const hzPairs = [];
+  const saves = new Map(); // lastSave.at -> lastSave (dedup: one entry per persistAll)
+  const measureStart = Date.now();
   let prevH = null;
   const measureEnd = Date.now() + MEASURE_S * 1000;
   let joinProbe = null;
@@ -643,6 +713,11 @@ async function main() {
         hzPairs.push(((h.tick - prevH.tick) / (h.now - prevH.now)) * 1000);
       }
       prevH = { now: h.now, tick: h.tick };
+      // The split-row save instrumentation (additive /api/health field): keep
+      // every distinct save that landed inside the window.
+      if (h.lastSave && h.lastSave.at >= measureStart && !saves.has(h.lastSave.at)) {
+        saves.set(h.lastSave.at, h.lastSave);
+      }
     }
     if (!joinProbe && Date.now() >= probedAt) {
       joinProbe = await runJoinProbe();
@@ -651,9 +726,10 @@ async function main() {
   }
   if (!joinProbe) joinProbe = await runJoinProbe();
 
-  for (const bot of roamers) {
-    clearInterval(bot._roam);
-    clearInterval(bot._ping);
+  for (const bot of [...roamers, ...churners]) {
+    if (bot._roam) clearInterval(bot._roam);
+    if (bot._ping) clearInterval(bot._ping);
+    if (bot._churn) clearInterval(bot._churn);
     bot.close();
   }
 
@@ -683,7 +759,7 @@ async function main() {
   console.log(`  tick EMA (steady average)          ${fmtMs(tickEmaSteady)}      —`);
   console.log(`  tick MAX (steady, no-save window)  ${fmtMs(tickMaxSteady)}      < ${TICK_BUDGET_MS} ms  [acceptance]`);
   console.log(`  tick MAX (save-tick peak)          ${fmtMs(tickMaxSavePeak)}      — (periodic persistAll, in-tick)`);
-  console.log(`  persistAll duration (peak − steady)${fmtMs(persistSpike)}      — (in-tick blob write @ cap; blob size measured post-run from SQLite, see doc)`);
+  console.log(`  persistAll duration (peak − steady)${fmtMs(persistSpike)}      — (spike inference; direct lastSave numbers below)`);
   console.log(`  join sync (open→sFull done)        ${fmtMs(joinProbe.total)}      < ${JOIN_SYNC_BUDGET_MS} ms  [acceptance]`);
   console.log(`    ├ open→welcome                   ${fmtMs(joinProbe.openToWelcome)}`);
   console.log(`    └ welcome→sFull done             ${fmtMs(joinProbe.welcomeToFull)}`);
@@ -691,6 +767,20 @@ async function main() {
     `  sFull wire size                    ${(joinProbe.bytes / 1024).toFixed(1)} KB` +
       `  (${joinProbe.batches} batches, ${joinProbe.pieces} pieces, ${(joinProbe.bytes / Math.max(joinProbe.pieces, 1)).toFixed(0)} B/piece)`,
   );
+
+  // Split-row save instrumentation (/api/health lastSave — one line per save
+  // that landed inside the window; dirtyBuckets 0 = steady idle-base save).
+  const saveList = [...saves.values()].sort((a, b) => a.at - b.at);
+  const steadySaves = saveList.filter((s) => s.dirtyBuckets === 0 && s.treesBytes === 0);
+  const dirtySaves = saveList.filter((s) => s.dirtyBuckets > 0 || s.treesBytes > 0);
+  console.log(`\n  persistAll instrumentation: ${saveList.length} saves in window (${steadySaves.length} steady, ${dirtySaves.length} dirty)`);
+  for (const s of saveList) {
+    console.log(
+      `    save @${new Date(s.at).toISOString().slice(11, 19)}  total ${s.ms.toFixed(2)}ms` +
+        `  [snapshot ${s.snapshotMs.toFixed(2)} | trees ${s.treesMs.toFixed(2)} | structures ${s.structuresMs.toFixed(2)} | chars ${s.charactersMs.toFixed(2)}]` +
+        `  buckets ${s.dirtyBuckets}  bytes ${(s.snapshotBytes / 1024).toFixed(1)}K+${(s.treesBytes / 1024).toFixed(1)}K+${(s.structuresBytes / 1024).toFixed(1)}K  chars ${s.characters}`,
+    );
+  }
 
   // --- acceptance ------------------------------------------------------------
   // tick MAX is the STEADY (no-save) worst tick — the milestone lists tick max
@@ -701,25 +791,38 @@ async function main() {
   // "every tick fits the frame budget."
   const tickPass = tickMaxSteady < TICK_BUDGET_MS;
   const joinPass = joinProbe.total < JOIN_SYNC_BUDGET_MS;
-  const atCap = pieceCount() >= CAP;
+  const atCap = pieceCount() >= FILL_TARGET;
   // A too-easy measurement (a partial join wave => fewer bots => lighter tick)
   // must not silently PASS. Require the server to have counted at least 80% of
   // the requested bots online during the window.
   const botsFloor = Math.ceil(BOTS * 0.8);
   const botsPass = playersMed >= botsFloor;
+  // Split-row save acceptance (doc 06 M8 follow-up): the in-tick persist work
+  // itself must fit the tick budget — steady saves always, dirty-bucket saves
+  // too when the churn scenario ran. Measured directly (lastSave.ms), not
+  // inferred from tick spikes.
+  const saveMsMax = saveList.length > 0 ? Math.max(...saveList.map((s) => s.ms)) : null;
+  const savePass = saveList.length >= 1 && saveMsMax < TICK_BUDGET_MS;
+  const churnPass = CHURN === 0 || (churnDoors > 0 && dirtySaves.length >= 1);
   // Informational watch: the in-tick save spike vs the real frame budget.
   const saveOverBudget = tickMaxSavePeak > TICK_MS;
   console.log("\n=== ACCEPTANCE ===");
-  console.log(`  reached cap (${pieceCount()} >= ${CAP})          ${atCap ? "PASS" : "FAIL"}`);
+  console.log(`  reached cap (${pieceCount()} >= ${FILL_TARGET})          ${atCap ? "PASS" : "FAIL"}`);
   console.log(`  ${playersMed} bots online >= ${botsFloor} (of ${BOTS} requested)   ${botsPass ? "PASS" : "FAIL"}`);
   console.log(`  tick MAX (steady) ${tickMaxSteady.toFixed(2)}ms < ${TICK_BUDGET_MS}ms at cap w/ ${playersMed} bots   ${tickPass ? "PASS" : "FAIL"}`);
+  console.log(
+    `  persistAll ${saveMsMax === null ? "(none observed)" : saveMsMax.toFixed(2) + "ms"} < ${TICK_BUDGET_MS}ms across ${saveList.length} in-window saves   ${savePass ? "PASS" : "FAIL"}`,
+  );
+  if (CHURN > 0) {
+    console.log(`  churn scenario: ${churnDoors} doors toggling, ${dirtySaves.length} dirty-bucket saves observed   ${churnPass ? "PASS" : "FAIL"}`);
+  }
   console.log(`  join sync ${joinProbe.total}ms < ${JOIN_SYNC_BUDGET_MS}ms on localhost        ${joinPass ? "PASS" : "FAIL"}`);
   console.log(
     `  WATCH: save-tick peak ${tickMaxSavePeak.toFixed(1)}ms vs ${TICK_MS.toFixed(1)}ms frame budget` +
       `   ${saveOverBudget ? `OVER by ${(tickMaxSavePeak - TICK_MS).toFixed(1)}ms — periodic persistAll @ cap, watch as cap grows` : "within budget"}`,
   );
-  const ok = tickPass && joinPass && atCap && botsPass;
-  console.log(`\nRESULT: ${ok ? "PASS" : "FAIL"}  (steady-tick acceptance; see WATCH for the in-tick save spike)`);
+  const ok = tickPass && joinPass && atCap && botsPass && savePass && churnPass;
+  console.log(`\nRESULT: ${ok ? "PASS" : "FAIL"}  (steady-tick + in-tick persist acceptance)`);
   clearTimeout(globalDeadline);
   process.exit(ok ? 0 : 1);
 }

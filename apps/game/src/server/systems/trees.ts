@@ -305,7 +305,7 @@ function fellTree(state: GameState, player: ServerPlayer, index: number): void {
   const tree = state.world.trees[index];
   state.felledTrees.add(index);
   state.felledDelta.push(index);
-  state.treesDirty = true;
+  state.treesDirty = true; // the `trees` world_state row rewrites on the next save
   state.physics.fellTree(index);
   spawnFallingTrunk(state, player, tree);
   maybeDropFellSeed(state, tree.kind, tree.x, tree.z);
@@ -427,6 +427,7 @@ export function plantSeed(state: GameState, player: ServerPlayer, species: TreeS
     stage: "sapling",
   };
   const tree = state.world.plantedTrees.upsert(record);
+  state.treesDirty = true;
   // Sapling geometry is r=0 → addPlantedTree is a no-op until it grows into a
   // young/mature collider (the growth scan re-adds/resizes at each transition).
   state.physics.addPlantedTree(tree.id, tree.x, tree.groundY, tree.z, tree.r, tree.height);
@@ -499,6 +500,10 @@ export function tickTreeGrowth(state: GameState): void {
     // (young→mature) or first-adds (sapling→young) the collider — r=0 saplings
     // never reach here since they only ever grow UP.
     const grown = state.world.plantedTrees.upsert(record);
+    // Stage is re-derived from plantedAtMs on load, so persisting the
+    // transition is not load-bearing — but marking keeps the row honest and
+    // costs one small rewrite per (rare) transition scan.
+    state.treesDirty = true;
     state.physics.addPlantedTree(grown.id, grown.x, grown.groundY, grown.z, grown.r, grown.height);
     state.plantedTreeDelta.push({ op: "upsert", tree: record });
     state.treesDirty = true;

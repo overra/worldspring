@@ -465,13 +465,6 @@ export interface GameState {
   plantedTreeChops: Map<number, number>;
   /** Loss-free additive planted-tree state sent in the next snapshot. */
   plantedTreeDelta: PlantedTreeDelta[];
-  /** Set at EVERY felled/planted mutation site (fell, stump-clear, plant,
-   * growth). Write-only today — saveWorld persists trees state unconditionally
-   * — but the dirty-gated split-row persistence (PR 89) skips rewriting the
-   * `trees` row unless this is set, so keeping the markers exhaustive here is
-   * what makes the two changes compose in either merge order. Cleared by the
-   * save path once that lands. */
-  treesDirty: boolean;
   /** Per-player ambient seed roll deadline (game-time, transient). */
   seedDropAt: Map<string, number>;
   /** Wall-clock growth scan deadline (epoch ms, transient). */
@@ -486,6 +479,21 @@ export interface GameState {
    * is transient. A fresh world spawns these once (spawnInitialVehicles); a
    * restored world rebuilds them from the snapshot (the barrel/bodies posture). */
   vehicleMeta: Map<number, VehicleMeta>;
+  /** Persistence dirty tracking (doc 06 M8 follow-up — the periodic save
+   * skips clean rows). Bucket ids (persistence.structureBucketOf) whose
+   * structure pieces changed since the last COMMITTED save. EVERY structure
+   * mutation — index add/remove, hp, open state, code/authorized, crate
+   * contents — must mark its bucket via systems/structures.ts touchPiece
+   * (all mutation paths already funnel through that module); a missed site
+   * silently loses that change across a DO restart. Cleared by
+   * GameRoom.persistAll after the save transaction commits. */
+  dirtyStructureBuckets: Set<number>;
+  /** Felled/planted tree state changed since the last committed save (the
+   * `trees` world_state row). Set at EVERY systems/trees.ts mutation site —
+   * fell (natural + planted stump re-stage), stump clear, plant, growth —
+   * saveWorld skips the row otherwise, so a missed marker silently loses the
+   * change across a DO restart. Cleared alongside dirtyStructureBuckets. */
+  treesDirty: boolean;
   /**
    * Lag-compensation ring of recent end-of-tick positions, oldest first.
    * Bounded by capturePosHistory to LAG_COMP_MAX_REWIND_S + slack — at 15Hz
@@ -535,11 +543,12 @@ export function createGameState(
     treeChops: new Map(),
     plantedTreeChops: new Map(),
     plantedTreeDelta: [],
-    treesDirty: false,
     seedDropAt: new Map(),
     treeGrowthNextAtMs: 0,
     propHits: new Map(),
     vehicleMeta: new Map(),
+    dirtyStructureBuckets: new Set(),
+    treesDirty: false,
     posHistory: [],
   };
 }

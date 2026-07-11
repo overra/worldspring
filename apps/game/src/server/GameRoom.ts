@@ -82,7 +82,7 @@ import {
   saveWorld,
   topLeaderboard,
 } from "./persistence";
-import type { SchemaBootContext } from "./persistence";
+import type { SaveWorldStats, SchemaBootContext } from "./persistence";
 import { tickAirdrops } from "./systems/airdrops";
 import { performAttack } from "./systems/combat";
 import {
@@ -243,6 +243,22 @@ export class GameRoom extends DurableObject<Env> {
    * for external inbound-rate monitoring (Δ inMsgCount / Δ now); used by the
    * load-test harness to tell server CPU load apart from undelivered load. */
   private inMsgCount = 0;
+  /** Instrumentation for the most recent persistAll (additive /api/health
+   * field `lastSave`): wall-clock per-phase ms + bytes for the split-row save
+   * (doc 06 M8 follow-up). null until the first save of this object's life. */
+  private lastSave: {
+    at: number;
+    ms: number;
+    snapshotMs: number;
+    treesMs: number;
+    structuresMs: number;
+    charactersMs: number;
+    dirtyBuckets: number;
+    snapshotBytes: number;
+    treesBytes: number;
+    structuresBytes: number;
+    characters: number;
+  } | null = null;
 
   /** doc 10 M1: preview-only testbed provisioning gate (env.TESTBED === "1").
    * Set once from the deploy-time var; undefined in prod → false → never seeds. */
@@ -359,6 +375,9 @@ export class GameRoom extends DurableObject<Env> {
           // performance.now() (which under-reports pure-CPU ticks on workerd).
           now: Date.now(),
           inMsgCount: this.inMsgCount,
+          // Additive: per-phase cost of the most recent periodic save (the
+          // split-row persist, doc 06 M8 follow-up). Read by build-loadtest.
+          lastSave: this.lastSave,
         }),
         {
           headers: {
@@ -1222,15 +1241,44 @@ export class GameRoom extends DurableObject<Env> {
   /** Snapshot the world and every character (online, offline and dead) in
    * ONE transaction. World entities and inventories trade items between
    * them; saving either alone opens duplication/destruction windows across
-   * an unclean restart, so this is the only way anything gets saved. */
+   * an unclean restart, so this is the only way anything gets saved.
+   * saveWorld skips clean world rows (trees / structure buckets — doc 06 M8
+   * follow-up); their dirty flags are cleared HERE, after the transaction
+   * commits, so a rollback can never clear flags for rows it never wrote. */
   private persistAll(game: GameState): void {
     const storage = this.ctx.storage;
+    const t0 = performance.now();
+    let world: SaveWorldStats | null = null;
+    let charactersMs = 0;
+    let characters = 0;
     storage.transactionSync(() => {
-      saveWorld(storage, storage.sql, game);
+      world = saveWorld(storage, storage.sql, game);
+      const c0 = performance.now();
       for (const player of game.players.values()) {
         saveCharacter(storage.sql, player, game.time);
+        characters++;
       }
+      charactersMs = performance.now() - c0;
     });
+    // Committed: disk now matches memory for every dirty row.
+    game.dirtyStructureBuckets.clear();
+    game.treesDirty = false;
+    if (world !== null) {
+      const w: SaveWorldStats = world;
+      this.lastSave = {
+        at: Date.now(),
+        ms: round2(performance.now() - t0),
+        snapshotMs: round2(w.snapshotMs),
+        treesMs: round2(w.treesMs),
+        structuresMs: round2(w.structuresMs),
+        charactersMs: round2(charactersMs),
+        dirtyBuckets: w.dirtyBuckets,
+        snapshotBytes: w.snapshotBytes,
+        treesBytes: w.treesBytes,
+        structuresBytes: w.structuresBytes,
+        characters,
+      };
+    }
   }
 
   /**
