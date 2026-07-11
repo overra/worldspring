@@ -518,6 +518,29 @@ const [OX, OZ] = findOpenSpot(world);
   );
 }
 
+// fellTree (natural world tree) — the persisted felled set + treesDirty both mark.
+{
+  const state = makeState(world);
+  // An isolated natural tree (no neighbor statics within 5m) so it is the
+  // sole chop candidate; mirrors the planted-fell geometry above.
+  const idx = world.trees.findIndex((t) => {
+    if (world.waterAt(t.x, t.z) !== null) return false;
+    const near = world.queryStatics(t.x, t.z, 5);
+    return near.trees.length === 1 && near.walls.length === 0;
+  });
+  check(idx >= 0, "found an isolated natural tree at seed 1337");
+  const t = world.trees[idx];
+  const [dfx, dfz] = yawToDir(0);
+  const lumberjack = makePlayer(state, "pw", t.x - dfx * 1.4, t.z - dfz * 1.4, 0, [{ type: "axe", count: 1 }]);
+  state.treesDirty = false;
+  for (let i = 0; i < TREE_CHOPS_TO_FELL; i++) {
+    check(tryChopTree(state, lumberjack) === true, `world-tree chop ${i + 1} lands`);
+  }
+  check(state.felledTrees.has(idx), "the felled world tree lands in the persisted felled set");
+  check(state.physics.calls.some((c) => c[0] === "fellTree" && c[1] === idx), "felling removed the natural tree's collider");
+  check(state.treesDirty === true, "felling a world tree marks treesDirty (the `trees` row rewrites)");
+}
+
 // fell-seed drop — Math.random gated, matching species, cap-respecting.
 {
   const realRandom = Math.random;
@@ -672,8 +695,12 @@ const persistBase = () => ({
   const gL = persistBase();
   gL.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
   check(
-    loadWorld(legacyFake.sql, gL) === true && gL.world.plantedTrees.trees.size === 2,
+    loadWorld(legacyFake.sql, gL) === true && gL.world.plantedTrees.trees.size === 3,
     "legacy inline-planted snapshot hydrates fully",
+  );
+  check(
+    gL.world.plantedTrees.trees.get(73)?.stage === "stump",
+    "a stump survives the LEGACY hydration path too (never re-derived by age)",
   );
   check(gL.treesDirty === true, "legacy load marks treesDirty (migration)");
   saveWorld(legacyFake.storage, legacyFake.sql, gL);

@@ -1155,7 +1155,7 @@ console.log("dirty tracking (every mutation marks its persistence bucket):");
   const bucket = structureBucketOf(BGX, BGZ);
   const dirty = () => state.dirtyStructureBuckets;
   const clearAndCheck = (what) => {
-    check(dirty().has(bucket), `${what} marks bucket ${bucket} dirty`);
+    check(dirty().size === 1 && dirty().has(bucket), `${what} marks exactly bucket ${bucket} dirty`);
     dirty().clear();
   };
 
@@ -1207,7 +1207,7 @@ console.log("dirty tracking (every mutation marks its persistence bucket):");
   clearAndCheck("handleContainerMove");
   // a REJECTED move (occupied target) must NOT mark
   sys.handleContainerMove(state, owner, { id: crateId, from: 2, to: 0, dir: "in" });
-  check(!dirty().has(bucket), "a rejected cMove does not mark the bucket");
+  check(dirty().size === 0, "a rejected cMove marks nothing dirty");
 
   // damage (hp change), including the pinned-foundation clamp branch
   sys.damageStructure(state, doorId, 6, 0);
@@ -1382,14 +1382,17 @@ const persistBase = () => ({
   // shift pieceCenter 1.5m — strip the edge instead.
   const dirtyFake = makeFakeSql();
   dirtyFake.insert("snapshot", fake.rowOf("snapshot").payload);
+  // Coordinates stay inside the source bucket's cell block so each entry
+  // reaches the validation it is meant to exercise (the misbucket guard runs
+  // before the edge checks).
   const dirtyPieces = JSON.parse(fake.rowOf(bucketKind).payload);
   dirtyPieces.push(
     null,
     { id: "x" },
-    { id: 99, kind: "nonsense", gx: 0, gz: 0, floorY: 0 },
-    { id: 98, kind: "wall", tier: 0, gx: 0, gz: 0, floorY: 1, hp: 400 }, // edge missing
-    { id: 97, kind: "wall", tier: 0, gx: 0, gz: 0, edge: 1, floorY: 1, hp: 400 }, // edge corrupt
-    { id: 96, kind: "foundation", tier: 0, gx: 30, gz: 30, edge: 0, floorY: 1, hp: 600 }, // stray edge
+    { id: 99, kind: "nonsense", gx: BGX, gz: BGZ, floorY: 0 },
+    { id: 98, kind: "wall", tier: 0, gx: BGX, gz: BGZ, floorY: 1, hp: 400 }, // edge missing
+    { id: 97, kind: "wall", tier: 0, gx: BGX, gz: BGZ, edge: 1, floorY: 1, hp: 400 }, // edge corrupt
+    { id: 96, kind: "foundation", tier: 0, gx: BGX, gz: BGZ, edge: 0, floorY: 1, hp: 600 }, // stray edge
   );
   dirtyFake.insert(bucketKind, JSON.stringify(dirtyPieces));
   const g4 = persistBase();
@@ -1398,6 +1401,38 @@ const persistBase = () => ({
   check(!g4.world.structures.pieces.has(98) && !g4.world.structures.pieces.has(97), "edge-kind entries without a canonical edge are skipped (no phantoms)");
   const strayFoundation = g4.world.structures.pieces.get(96);
   check(strayFoundation?.kind === "foundation" && strayFoundation.edge === undefined, "stray edge on a cell piece is stripped on restore");
+  // Rejected entries scrub: the source row is marked dirty so the next save
+  // rewrites it from memory, removing the garbage from disk for good.
+  const srcBucket = structureBucketOf(BGX, BGZ);
+  check(
+    g4.dirtyStructureBuckets.size === 1 && g4.dirtyStructureBuckets.has(srcBucket),
+    "rejected entries mark exactly their source bucket dirty (scrub on next save)",
+  );
+
+  // A stale copy stored under the WRONG bucket row must not resurrect a
+  // demolished piece: skip it, dirty BOTH rows, and the next save scrubs it
+  // from the source row.
+  const misFake = makeFakeSql();
+  misFake.insert("snapshot", fake.rowOf("snapshot").payload);
+  const strayGx = BGX + 16; // one whole 16-cell block over → a different bucket
+  const misComputed = structureBucketOf(strayGx, BGZ);
+  check(misComputed !== srcBucket, "sanity: the stray piece computes to a different bucket");
+  misFake.insert(
+    bucketKind,
+    JSON.stringify([
+      ...JSON.parse(fake.rowOf(bucketKind).payload),
+      { id: 95, kind: "foundation", tier: 0, gx: strayGx, gz: BGZ, floorY: 1, hp: 600, ownerHash: "z", placedAtMs: 0 },
+    ]),
+  );
+  const g5 = persistBase();
+  g5.world = createWorld(worldParamsOf(DEFAULT_CONFIG.world));
+  check(loadWorld(misFake.sql, g5) === true && !g5.world.structures.pieces.has(95), "a misbucketed entry is skipped (stale copy, not hydrated)");
+  check(
+    g5.dirtyStructureBuckets.has(srcBucket) && g5.dirtyStructureBuckets.has(misComputed),
+    "a misbucketed entry marks BOTH source and computed buckets dirty",
+  );
+  saveWorld(misFake.storage, misFake.sql, g5);
+  check(!misFake.rowOf(bucketKind).payload.includes('"id":95'), "the next save scrubs the stale copy from its source row");
 }
 
 check(WORLD_PIECE_CAP === 3000, "WORLD_PIECE_CAP pinned at 3000 (doc 06 math)");

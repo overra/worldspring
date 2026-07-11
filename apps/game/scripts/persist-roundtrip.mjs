@@ -476,6 +476,25 @@ if (g3.loot.size !== 1 || !g3.loot.has(7)) {
   if (g.treesDirty !== true) fail("a corrupt trees row must mark treesDirty (self-heal on next save)");
 }
 
+// (g) A trees row that is valid JSON but carries malformed collections takes
+// the same drop-and-dirty path — coercing to [] would leave a clean-looking
+// row on disk that never rewrites while the world silently diverges from it.
+{
+  for (const bad of [
+    JSON.stringify({ felled: "notanarray", planted: [] }),
+    JSON.stringify({ felled: [7], planted: 42 }),
+    JSON.stringify({ planted: [] }), // felled key missing entirely
+  ]) {
+    const f = makeFakeSql();
+    f.insert("snapshot", JSON.stringify({ time: 5, tick: 10, nextEntityId: 100 }));
+    f.insert("trees", bad);
+    const g = freshGame();
+    if (loadWorld(f.sql, g) !== true) fail(`malformed trees collections must not reject the load (${bad})`);
+    if (g.felledTrees.size !== 0) fail(`malformed trees row must hydrate nothing (${bad})`);
+    if (g.treesDirty !== true) fail(`malformed trees collections must mark treesDirty (${bad})`);
+  }
+}
+
 console.log(
   "ROUND-TRIP: PASS — world preserved exactly across split rows, steady save writes 2 rows, " +
     "dirty bucket isolation, legacy migration, false-on-empty, corrupt rows degrade per-row",

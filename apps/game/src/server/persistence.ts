@@ -831,13 +831,19 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   // (and the never-again-written inline key slims away) in one transaction.
   // A crash before that save leaves the intact legacy row — no window. When
   // both exist (impossible via any supported write path), the split rows win.
-  let structureEntries: unknown[] = [];
+  // Each entry keeps its source bucket so a rejected or misbucketed entry can
+  // mark that row dirty — the next save then rewrites it from in-memory truth,
+  // scrubbing the entry from disk instead of re-skipping it on every boot (or,
+  // for a stale misbucketed copy, resurrecting a demolished piece). bucket ===
+  // null is the legacy inline-snapshot path, already covered by the all-dirty
+  // migration mark below.
+  let structureEntries: Array<{ entry: unknown; bucket: number | null }> = [];
   if (bucketRows.length > 0) {
     for (const { bucket, payload } of bucketRows) {
       try {
         const arr: unknown = JSON.parse(payload);
         if (!Array.isArray(arr)) throw new Error("bucket payload is not an array");
-        structureEntries.push(...(arr as unknown[]));
+        for (const entry of arr as unknown[]) structureEntries.push({ entry, bucket });
       } catch (err) {
         // Per-row degrade (the per-entry skip posture): this bucket's pieces
         // are lost, and marking it dirty makes the next save replace the
@@ -847,7 +853,7 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
       }
     }
   } else if (snapshot.structures.length > 0) {
-    structureEntries = snapshot.structures;
+    structureEntries = snapshot.structures.map((entry) => ({ entry, bucket: null }));
     markAllStructureBucketsDirty(game);
   }
 
@@ -859,8 +865,14 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
       const t: unknown = JSON.parse(treesRaw);
       if (typeof t !== "object" || t === null) throw new Error("trees payload is not an object");
       const rec = t as { felled?: unknown; planted?: unknown };
-      felledEntries = Array.isArray(rec.felled) ? rec.felled : [];
-      plantedEntries = Array.isArray(rec.planted) ? rec.planted : [];
+      // saveWorld always writes both keys as arrays; anything else is a
+      // corrupt row. Coercing it to [] here would keep the row clean-looking
+      // forever (treesDirty never set → never rewritten) while the world
+      // silently diverges from disk — throw into the drop-and-dirty path.
+      if (!Array.isArray(rec.felled) || !Array.isArray(rec.planted))
+        throw new Error("trees collections are not arrays");
+      felledEntries = rec.felled;
+      plantedEntries = rec.planted;
     } catch (err) {
       console.error("persistence: corrupt trees row, dropping it", err);
       game.treesDirty = true;
@@ -935,12 +947,46 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   // attachEngine builds static colliders for every piece already in the index.
   // The world/meta guards tolerate pre-structures harness fixtures (wornWire
   // precedent); production GameStates always carry both.
-  for (const entry of game.world?.structures && game.structureMeta ? structureEntries : []) {
-    if (!hasNumericId(entry)) continue;
+  for (const { entry, bucket: sourceBucket } of game.world?.structures && game.structureMeta
+    ? structureEntries
+    : []) {
+    // Every skip scrubs: marking the entry's source row dirty makes the next
+    // save rewrite it without the entry, so a rejected entry cannot outlive
+    // this boot on disk. Legacy-path entries (sourceBucket null) are already
+    // covered by the all-buckets migration mark.
+    const scrub = (): void => {
+      if (sourceBucket !== null) game.dirtyStructureBuckets?.add(sourceBucket);
+    };
+    if (!hasNumericId(entry)) {
+      scrub();
+      continue;
+    }
     const raw = entry as Partial<PersistedStructure> & { id: number };
-    if (typeof raw.kind !== "string" || !PIECE_KINDS.has(raw.kind)) continue;
-    if (!Number.isInteger(raw.gx) || !Number.isInteger(raw.gz)) continue;
-    if (!Number.isFinite(raw.floorY)) continue;
+    if (typeof raw.kind !== "string" || !PIECE_KINDS.has(raw.kind)) {
+      scrub();
+      continue;
+    }
+    if (!Number.isInteger(raw.gx) || !Number.isInteger(raw.gz)) {
+      scrub();
+      continue;
+    }
+    if (!Number.isFinite(raw.floorY)) {
+      scrub();
+      continue;
+    }
+    // Misbucketed entry: a piece stored under the wrong `structures:<b>` row
+    // is a stale copy — its computed bucket rewrites without ever touching
+    // this row, so after a demolish the copy would resurrect the piece on the
+    // next boot. Skip it and dirty BOTH rows: the source rewrite scrubs the
+    // stale copy; the computed rewrite is a harmless no-op-or-refresh.
+    if (sourceBucket !== null) {
+      const computed = structureBucketOf(raw.gx as number, raw.gz as number);
+      if (computed !== sourceBucket) {
+        scrub();
+        game.dirtyStructureBuckets?.add(computed);
+        continue;
+      }
+    }
     // Edge-kind pieces (wall/doorway/window/door/gate) MUST carry a canonical
     // edge — restoring one without it would mint an invisible, collisionless
     // phantom (pieceAabbs returns [], no edge occupancy) that still counts
@@ -948,7 +994,10 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     // instead (the placement invariant). Cell pieces (foundation/crate) must
     // NOT carry one — a stray edge would shift pieceCenter 1.5m; strip it.
     const isEdgeKind = raw.kind !== "foundation" && raw.kind !== "crate";
-    if (isEdgeKind && raw.edge !== 0 && raw.edge !== 2) continue;
+    if (isEdgeKind && raw.edge !== 0 && raw.edge !== 2) {
+      scrub();
+      continue;
+    }
     const piece: StructurePiece = {
       id: raw.id,
       kind: raw.kind as PieceKind,
