@@ -24,6 +24,9 @@ import { PhysicsSystem } from "../src/server/physics/PhysicsSystem.ts";
 import { rollFromTable } from "../src/server/systems/loot.ts";
 import { breakBarrel } from "../src/server/systems/barrelBreak.ts";
 import { BARREL_LOOT_TABLE } from "@worldspring/shared/items";
+// Pin the PhysicsSystem STUMP_HALF_HEIGHT mirror: settle expectation derives
+// from shared STUMP_HEIGHT so a drift between the two fails this harness.
+import { STUMP_HEIGHT } from "@worldspring/shared/trees";
 
 let failures = 0;
 const check = (ok, msg) => {
@@ -98,10 +101,14 @@ const dt = 1 / 15;
 
   // b) RUNTIME swap: felling the tree swaps the 8m collider for a stump stub —
   //    the crate falls from the treetop and rests ON the stub
-  //    (0.55 + crate half 0.4 = 0.95, not 8.4 and not the bare ground 0.4).
+  //    (STUMP_HEIGHT + crate half 0.4, not 8.4 and not the bare ground 0.4).
+  //    Expected Y is derived from shared STUMP_HEIGHT so PhysicsSystem's
+  //    local STUMP_HALF_HEIGHT mirror cannot silently drift.
+  const CRATE_HALF = 0.4;
+  const stubSettleY = STUMP_HEIGHT + CRATE_HALF;
   sysA.fellTree(0);
   for (let i = 450; i < 900; i++) sysA.step(dt, i * dt);
-  check(Math.abs(settleY(sysA, 1) - 0.95) < 0.35, `after fellTree the crate rests on the stub stump (y=${settleY(sysA, 1).toFixed(2)} ≈ 0.95, full collider gone)`);
+  check(Math.abs(settleY(sysA, 1) - stubSettleY) < 0.35, `after fellTree the crate rests on the stub stump (y=${settleY(sysA, 1).toFixed(2)} ≈ ${stubSettleY.toFixed(2)}, full collider gone)`);
 
   // c) PRE-ATTACH path (the restored-world case): fellTree before attachEngine
   //    must build the STUB instead of the full collider — a room restart must
@@ -111,7 +118,7 @@ const dt = 1 / 15;
   sysB.attachEngine(RAPIER, dt);
   sysB.spawnBody(1, "crate", 0, 12, 0);
   for (let i = 0; i < 450; i++) sysB.step(dt, i * dt);
-  check(Math.abs(settleY(sysB, 1) - 0.95) < 0.35, `restored felled set rebuilds the stub, not the full collider (y=${settleY(sysB, 1).toFixed(2)} ≈ 0.95)`);
+  check(Math.abs(settleY(sysB, 1) - stubSettleY) < 0.35, `restored felled set rebuilds the stub, not the full collider (y=${settleY(sysB, 1).toFixed(2)} ≈ ${stubSettleY.toFixed(2)})`);
 
   // d) Trunk body: upright spawn + off-center top impulse TOPPLES it — it
   //    settles lying down (center ≈ its half-WIDTH above ground, not half-

@@ -176,12 +176,12 @@ export function EffectsLayer(): ReactElement {
     let cancelled = false;
     let idleHandle: number | undefined;
     let timeoutHandle: number | undefined;
-    // One template batch per pool per slice (~2 Voronoi fractures),
-    // rescheduled until both pools are ready. Safari ships no
-    // requestIdleCallback, and the old one-shot fallback fractured every
-    // template in a single main-thread task — a visible hitch in the first
-    // seconds of gameplay. spawn()'s not-ready puff covers events that arrive
-    // mid-build.
+    // One `${group}:${count}` batch per pool per slice (all seed variants —
+    // BARREL/TREE_FRACTURE_SEEDS each have length 3), rescheduled until both
+    // pools are ready. Safari ships no requestIdleCallback, and the old
+    // one-shot fallback fractured every template in a single main-thread
+    // task — a visible hitch in the first seconds of gameplay. spawn()'s
+    // not-ready puff covers events that arrive mid-build.
     const buildSlice = () => {
       if (cancelled) return;
       // Evaluate BOTH before combining — && would short-circuit the second

@@ -570,10 +570,12 @@ export function tryBreakTrunk(state: GameState, player: ServerPlayer): boolean {
   }
   if (!hit) return false;
 
-  queueEvent(state, { e: "hit", x: hit.x, y: hit.y, z: hit.z }, hit.x, hit.z);
-
   const hits = (state.propHits.get(hit.id) ?? 0) + 1;
   if (hits < TRUNK_HITS_TO_BREAK) {
+    // Intermediate swings flash where the axe connects (end-reach point).
+    // The breaking hit skips this: break burst + wood land at the trunk
+    // center, and a same-tick end flash on long trunks looked disconnected.
+    queueEvent(state, { e: "hit", x: hit.x, y: hit.y, z: hit.z }, hit.x, hit.z);
     state.propHits.set(hit.id, hits);
     return true;
   }
