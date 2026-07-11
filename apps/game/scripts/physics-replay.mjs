@@ -200,6 +200,16 @@ const dt = 1 / 15;
   for (let i = 0; i < 6; i++) sysC.spawnBody(id++, "trunk", -80 + i * 2, 4.3, -60, [0.35, 4, 0.35]);
   for (let s = 0; s < 400; s++) sysC.step(dt, s * dt);
   check(sysC.count <= 6, `body cap holds with props+trunks mixed (count=${sysC.count} ≤ 6)`);
+  // Trunk-FIRST eviction: trunks are the unbounded population now that they
+  // persist until axed, so they pay their own cap cost — barrels are bounded
+  // loot fixtures and must never be silently deleted by logging pressure.
+  const evictedKinds = sysC.drainEvicted().map((b) => b.kind);
+  check(
+    evictedKinds.length > 0 && evictedKinds.every((k) => k === "trunk"),
+    `cap eviction picks trunks, never barrels (evicted: ${evictedKinds.join(",")})`,
+  );
+  const barrelSurvivors = [...sysC.poses()].filter((b) => b.kind === "barrel").length;
+  check(barrelSurvivors === 6, `all 6 barrels survive trunk cap pressure (barrels=${barrelSurvivors})`);
 
   // d) Restore round-trip preserves a barrel (kind, dims-less, pose) alongside a
   //    trunk — the persisted `bodies` snapshot rebuilds props exactly.

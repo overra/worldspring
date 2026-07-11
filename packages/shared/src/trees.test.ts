@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   createPlantedTreeIndex,
   plantedTreeGeometry,
+  STUMP_HEIGHT,
   TREE_MATURE_AT_MS,
   TREE_YOUNG_AT_MS,
   treeStageAt,
@@ -83,7 +84,7 @@ describe("plantedTreeGeometry — deterministic per-stage dimensions", () => {
   it("produces finite dimensions across a wide seed range", () => {
     for (let i = 0; i < 512; i++) {
       const seed = (i * 0x9e3779b1) >>> 0;
-      for (const stage of ["sapling", "young", "mature"] as TreeGrowthStage[]) {
+      for (const stage of ["sapling", "young", "mature", "stump"] as TreeGrowthStage[]) {
         for (const species of ["conifer", "oak"] as const) {
           const g = plantedTreeGeometry(rec({ appearanceSeed: seed, stage, species }));
           expect(Number.isFinite(g.r)).toBe(true);
@@ -99,6 +100,28 @@ describe("plantedTreeGeometry — deterministic per-stage dimensions", () => {
     const conifer = plantedTreeGeometry(rec({ species: "conifer", stage: "mature" }));
     const oak = plantedTreeGeometry(rec({ species: "oak", stage: "mature" }));
     expect(conifer.r).not.toBe(oak.r);
+  });
+
+  it("stump keeps the FULL mature trunk footprint at stub height", () => {
+    const stump = plantedTreeGeometry(rec({ stage: "stump" }));
+    const mature = plantedTreeGeometry(rec({ stage: "mature" }));
+    expect(stump.r).toBe(mature.r); // movement keeps blocking exactly as before
+    expect(stump.height).toBe(STUMP_HEIGHT);
+    expect(stump.height).toBeLessThan(plantedTreeGeometry(rec({ stage: "sapling" })).height + 1);
+  });
+});
+
+describe("stump stage — terminal semantics", () => {
+  it("treeStageAt never returns stump (age-driven stages only)", () => {
+    for (const age of [0, TREE_YOUNG_AT_MS, TREE_MATURE_AT_MS, TREE_MATURE_AT_MS * 100]) {
+      expect(treeStageAt(0, age)).not.toBe("stump");
+    }
+  });
+
+  it("index query INCLUDES stumps (stub footprint stays collidable)", () => {
+    const index = createPlantedTreeIndex();
+    index.upsert(rec({ id: 9, x: 0, z: 0, stage: "stump" }));
+    expect(index.query(0, 0, 2).map((t) => t.id)).toContain(9);
   });
 });
 

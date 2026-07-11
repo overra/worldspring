@@ -784,7 +784,10 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
     if (!Number.isFinite(raw.plantedAtMs) || !Number.isInteger(raw.appearanceSeed)) continue;
     // Wall-clock re-stage: offline/idle time counts toward growth (treeStageAt
     // is the single source of the stage thresholds, shared with the tick scan).
-    const stage: TreeGrowthStage = treeStageAt(raw.plantedAtMs as number, nowMs);
+    // EXCEPT stumps — terminal and event-driven; re-deriving by age would
+    // resurrect a felled tree as mature across a restart.
+    const stage: TreeGrowthStage =
+      raw.stage === "stump" ? "stump" : treeStageAt(raw.plantedAtMs as number, nowMs);
     game.world.plantedTrees.upsert({
       id: raw.id,
       species,

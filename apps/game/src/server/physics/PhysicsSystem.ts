@@ -205,6 +205,10 @@ export class PhysicsSystem {
   /** Felled tree indices — excluded from the static build at attach (restored
    * worlds) and removed live after it (fresh fells). Grows monotonically. */
   private felledTrees = new Set<number>();
+  /** Bodies reaped by cap eviction since the last drain — position captured at
+   * removal so systems can pay out (persistent trunks drop their wood instead
+   * of silently vanishing). Bounded by eviction rate, drained every tick. */
+  private evicted: Array<{ id: number; kind: BodyKind; x: number; y: number; z: number }> = [];
   private statics: PhysicsStaticsSource;
   private cfg: PhysicsConfig;
   private gameTime = 0;
@@ -687,10 +691,15 @@ export class PhysicsSystem {
     const cap = Math.max(0, this.cfg.bodyCap);
     let evictable = 0;
     for (const rec of this.bodies.values()) if (rec.kind !== "vehicle") evictable++;
-    while (evictable > cap) {
+    // Victim preference: TRUNKS first. Trunks are the only unbounded population
+    // now that they persist until axed (the TTL is gone), so they pay their own
+    // cap cost; barrels/crates are bounded loot fixtures (MAX_BARRELS etc.) and
+    // must not be silently deleted by someone else's logging spree. Within a
+    // kind class: oldest-settled first, then oldest-created (unchanged).
+    const pickVictim = (pred: (rec: BodyRec) => boolean): BodyRec | null => {
       let victim: BodyRec | null = null;
       for (const rec of this.bodies.values()) {
-        if (rec.kind === "vehicle") continue;
+        if (rec.kind === "vehicle" || !pred(rec)) continue;
         const settled = rec.sleptAt !== null && this.gameTime - rec.sleptAt >= SETTLED_AFTER_S;
         if (settled && (victim === null || (victim.sleptAt ?? Infinity) > (rec.sleptAt ?? Infinity))) {
           victim = rec;
@@ -698,13 +707,29 @@ export class PhysicsSystem {
       }
       if (!victim) {
         for (const rec of this.bodies.values()) {
-          if (rec.kind === "vehicle") continue;
+          if (rec.kind === "vehicle" || !pred(rec)) continue;
           if (victim === null || rec.createdAt < victim.createdAt) victim = rec;
         }
       }
+      return victim;
+    };
+    while (evictable > cap) {
+      const victim = pickVictim((rec) => rec.kind === "trunk") ?? pickVictim(() => true);
       if (!victim) return;
+      // Report before removal so the payout position is the resting pose.
+      const t = victim.body.translation();
+      this.evicted.push({ id: victim.id, kind: victim.kind, x: t.x, y: t.y, z: t.z });
       this.removeBody(victim.id);
       evictable--;
     }
+  }
+
+  /** Drain bodies reaped by cap eviction since the last call (tickTrunks pays
+   * evicted trunks' wood out of this — eviction must not eat the bonus). */
+  drainEvicted(): Array<{ id: number; kind: BodyKind; x: number; y: number; z: number }> {
+    if (this.evicted.length === 0) return this.evicted;
+    const out = this.evicted;
+    this.evicted = [];
+    return out;
   }
 }

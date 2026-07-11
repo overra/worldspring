@@ -4,8 +4,9 @@
 // spawn copies event floats into preallocated slot fields.
 //
 // Handled here: "shot" (tracer + muzzle flash), "hit" (expanding sphere),
-// "zdie" (dark-red puff), "break" (pooled barrel debris). "swing" and
-// "hurt" are owned elsewhere — ignored.
+// "zdie" (dark-red puff), "break" (pooled fracture debris — barrels AND axed
+// trunks, routed by kind), "treeCut" (fell burst + leaf puff at the cut line).
+// "swing" and "hurt" are owned elsewhere — ignored.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
@@ -13,7 +14,16 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { clientWorld, drainEvents } from "@/client/runtime";
 import { QUALITY_CONFIGS, useSettingsStore } from "@/client/state/settings";
-import { BarrelDebrisPool } from "./barrelDebris";
+import { DebrisPool } from "./debrisPool";
+import { BARREL_FRACTURE_SEEDS, buildBarrelFractureTemplate } from "./barrelFracture";
+import { BARREL_INNER_MATERIAL, BARREL_MATERIAL } from "./physicsBodyAssets";
+import {
+  buildTreeCutTemplate,
+  TREE_BARK_MATERIAL,
+  TREE_FRACTURE_SEEDS,
+  TREE_SPECIES,
+  TREE_WOOD_MATERIAL,
+} from "./treeFracture";
 
 // 18 slots: a shotgun blast lands 6 shot events in one frame — round-robin
 // must absorb a full blast (plus overlap from other shooters) without
@@ -28,11 +38,18 @@ const HIT_POOL = 12;
 const HIT_DURATION_S = 0.15;
 const ZDIE_POOL = 8;
 const ZDIE_DURATION_S = 0.45;
+// Leaf puffs on a tree fell — the cheap foliage counterpart to the trunk-cut
+// fracture (leaves are billboards; Voronoi on them would be nonsense).
+const LEAF_POOL = 6;
+const LEAF_DURATION_S = 0.7;
 
 const TRACER_GEO = new THREE.BoxGeometry(0.03, 0.03, 1); // scaled along z to span s->t
 const FLASH_GEO = new THREE.BoxGeometry(0.14, 0.14, 0.14);
 const HIT_GEO = new THREE.IcosahedronGeometry(0.12, 0);
 const ZDIE_GEO = new THREE.IcosahedronGeometry(0.4, 0);
+const LEAF_GEO = new THREE.IcosahedronGeometry(0.5, 0);
+/** treeCut bursts tear out of a standing trunk — no body pose, identity quat. */
+const IDENTITY_Q: [number, number, number, number] = [0, 0, 0, 1];
 
 const LOOK_TARGET = new THREE.Vector3(); // reused frame temp
 
@@ -56,7 +73,9 @@ interface FxPool {
   shots: ShotSlot[];
   hits: PointFxSlot[];
   zdies: PointFxSlot[];
-  debris: BarrelDebrisPool;
+  leaves: PointFxSlot[];
+  debris: DebrisPool;
+  treeDebris: DebrisPool;
 }
 
 function fadeMaterial(color: string): THREE.MeshBasicMaterial {
@@ -70,8 +89,24 @@ function fadeMaterial(color: string): THREE.MeshBasicMaterial {
 
 function createPool(): FxPool {
   const root = new THREE.Group();
-  const debris = new BarrelDebrisPool();
-  root.add(debris.root);
+  const debris = new DebrisPool(
+    "barrel_debris",
+    BARREL_MATERIAL,
+    BARREL_INNER_MATERIAL,
+    [{ group: "barrel", build: (count, seed) => buildBarrelFractureTemplate(count, seed) }],
+    BARREL_FRACTURE_SEEDS,
+  );
+  const treeDebris = new DebrisPool(
+    "tree_debris",
+    TREE_BARK_MATERIAL,
+    TREE_WOOD_MATERIAL,
+    TREE_SPECIES.map((species) => ({
+      group: species,
+      build: (count: 6 | 8, seed: number) => buildTreeCutTemplate(species, count, seed),
+    })),
+    TREE_FRACTURE_SEEDS,
+  );
+  root.add(debris.root, treeDebris.root);
 
   const shots: ShotSlot[] = [];
   for (let i = 0; i < SHOT_POOL; i++) {
@@ -103,7 +138,16 @@ function createPool(): FxPool {
     zdies.push({ mesh, mat, start: -1 });
   }
 
-  return { root, shots, hits, zdies, debris };
+  const leaves: PointFxSlot[] = [];
+  for (let i = 0; i < LEAF_POOL; i++) {
+    const mat = fadeMaterial("#4d713b");
+    const mesh = new THREE.Mesh(LEAF_GEO, mat);
+    mesh.visible = false;
+    root.add(mesh);
+    leaves.push({ mesh, mat, start: -1 });
+  }
+
+  return { root, shots, hits, zdies, leaves, debris, treeDebris };
 }
 
 function spawnHit(pool: FxPool, cursors: { hit: number }, x: number, y: number, z: number, now: number): void {
@@ -123,7 +167,7 @@ interface IdleWindow {
 
 export function EffectsLayer(): ReactElement {
   const pool = useMemo(createPool, []);
-  const cursors = useMemo(() => ({ shot: 0, hit: 0, zdie: 0 }), []);
+  const cursors = useMemo(() => ({ shot: 0, hit: 0, zdie: 0, leaf: 0 }), []);
   const fragmentBudget = QUALITY_CONFIGS[useSettingsStore((s) => s.quality)].destructionFragments;
 
   useEffect(() => {
@@ -131,7 +175,9 @@ export function EffectsLayer(): ReactElement {
     const idleWindow = window as unknown as IdleWindow;
     let cancelled = false;
     const build = () => {
-      if (!cancelled) pool.debris.buildTemplates();
+      if (cancelled) return;
+      pool.debris.buildTemplates();
+      pool.treeDebris.buildTemplates();
     };
     const idleHandle = idleWindow.requestIdleCallback?.(build, { timeout: 2_000 });
     const timeoutHandle = idleHandle === undefined ? window.setTimeout(build, 250) : undefined;
@@ -142,7 +188,13 @@ export function EffectsLayer(): ReactElement {
     };
   }, [fragmentBudget, pool]);
 
-  useEffect(() => () => pool.debris.dispose(), [pool]);
+  useEffect(
+    () => () => {
+      pool.debris.dispose();
+      pool.treeDebris.dispose();
+    },
+    [pool],
+  );
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
@@ -183,11 +235,34 @@ export function EffectsLayer(): ReactElement {
         slot.mesh.visible = true;
         slot.mat.opacity = 0.85;
       } else if (ev.e === "break") {
-        if (!pool.debris.spawn(ev, t, fragmentBudget)) {
+        // Route by body kind: barrels burst from the barrel templates; an axed
+        // trunk log-bursts from the tree-cut templates (species untracked on
+        // bodies — id parity picks one; the bark/wood look is shared anyway).
+        const spawned =
+          ev.kind === "trunk"
+            ? pool.treeDebris.spawn(ev, t, fragmentBudget, ev.id % 2 === 0 ? "conifer" : "oak")
+            : pool.debris.spawn(ev, t, fragmentBudget);
+        if (!spawned) {
           // Mobile / idle templates not ready: preserve immediate feedback
           // without blocking a frame on Voronoi generation.
           spawnHit(pool, cursors, ev.x, ev.y, ev.z, t);
         }
+      } else if (ev.e === "treeCut") {
+        // Fell burst at the cut line (released on the delayed timeline, in
+        // lock-step with the standing tree vanishing) + a leaf puff up at the
+        // canopy. The authoritative trunk topples intact via PhysicsBodies.
+        const cutPose = { id: ev.id, x: ev.x, y: ev.y + 0.7, z: ev.z, q: IDENTITY_Q };
+        if (!pool.treeDebris.spawn(cutPose, t, fragmentBudget, ev.species)) {
+          spawnHit(pool, cursors, ev.x, ev.y + 0.7, ev.z, t);
+        }
+        const leaf = pool.leaves[cursors.leaf];
+        cursors.leaf = (cursors.leaf + 1) % LEAF_POOL;
+        leaf.start = t;
+        leaf.mesh.position.set(ev.x, ev.y + (ev.species === "conifer" ? 5.4 : 4.6), ev.z);
+        leaf.mesh.scale.set(1, 1, 1);
+        leaf.mesh.visible = true;
+        leaf.mat.color.set(ev.species === "conifer" ? "#315b36" : "#4d713b");
+        leaf.mat.opacity = 0.7;
       }
       // "swing" / "hurt": handled elsewhere (HUD vignette etc.) — ignore.
     }
@@ -238,7 +313,24 @@ export function EffectsLayer(): ReactElement {
       slot.mat.opacity = 0.85 * (1 - p);
     }
 
+    for (const slot of pool.leaves) {
+      if (slot.start < 0) continue;
+      const age = t - slot.start;
+      if (age >= LEAF_DURATION_S) {
+        slot.start = -1;
+        slot.mesh.visible = false;
+        continue;
+      }
+      // Swell + drift down slightly, like a canopy shaking itself apart.
+      const p = age / LEAF_DURATION_S;
+      const s = 1 + p * 2.6;
+      slot.mesh.scale.set(s, s * 0.8, s);
+      slot.mesh.position.y -= delta * 1.2;
+      slot.mat.opacity = 0.7 * (1 - p);
+    }
+
     pool.debris.update(t, delta, clientWorld.world);
+    pool.treeDebris.update(t, delta, clientWorld.world);
   });
 
   return <primitive object={pool.root} />;

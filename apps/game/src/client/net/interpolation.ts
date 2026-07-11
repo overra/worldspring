@@ -12,7 +12,10 @@ import { clientWorld } from "@/client/runtime";
 import type { AnimalView, RemotePlayerView, ZombieView } from "@/client/runtime";
 
 export type SnapMsg = Extract<ServerMsg, { t: "snap" }>;
-type BreakEvent = Extract<GameEvent, { e: "break" }>;
+/** Cosmetic destruction events released on the DELAYED render timeline: body
+ * breaks (barrels, axed trunks) and tree fells (treeCut) must fire when the
+ * body/tree visually changes, not INTERP_DELAY_MS before it. */
+type DelayedFxEvent = Extract<GameEvent, { e: "break" } | { e: "treeCut" }>;
 
 interface BufferedSnap {
   arrival: number; // performance.now() at receipt
@@ -33,8 +36,8 @@ interface BufferedSnap {
    * appears on (folding at receipt blanks the tree INTERP_DELAY_MS early). */
   felled: number[] | undefined;
   felledApplied: boolean;
-  /** Cosmetic body-break events share the body's delayed render timeline. */
-  breaks: BreakEvent[];
+  /** Cosmetic destruction events (break + treeCut) share the delayed timeline. */
+  breaks: DelayedFxEvent[];
   breaksApplied: boolean;
   weather: number;
 }
@@ -75,7 +78,9 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
     bodyById,
     felled: snap.felled,
     felledApplied: false,
-    breaks: snap.events.filter((event): event is BreakEvent => event.e === "break"),
+    breaks: snap.events.filter(
+      (event): event is DelayedFxEvent => event.e === "break" || event.e === "treeCut",
+    ),
     breaksApplied: false,
     weather: snap.weather,
   });
@@ -108,9 +113,9 @@ function applyFelled(s: BufferedSnap): void {
   clientWorld.felledVersion++;
 }
 
-/** Release cosmetic debris when the body-removal snapshot reaches the render
- * cursor. Unlike ordinary combat events, these must not lead the body by the
- * interpolation delay. */
+/** Release cosmetic destruction FX (break + treeCut) when their snapshot
+ * reaches the render cursor. Unlike ordinary combat events, these must not
+ * lead the body removal / tree vanish by the interpolation delay. */
 function applyBreaks(s: BufferedSnap): void {
   if (s.breaksApplied) return;
   s.breaksApplied = true;

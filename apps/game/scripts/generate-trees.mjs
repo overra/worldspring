@@ -13,7 +13,18 @@ const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const PRESET_DIR = join(APP_DIR, "assets", "trees");
 const OUTPUT_PATH = join(APP_DIR, "public", "models", "trees.glb");
 const PINNED_NODE_VERSION = (await readFile(join(APP_DIR, "..", "..", ".nvmrc"), "utf8")).trim();
-const NAMES = ["tree_conifer_a", "tree_conifer_b", "tree_oak_a", "tree_oak_b"];
+// Export order = byte order: append-only, never reorder (the committed GLB is
+// byte-compared by --check; clients pick variants by hashing into VARIANT_NODES).
+const NAMES = [
+  "tree_conifer_a",
+  "tree_conifer_b",
+  "tree_conifer_c",
+  "tree_conifer_d",
+  "tree_oak_a",
+  "tree_oak_b",
+  "tree_oak_c",
+  "tree_oak_d",
+];
 const MAX_WEIGHTED_TRIANGLES = 300;
 const MAX_GLB_BYTES = 250 * 1024;
 

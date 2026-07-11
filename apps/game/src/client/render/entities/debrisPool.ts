@@ -1,26 +1,40 @@
-// Bounded client-only barrel debris. No Rapier/client prediction: the server
-// already removed the gameplay body before the buffered break event reaches
-// this pool. Motion is a short deterministic ballistic illusion over terrain.
+// Bounded client-only fracture debris, generalized from the doc 13 M3 barrel
+// pool: one instance per debris FAMILY (barrels, tree cuts), each with its own
+// template groups. No Rapier/client prediction: the server already removed the
+// gameplay entity before the buffered event reaches a pool. Motion is a short
+// deterministic ballistic illusion over terrain.
 
 import * as THREE from "three";
-import type { GameEvent } from "@worldspring/shared/protocol";
 import type { World } from "@worldspring/shared/world";
-import {
-  BARREL_FRACTURE_SEEDS,
-  BARREL_FRAGMENT_COUNTS,
-  buildBarrelFractureTemplate,
-  type BarrelFragmentCount,
-  type BarrelFragmentTemplate,
-} from "./barrelFracture";
-import { BARREL_INNER_MATERIAL, BARREL_MATERIAL } from "./physicsBodyAssets";
-
-type BreakEvent = Extract<GameEvent, { e: "break" }>;
+import type { FragmentTemplate } from "./fracture";
 
 const MAX_BURSTS = 3;
 const MAX_FRAGMENTS = 8;
 const DURATION_S = 1.25;
 const SHRINK_START_S = 0.9;
 const GRAVITY = 9.81;
+
+/** The two budget-selected fragment counts (settings.destructionFragments). */
+export type FragmentCount = 6 | 8;
+const FRAGMENT_COUNTS: readonly FragmentCount[] = [6, 8];
+
+/** What a burst needs: an id (deterministic variant/velocity hash), a world
+ * pose, and an orientation. break events fit directly; treeCut spawns pass an
+ * identity quaternion (the burst tears out of a standing trunk). */
+export interface BurstPose {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  q: [number, number, number, number];
+}
+
+/** A named template family inside one pool — e.g. tree cuts register one group
+ * per species so a burst matches the felled tree's trunk. */
+export interface DebrisGroupSpec {
+  group: string;
+  build: (count: FragmentCount, seed: number) => FragmentTemplate[];
+}
 
 interface DebrisSlot {
   mesh: THREE.Mesh;
@@ -36,11 +50,6 @@ interface DebrisSlot {
   bounced: boolean;
 }
 
-interface TemplateSet {
-  6: BarrelFragmentTemplate[][];
-  8: BarrelFragmentTemplate[][];
-}
-
 const tempCenter = new THREE.Vector3();
 const tempQuat = new THREE.Quaternion();
 
@@ -52,22 +61,37 @@ function hashUnit(id: number, fragment: number, salt: number): number {
   return (h >>> 0) / 0xffffffff;
 }
 
-export class BarrelDebrisPool {
+// Slots need a valid geometry before the idle-time templates exist. It is
+// never rendered and stays app-lifetime.
+const EMPTY_GEOMETRY = new THREE.BufferGeometry();
+
+export class DebrisPool {
   readonly root = new THREE.Group();
   private readonly slots: DebrisSlot[] = [];
-  private readonly templates: TemplateSet = { 6: [], 8: [] };
+  /** `${group}:${count}` → seed variants → fragment templates. */
+  private readonly templates = new Map<string, FragmentTemplate[][]>();
+  private readonly specs: readonly DebrisGroupSpec[];
+  private readonly seeds: readonly number[];
   private ready = false;
   private burstCursor = 0;
 
-  constructor() {
-    this.root.name = "barrel_debris";
+  constructor(
+    name: string,
+    outerMaterial: THREE.MeshStandardMaterial,
+    innerMaterial: THREE.MeshStandardMaterial,
+    specs: readonly DebrisGroupSpec[],
+    seeds: readonly number[],
+  ) {
+    this.root.name = name;
+    this.specs = specs;
+    this.seeds = seeds;
     for (let i = 0; i < MAX_BURSTS * MAX_FRAGMENTS; i++) {
-      const outer = BARREL_MATERIAL.clone();
-      const inner = BARREL_INNER_MATERIAL.clone();
+      const outer = outerMaterial.clone();
+      const inner = innerMaterial.clone();
       outer.transparent = true;
       inner.transparent = true;
       const materials: [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial] = [outer, inner];
-      const mesh = new THREE.Mesh(BARREL_GEOMETRY_PLACEHOLDER, materials);
+      const mesh = new THREE.Mesh(EMPTY_GEOMETRY, materials);
       mesh.castShadow = true;
       mesh.visible = false;
       this.root.add(mesh);
@@ -89,25 +113,30 @@ export class BarrelDebrisPool {
 
   buildTemplates(): void {
     if (this.ready) return;
-    for (const count of BARREL_FRAGMENT_COUNTS) {
-      for (const seed of BARREL_FRACTURE_SEEDS) {
-        this.templates[count].push(buildBarrelFractureTemplate(count, seed));
+    for (const spec of this.specs) {
+      for (const count of FRAGMENT_COUNTS) {
+        const variants: FragmentTemplate[][] = [];
+        for (const seed of this.seeds) variants.push(spec.build(count, seed));
+        this.templates.set(`${spec.group}:${count}`, variants);
       }
     }
     this.ready = true;
   }
 
-  spawn(event: BreakEvent, now: number, fragmentBudget: number): boolean {
+  /** Spawn a burst at `pose`. `group` defaults to the first registered spec
+   * (single-family pools like barrels never pass it). False = not ready or
+   * zero budget — the caller falls back to a cheap puff. */
+  spawn(pose: BurstPose, now: number, fragmentBudget: number, group?: string): boolean {
     if (!this.ready || fragmentBudget === 0) return false;
-    const count: BarrelFragmentCount = fragmentBudget <= 6 ? 6 : 8;
-    const variants = this.templates[count];
-    const template = variants[event.id % variants.length];
+    const count: FragmentCount = fragmentBudget <= 6 ? 6 : 8;
+    const variants = this.templates.get(`${group ?? this.specs[0].group}:${count}`);
+    const template = variants?.[pose.id % (variants?.length || 1)];
     if (!template) return false;
 
     const burst = this.burstCursor;
     this.burstCursor = (this.burstCursor + 1) % MAX_BURSTS;
     const base = burst * MAX_FRAGMENTS;
-    tempQuat.set(event.q[0], event.q[1], event.q[2], event.q[3]).normalize();
+    tempQuat.set(pose.q[0], pose.q[1], pose.q[2], pose.q[3]).normalize();
 
     for (let i = 0; i < MAX_FRAGMENTS; i++) {
       const slot = this.slots[base + i];
@@ -122,7 +151,7 @@ export class BarrelDebrisPool {
 
       slot.mesh.geometry = fragment.geometry;
       tempCenter.copy(fragment.center).applyQuaternion(tempQuat);
-      slot.mesh.position.set(event.x + tempCenter.x, event.y + tempCenter.y, event.z + tempCenter.z);
+      slot.mesh.position.set(pose.x + tempCenter.x, pose.y + tempCenter.y, pose.z + tempCenter.z);
       slot.mesh.quaternion.copy(tempQuat);
       slot.mesh.scale.setScalar(1);
       slot.mesh.visible = true;
@@ -132,14 +161,14 @@ export class BarrelDebrisPool {
       slot.radius = fragment.radius;
       slot.bounced = false;
 
-      const angle = hashUnit(event.id, i, 0x51f15e) * Math.PI * 2;
-      const speed = 1.4 + hashUnit(event.id, i, 0xa11ce) * 2.2;
+      const angle = hashUnit(pose.id, i, 0x51f15e) * Math.PI * 2;
+      const speed = 1.4 + hashUnit(pose.id, i, 0xa11ce) * 2.2;
       slot.vx = Math.cos(angle) * speed;
       slot.vz = Math.sin(angle) * speed;
-      slot.vy = 1.8 + hashUnit(event.id, i, 0xb4a4e1) * 2.6;
-      slot.rx = (hashUnit(event.id, i, 0x12345) - 0.5) * 8;
-      slot.ry = (hashUnit(event.id, i, 0x6789a) - 0.5) * 8;
-      slot.rz = (hashUnit(event.id, i, 0xbcdef) - 0.5) * 8;
+      slot.vy = 1.8 + hashUnit(pose.id, i, 0xb4a4e1) * 2.6;
+      slot.rx = (hashUnit(pose.id, i, 0x12345) - 0.5) * 8;
+      slot.ry = (hashUnit(pose.id, i, 0x6789a) - 0.5) * 8;
+      slot.rz = (hashUnit(pose.id, i, 0xbcdef) - 0.5) * 8;
     }
     return true;
   }
@@ -193,7 +222,7 @@ export class BarrelDebrisPool {
 
   dispose(): void {
     const geometries = new Set<THREE.BufferGeometry>();
-    for (const variants of [this.templates[6], this.templates[8]]) {
+    for (const variants of this.templates.values()) {
       for (const template of variants) for (const fragment of template) geometries.add(fragment.geometry);
     }
     for (const geometry of geometries) geometry.dispose();
@@ -204,7 +233,3 @@ export class BarrelDebrisPool {
     this.root.removeFromParent();
   }
 }
-
-// Slots need a valid geometry before the idle-time templates exist. It is
-// never rendered and stays app-lifetime.
-const BARREL_GEOMETRY_PLACEHOLDER = new THREE.BufferGeometry();

@@ -98,7 +98,13 @@ const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
 // messages do. So 10 → 11.
 // Tree lifecycle: planted-tree state changes predicted collision, so clients
 // must understand the new welcome/snapshot fields. 11 -> 12.
-export const PROTOCOL_VERSION: number = 12;
+// Stumps + persistent trunks: the planted stage vocabulary grows ("stump" — a
+// terminal, event-driven stage riding the same welcome/snap records), and its
+// collision semantics (stub footprint stays solid where a remove used to clear
+// it) must be shared by prediction. The additive `break` kind "trunk" and the
+// first-emitted treeCut events would NOT bump on their own (BodyKind/event
+// posture); the stage semantics do. So 12 -> 13.
+export const PROTOCOL_VERSION: number = 13;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
@@ -463,7 +469,9 @@ export type GameEvent =
       /** Additive cosmetic destruction cue; authoritative removal still rides bodies. */
       e: "break";
       id: number;
-      kind: "barrel";
+      /** "trunk" = a felled trunk axe-broken to wood (tree lifecycle). The
+       * additive-kind posture matches BodyKind (new kinds never bump alone). */
+      kind: "barrel" | "trunk";
       x: number;
       y: number;
       z: number;

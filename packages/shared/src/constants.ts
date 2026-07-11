@@ -184,10 +184,16 @@ export const DROPPED_LOOT_TTL_S = 600; // player-dropped items despawn after thi
 export const TREE_CHOPS_TO_FELL = 3;
 /** Wood granted per landed chop (inventory overflow drops at the feet). */
 export const TREE_WOOD_PER_CHOP = 1;
-/** Bonus wood dropped where the felled trunk comes to REST and despawns. */
+/** Bonus wood dropped where a trunk is broken (axe) or cap-evicted. */
 export const TRUNK_WOOD_BONUS = 2;
-/** Seconds a settled (sleeping) trunk lies around before despawning to loot. */
-export const TRUNK_SETTLE_TTL_S = 30;
+/** Axe hits to break a resting felled trunk into its wood bonus. Trunks are
+ * PERSISTENT (no despawn timer): they lie where they fell until a player
+ * breaks them or bodyCap eviction reaps the oldest settled body. */
+export const TRUNK_HITS_TO_BREAK = 3;
+/** Axe hits to clear a planted-tree stump (frees its planted-cap slot). */
+export const STUMP_HITS_TO_CLEAR = 2;
+/** Wood salvaged from clearing a stump. */
+export const STUMP_WOOD = 1;
 /** Matching seed dropped as loose loot when a tree is felled. */
 export const TREE_FELL_SEED_CHANCE = 0.4;
 /** Budget for loose pine cones + acorns across the world. */

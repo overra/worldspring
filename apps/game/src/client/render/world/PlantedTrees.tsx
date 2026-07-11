@@ -29,9 +29,11 @@ type VariantTable = Record<"conifer" | "oak", Array<VariantAssets | null>>;
 
 const dummy = new THREE.Object3D();
 
-/** Deterministic 0/1 variant from the persisted appearance seed (low bit). */
-function variantOf(seed: number): number {
-  return seed & 1;
+/** Deterministic variant (0..count-1) from the persisted appearance seed's low
+ * bits. Bits 3-12 drive yaw and 8-23 drive size (plantedTreeGeometry), so the
+ * selector stays in the low byte — uniform for any count ≤ 256. */
+function variantOf(seed: number, count: number): number {
+  return (seed & 0xff) % count;
 }
 
 /** Build one InstancedMesh per (kind × variant × GLB primitive) for the current
@@ -39,22 +41,25 @@ function variantOf(seed: number): number {
  * (not a world.trees index) and with no felled bookkeeping — a felled planted
  * tree is simply absent from the next rebuild. */
 function buildPlanted(variants: VariantTable, trees: Iterable<PlantedTree>): THREE.InstancedMesh[] {
-  const buckets: Record<"conifer" | "oak", [PlantedTree[], PlantedTree[]]> = {
-    conifer: [[], []],
-    oak: [[], []],
+  const buckets: Record<"conifer" | "oak", PlantedTree[][]> = {
+    conifer: variants.conifer.map(() => []),
+    oak: variants.oak.map(() => []),
   };
   for (const tree of trees) {
-    const pair = variants[tree.kind];
-    let v = variantOf(tree.appearanceSeed);
-    if (!pair[v]) v = 1 - v; // missing node — sibling variant covers
-    if (!pair[v]) continue; // both missing — kind unrenderable
+    // Stumps are drawn by Stumps.tsx (shared with natural felled stumps) — a
+    // stump-stage record must NOT render as a miniature full tree here.
+    if (tree.stage === "stump") continue;
+    const pool = variants[tree.kind];
+    let v = variantOf(tree.appearanceSeed, pool.length);
+    for (let step = 0; step < pool.length && !pool[v]; step++) v = (v + 1) % pool.length;
+    if (!pool[v]) continue; // every node missing — kind unrenderable
     buckets[tree.kind][v].push(tree);
   }
 
   const meshes: THREE.InstancedMesh[] = [];
   for (const kind of ["conifer", "oak"] as const) {
     const tiltable = kind === "oak";
-    for (let v = 0; v < 2; v++) {
+    for (let v = 0; v < variants[kind].length; v++) {
       const assets = variants[kind][v];
       const instances = buckets[kind][v];
       if (!assets || instances.length === 0) continue;
@@ -133,6 +138,9 @@ export function PlantedTrees(): ReactElement {
     () => () => {
       for (const mesh of meshesRef.current) mesh.dispose();
       meshesRef.current = [];
+      // Same Strict-Mode-remount hardening as Stumps.tsx: preserved refs with a
+      // matching version would skip the rebuild and leave the forest empty.
+      appliedVersion.current = -1;
     },
     [],
   );

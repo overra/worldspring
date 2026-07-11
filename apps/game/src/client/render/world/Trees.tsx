@@ -28,9 +28,11 @@ const YAW_STEP = 2.3999632;
 
 // Shared by the static natural forest (this file) and the dynamic planted-tree
 // renderer (PlantedTrees.tsx) — both pull variant geometry from the same GLB.
+// Order must mirror generate-trees.mjs NAMES (append-only): variant selection
+// hashes into this array, so reordering reshuffles every client's forest.
 export const VARIANT_NODES = {
-  conifer: ["tree_conifer_a", "tree_conifer_b"],
-  oak: ["tree_oak_a", "tree_oak_b"],
+  conifer: ["tree_conifer_a", "tree_conifer_b", "tree_conifer_c", "tree_conifer_d"],
+  oak: ["tree_oak_a", "tree_oak_b", "tree_oak_c", "tree_oak_d"],
 } as const;
 
 interface TreeInstance {
@@ -51,13 +53,13 @@ export interface VariantAssets {
   nativeHeight: number;
 }
 
-/** Deterministic 0/1 pick per tree. world.trees is seed-derived and
- * index-stable across joins, so every client agrees. Bit-mixed so variants
- * cluster irregularly instead of alternating by index parity. */
-function variantOf(index: number): number {
+/** Deterministic variant pick per tree (0..count-1). world.trees is
+ * seed-derived and index-stable across joins, so every client agrees.
+ * Bit-mixed so variants cluster irregularly instead of cycling by index. */
+function variantOf(index: number, count: number): number {
   let h = Math.imul(index + 1, 0x9e3779b1) >>> 0;
   h = (h ^ (h >>> 16)) >>> 0;
-  return h & 1;
+  return h % count;
 }
 
 /** Pulls the generated branches/leaves pair out of a variant node. Role comes
@@ -132,22 +134,22 @@ interface Forest {
 }
 
 function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
-  // Two variants per kind; if one node is missing, fall back to its sibling
-  // (and skip the kind entirely only if both are gone).
+  // N variants per kind (VARIANT_NODES-driven); a missing node falls back to
+  // the next available sibling (skip the kind only if every node is gone).
   const variants: Record<"conifer" | "oak", Array<VariantAssets | null>> = {
     conifer: VARIANT_NODES.conifer.map((name) => extractVariant(scene, name)),
     oak: VARIANT_NODES.oak.map((name) => extractVariant(scene, name)),
   };
 
-  const buckets: Record<"conifer" | "oak", [TreeInstance[], TreeInstance[]]> = {
-    conifer: [[], []],
-    oak: [[], []],
+  const buckets: Record<"conifer" | "oak", TreeInstance[][]> = {
+    conifer: VARIANT_NODES.conifer.map(() => []),
+    oak: VARIANT_NODES.oak.map(() => []),
   };
   trees.forEach((tree, index) => {
-    const pair = variants[tree.kind];
-    let v = variantOf(index);
-    if (!pair[v]) v = 1 - v; // missing node — sibling variant covers
-    if (!pair[v]) return; // both missing — kind unrenderable
+    const pool = variants[tree.kind];
+    let v = variantOf(index, pool.length);
+    for (let step = 0; step < pool.length && !pool[v]; step++) v = (v + 1) % pool.length;
+    if (!pool[v]) return; // every node missing — kind unrenderable
     buckets[tree.kind][v].push({ tree, index });
   });
 
@@ -155,7 +157,7 @@ function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
   const meshes: THREE.InstancedMesh[] = [];
   const byIndex = new Map<number, InstanceSlots>();
   for (const kind of ["conifer", "oak"] as const) {
-    for (let v = 0; v < 2; v++) {
+    for (let v = 0; v < variants[kind].length; v++) {
       const assets = variants[kind][v];
       const instances = buckets[kind][v];
       if (!assets || instances.length === 0) continue;

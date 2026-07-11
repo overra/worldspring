@@ -38,6 +38,8 @@ import {
   MELEE_HALF_ANGLE_RAD,
   MELEE_RANGE,
   PLANTED_TREE_CAP,
+  STUMP_HITS_TO_CLEAR,
+  STUMP_WOOD,
   TREE_CHOPS_TO_FELL,
   TREE_FELL_SEED_CHANCE,
   TREE_PLANT_CLEARANCE,
@@ -45,7 +47,7 @@ import {
   TREE_SEED_DROP_INTERVAL_S,
   TREE_SEED_LOOSE_CAP,
   TREE_WOOD_PER_CHOP,
-  TRUNK_SETTLE_TTL_S,
+  TRUNK_HITS_TO_BREAK,
   TRUNK_WOOD_BONUS,
 } from "@worldspring/shared/constants";
 import { clamp, distSq2D, inMeleeCone, yawToDir, type Aabb } from "@worldspring/shared/math";
@@ -188,9 +190,10 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
 
     let target: TreeTarget;
     if (isPlanted(tree)) {
-      // Only mature planted trees are choppable — young ones are collidable but
-      // not yet a wood source (the lifecycle payoff for waiting out growth).
-      if (tree.stage !== "mature") continue;
+      // Mature planted trees chop like naturals; STUMPS take axe hits to clear
+      // (the removal affordance). Young trees are collidable but not yet a wood
+      // source (the lifecycle payoff for waiting out growth) — skip them.
+      if (tree.stage !== "mature" && tree.stage !== "stump") continue;
       target = { identity: "planted", key: tree.id, tree };
     } else {
       // queryStatics returns Tree objects by reference, so indexOf recovers the
@@ -209,9 +212,33 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
   }
   if (best === null) return false;
   const hitTree = best.tree;
+  const isStump = best.identity === "planted" && best.tree.stage === "stump";
 
-  // Impact flash on the trunk at chest height (the melee-hit feedback).
-  queueEvent(state, { e: "hit", x: hitTree.x, y: hitTree.groundY + 1.2, z: hitTree.z }, hitTree.x, hitTree.z);
+  // Impact flash on the trunk at chest height (stub height for a stump).
+  queueEvent(
+    state,
+    { e: "hit", x: hitTree.x, y: hitTree.groundY + (isStump ? 0.4 : 1.2), z: hitTree.z },
+    hitTree.x,
+    hitTree.z,
+  );
+
+  // Stump clearing: no per-hit wood (cleanup, not harvesting) — the
+  // STUMP_HITS_TO_CLEAR-th hit removes it, frees its planted-cap slot, and
+  // salvages STUMP_WOOD where it stood.
+  if (isStump && best.identity === "planted") {
+    const hits = (state.plantedTreeChops.get(best.key) ?? 0) + 1;
+    if (hits < STUMP_HITS_TO_CLEAR) {
+      state.plantedTreeChops.set(best.key, hits);
+      return true;
+    }
+    state.plantedTreeChops.delete(best.key);
+    state.world.plantedTrees.remove(best.key);
+    state.plantedTreeDelta.push({ op: "remove", id: best.key });
+    state.treesDirty = true;
+    state.physics.removePlantedTree(best.key);
+    dropWoodAt(state, hitTree.x, hitTree.z, STUMP_WOOD);
+    return true;
+  }
 
   // Wood per chop; overflow falls at the tree's base.
   const leftover = addToInventory(player.inventory, "wood", TREE_WOOD_PER_CHOP);
@@ -238,15 +265,18 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
 
 /** Spawn the dynamic falling-trunk body for a felled tree and topple it AWAY
  * from the chopper. Shared by natural and planted felling — same footprint as
- * the static collider it replaces, base lifted a hair above the sampled
- * heightfield seam. */
+ * the static collider it replaces, base lifted `baseLift` above the sampled
+ * heightfield seam. Planted fells pass a taller lift: their stump collider is
+ * already in place at the same x/z, and spawning the trunk inside it would let
+ * Rapier's depenetration kick fight the tuned topple impulse. */
 function spawnFallingTrunk(
   state: GameState,
   player: ServerPlayer,
   tree: Pick<Tree, "x" | "z" | "groundY" | "r" | "height">,
+  baseLift: number = TRUNK_SPAWN_LIFT,
 ): void {
   const halfH = tree.height / 2;
-  const y = tree.groundY + halfH + TRUNK_SPAWN_LIFT;
+  const y = tree.groundY + halfH + baseLift;
   const id = state.physics.spawnBody(state.nextEntityId++, "trunk", tree.x, y, tree.z, [tree.r, halfH, tree.r]);
   if (id === null) return;
   // Topple AWAY from the chopper: horizontal impulse at the trunk TOP (the
@@ -275,22 +305,42 @@ function fellTree(state: GameState, player: ServerPlayer, index: number): void {
   const tree = state.world.trees[index];
   state.felledTrees.add(index);
   state.felledDelta.push(index);
+  state.treesDirty = true;
   state.physics.fellTree(index);
   spawnFallingTrunk(state, player, tree);
   maybeDropFellSeed(state, tree.kind, tree.x, tree.z);
+  // Cosmetic cut-burst at the stump line; rides the DELAYED break timeline
+  // client-side so it fires exactly when the standing tree vanishes.
+  queueEvent(
+    state,
+    { e: "treeCut", id: index, species: tree.kind, final: true, x: tree.x, y: tree.groundY, z: tree.z },
+    tree.x,
+    tree.z,
+  );
   sendTo(state, player.id, { t: "notice", msg: "Timber!" });
 }
 
-/** Topple a mature planted tree: remove it from the shared index (collision
- * stops on both ends via the remove delta), drop its runtime collider, spawn
- * the same dynamic trunk, and roll a matching seed drop. The felled tree does
- * NOT linger as a felled-index bit — planted identities are removable. */
+/** Topple a mature planted tree: re-stage it as a STUMP (the shared index keeps
+ * the stub footprint solid on both ends via the upsert delta — the natural
+ * felled-footprint posture), resize its collider to the stub, spawn the same
+ * dynamic trunk, and roll a matching seed drop. The stump is cleared later by
+ * axe (tryChopTree's stump branch), which is what frees the cap slot. */
 function fellPlantedTree(state: GameState, player: ServerPlayer, tree: PlantedTree): void {
-  state.world.plantedTrees.remove(tree.id);
-  state.plantedTreeDelta.push({ op: "remove", id: tree.id });
-  state.physics.removePlantedTree(tree.id);
-  spawnFallingTrunk(state, player, tree);
+  const record: PlantedTreeRecord = { ...toPlantedRecord(tree), stage: "stump" };
+  const stump = state.world.plantedTrees.upsert(record);
+  state.plantedTreeDelta.push({ op: "upsert", tree: record });
+  state.treesDirty = true;
+  state.physics.addPlantedTree(stump.id, stump.x, stump.groundY, stump.z, stump.r, stump.height);
+  // Clear the just-added stump collider (stump.height tall) so the trunk does
+  // not materialize interpenetrating it — the cut line is the stump top anyway.
+  spawnFallingTrunk(state, player, tree, stump.height + TRUNK_SPAWN_LIFT);
   maybeDropFellSeed(state, tree.species, tree.x, tree.z);
+  queueEvent(
+    state,
+    { e: "treeCut", id: tree.id, species: tree.species, final: true, x: tree.x, y: tree.groundY, z: tree.z },
+    tree.x,
+    tree.z,
+  );
   sendTo(state, player.id, { t: "notice", msg: "Timber!" });
 }
 
@@ -381,6 +431,7 @@ export function plantSeed(state: GameState, player: ServerPlayer, species: TreeS
   // young/mature collider (the growth scan re-adds/resizes at each transition).
   state.physics.addPlantedTree(tree.id, tree.x, tree.groundY, tree.z, tree.r, tree.height);
   state.plantedTreeDelta.push({ op: "upsert", tree: record });
+  state.treesDirty = true;
   return true;
 }
 
@@ -438,6 +489,9 @@ export function tickTreeGrowth(state: GameState): void {
   if (nowMs < state.treeGrowthNextAtMs) return;
   state.treeGrowthNextAtMs = nowMs + GROWTH_SCAN_INTERVAL_MS;
   for (const tree of state.world.plantedTrees.trees.values()) {
+    // Stumps are TERMINAL: treeStageAt would call this tree "mature" by age and
+    // regrow it — a felled tree must never spring back. Only the axe clears it.
+    if (tree.stage === "stump") continue;
     const stage = treeStageAt(tree.plantedAtMs, nowMs);
     if (stage === tree.stage) continue;
     const record: PlantedTreeRecord = { ...toPlantedRecord(tree), stage };
@@ -447,19 +501,81 @@ export function tickTreeGrowth(state: GameState): void {
     const grown = state.world.plantedTrees.upsert(record);
     state.physics.addPlantedTree(grown.id, grown.x, grown.groundY, grown.z, grown.r, grown.height);
     state.plantedTreeDelta.push({ op: "upsert", tree: record });
+    state.treesDirty = true;
   }
 }
 
+/** Max vertical separation for a trunk hit — a LYING trunk's body center sits
+ * near ground level, so the barrel-style dy gate applies (mirrors BARREL_MAX_DY). */
+const TRUNK_HIT_MAX_DY = 2.5;
+
 /**
- * Per-tick trunk despawn sweep: trunks asleep for TRUNK_SETTLE_TTL_S vanish
- * and drop TRUNK_WOOD_BONUS wood at their RESTING position — a small bonus on
- * top of the per-chop grants (the chop already paid out the doc-05 wood).
- * Caveats accepted: cap eviction can reap a trunk first (no bonus), and a
- * restart while a trunk is mid-air restores it with a fresh settle clock.
+ * Axe a resting felled trunk: the TRUNK_HITS_TO_BREAK-th hit breaks it into
+ * TRUNK_WOOD_BONUS wood at its resting spot (with a break event carrying the
+ * settled pose for the cosmetic log-burst). Trunks are PERSISTENT — this, or
+ * cap eviction (tickTrunks), is how they leave the world; there is no timer.
+ *
+ * Mirrors props.ts tryShoveProp (same cone/occlusion/counter pattern, same
+ * transient state.propHits map — body ids are unique across kinds). Called
+ * from combat's whiffed-melee cascade after standing trees, before barrels.
+ */
+export function tryBreakTrunk(state: GameState, player: ServerPlayer): boolean {
+  const stack = player.inventory[player.selectedSlot];
+  if (!stack || stack.type !== "axe") return false;
+  if (player.realm !== "overworld") return false;
+  if (!state.config.physics.enabled) return false;
+
+  const { x, z, yaw } = player.core;
+  const py = player.core.y;
+
+  let bestSq = Infinity;
+  let hit: { id: number; x: number; y: number; z: number } | null = null;
+  for (const b of state.physics.bodyPositions("trunk")) {
+    if (Math.abs(b.y - py) > TRUNK_HIT_MAX_DY) continue;
+    // Reach extended by a lying trunk's rough half-width so grazing swings land.
+    if (!inMeleeCone(x, z, yaw, b.x, b.z, MELEE_RANGE + 0.5, MELEE_HALF_ANGLE_RAD)) continue;
+    const dSq = distSq2D(x, z, b.x, b.z);
+    if (dSq >= bestSq) continue;
+    if (meleeBlocked(state, x, py, z, b.x, b.y, b.z)) continue;
+    bestSq = dSq;
+    hit = b;
+  }
+  if (!hit) return false;
+
+  queueEvent(state, { e: "hit", x: hit.x, y: hit.y, z: hit.z }, hit.x, hit.z);
+
+  const hits = (state.propHits.get(hit.id) ?? 0) + 1;
+  if (hits < TRUNK_HITS_TO_BREAK) {
+    state.propHits.set(hit.id, hits);
+    return true;
+  }
+  state.propHits.delete(hit.id);
+  // Emit BEFORE removal so the burst gets the exact resting pose (the
+  // barrelBreak posture); additive kind — older clients render a barrel puff.
+  const pose = state.physics.bodyPose(hit.id);
+  if (pose) {
+    queueEvent(
+      state,
+      { e: "break", id: hit.id, kind: "trunk", x: pose.x, y: pose.y, z: pose.z, q: pose.q },
+      pose.x,
+      pose.z,
+    );
+  }
+  state.physics.removeBody(hit.id);
+  dropWoodAt(state, hit.x, hit.z, TRUNK_WOOD_BONUS);
+  return true;
+}
+
+/**
+ * Per-tick trunk bookkeeping. Trunks no longer expire on a timer — they lie
+ * where they fell until axed (tryBreakTrunk). The one automatic reaper left is
+ * bodyCap eviction (oldest-settled-first, PhysicsSystem.enforceCap): when it
+ * takes a trunk, pay the wood out where it rested instead of eating it —
+ * heavy-logging worlds keep the faucet honest under cap pressure.
  */
 export function tickTrunks(state: GameState): void {
-  const expired = state.physics.expireSettled("trunk", TRUNK_SETTLE_TTL_S, state.time);
-  for (const trunk of expired) {
-    dropWoodAt(state, trunk.x, trunk.z, TRUNK_WOOD_BONUS);
+  for (const evicted of state.physics.drainEvicted()) {
+    if (evicted.kind !== "trunk") continue;
+    dropWoodAt(state, evicted.x, evicted.z, TRUNK_WOOD_BONUS);
   }
 }
