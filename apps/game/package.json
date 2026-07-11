@@ -13,6 +13,7 @@
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types",
     "models:export": "node scripts/export-models.mjs",
+    "models:optimize-static": "node scripts/optimize-static-models.mjs",
     "models:icons": "node scripts/render-icons.mjs",
     "models:trees": "node scripts/generate-trees.mjs",
     "loadtest": "node --experimental-strip-types scripts/loadtest.mjs",
