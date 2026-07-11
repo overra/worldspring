@@ -75,6 +75,12 @@ const MAX_CMDS_PER_FRAME = 6;
 // Budget: the periodic save must fit under this for the milestone's acceptance.
 const TICK_BUDGET_MS = 10; // acceptance: tick max < 10ms at cap
 const JOIN_SYNC_BUDGET_MS = 1000; // acceptance: join sync < 1s on localhost
+// Mirrors GameRoom.ts TICK_MAX_WINDOW_MS (module-local there, not exported):
+// /api/health tickMsMax is the max of the CURRENT and PREVIOUS rotating 5s
+// windows, so a save spike stays visible in tickMsMax for up to ~10s after
+// lastSave.at.
+const TICK_MAX_WINDOW_MS = 5_000;
+const SAVE_TAINT_MS = 2 * TICK_MAX_WINDOW_MS;
 
 // world.ts / structures.ts use extensionless relative imports that strip-types
 // cannot resolve — bundle them with esbuild exactly like locks-smoke.mjs /
@@ -695,6 +701,7 @@ async function main() {
   console.log(`measuring for ${MEASURE_S}s (>= WORLD_SAVE_INTERVAL_S ${WORLD_SAVE_INTERVAL_S}s => captures periodic saves)...`);
   const emaSamples = [];
   const maxSamples = [];
+  const steadyMaxSamples = []; // tickMsMax samples whose ~10s window memory provably held NO save
   const playerSamples = [];
   const hzPairs = [];
   const saves = new Map(); // lastSave.at -> lastSave (dedup: one entry per persistAll)
@@ -708,6 +715,15 @@ async function main() {
     if (!h.error) {
       emaSamples.push(h.tickMsEma);
       maxSamples.push(h.tickMsMax);
+      // Save-aware steady sampling: persistAll ALSO fires on join/leave/
+      // reconnect/respawn/give-up/linger-expiry (GameRoom.ts), not just the
+      // WORLD_SAVE_INTERVAL_S periodic — our own mid-window join probe fires
+      // one — so ANY sample's tickMsMax memory can hold a save spike.
+      // lastSave.at and now are the SAME server Date.now() clock read in the
+      // same response, so their difference is skew-free regardless of the
+      // harness clock. lastSave === null means no save has ever run: clean.
+      const saveTainted = !!h.lastSave && h.now - h.lastSave.at < SAVE_TAINT_MS;
+      if (!saveTainted) steadyMaxSamples.push(h.tickMsMax);
       playerSamples.push(h.players);
       if (prevH && h.now > prevH.now) {
         hzPairs.push(((h.tick - prevH.tick) / (h.now - prevH.now)) * 1000);
@@ -736,15 +752,25 @@ async function main() {
   // --- report ----------------------------------------------------------------
   // persistAll runs INSIDE the tick on the WORLD_SAVE_INTERVAL_S cadence, so it
   // shows up as a periodic tickMsMax spike. Split the two cleanly:
-  //   * steady tick MAX = MIN across the windowed-max samples — a poll whose
-  //     ~5-10s max-window contained NO save reports the worst NON-save tick.
-  //     THIS is the milestone's "tick max" (the sim's per-tick cost at cap).
-  //   * save-tick peak = MAX across samples — a window that caught a periodic
+  //   * steady tick MAX = MIN across the samples whose tickMsMax memory
+  //     (two rotating 5s max-windows) provably held NO save: at sample time
+  //     h.now - h.lastSave.at >= SAVE_TAINT_MS (server-clock difference, so
+  //     skew-free). MIN-across-all was wrong here: persistAll also fires on
+  //     join/leave/respawn/linger-expiry, so no sample is save-free by
+  //     schedule alone. THIS is the milestone's "tick max" (per-tick sim
+  //     cost at cap). If EVERY sample was tainted, fall back to MIN across
+  //     ALL samples — an UPPER bound on steady — and WARN instead of
+  //     reporting nothing.
+  //   * save-tick peak = MAX across ALL samples — a window that caught a
   //     save. persistAll duration ≈ save-tick peak − steady tick (the save is
   //     by far the most expensive thing a tick ever does at cap).
   const tickEmaSteady = median(emaSamples);
-  const tickMaxSteady = maxSamples.length ? Math.min(...maxSamples) : 0;
+  const allTainted = maxSamples.length > 0 && steadyMaxSamples.length === 0;
+  const steadyPool = allTainted ? maxSamples : steadyMaxSamples;
+  // Empty pool → Infinity so tickPass fails closed (0 would silently PASS the budget).
+  const tickMaxSteady = steadyPool.length ? Math.min(...steadyPool) : Infinity;
   const tickMaxSavePeak = Math.max(0, ...maxSamples);
+  const excludedSaveSamples = maxSamples.length - steadyMaxSamples.length;
   const persistSpike = Math.max(0, round3(tickMaxSavePeak - tickMaxSteady));
   const playersMed = median(playerSamples);
   const hzMed = median(hzPairs);
@@ -757,7 +783,19 @@ async function main() {
   console.log("");
   console.log("  metric                              value        budget");
   console.log(`  tick EMA (steady average)          ${fmtMs(tickEmaSteady)}      —`);
-  console.log(`  tick MAX (steady, no-save window)  ${fmtMs(tickMaxSteady)}      < ${TICK_BUDGET_MS} ms  [acceptance]`);
+  console.log(
+    `  tick MAX (steady, no-save window)  ${fmtMs(tickMaxSteady)}      < ${TICK_BUDGET_MS} ms  [acceptance]` +
+      (allTainted
+        ? "  (UNRELIABLE: all samples save-tainted — see WARNING)"
+        : `  (${steadyMaxSamples.length}/${maxSamples.length} save-free samples; ${excludedSaveSamples} excluded)`),
+  );
+  if (allTainted) {
+    console.log(
+      `  WARNING: every /api/health sample was taken within ${SAVE_TAINT_MS / 1000}s of a save — ` +
+        `steady tick MAX fell back to MIN across ALL ${maxSamples.length} samples (an UPPER bound on the ` +
+        `true steady tick). Expect join/leave churn or event-driven saves denser than the ~10s tickMsMax memory.`,
+    );
+  }
   console.log(`  tick MAX (save-tick peak)          ${fmtMs(tickMaxSavePeak)}      — (periodic persistAll, in-tick)`);
   console.log(`  persistAll duration (peak − steady)${fmtMs(persistSpike)}      — (spike inference; direct lastSave numbers below)`);
   console.log(`  join sync (open→sFull done)        ${fmtMs(joinProbe.total)}      < ${JOIN_SYNC_BUDGET_MS} ms  [acceptance]`);
@@ -809,7 +847,10 @@ async function main() {
   console.log("\n=== ACCEPTANCE ===");
   console.log(`  reached cap (${pieceCount()} >= ${FILL_TARGET})          ${atCap ? "PASS" : "FAIL"}`);
   console.log(`  ${playersMed} bots online >= ${botsFloor} (of ${BOTS} requested)   ${botsPass ? "PASS" : "FAIL"}`);
-  console.log(`  tick MAX (steady) ${tickMaxSteady.toFixed(2)}ms < ${TICK_BUDGET_MS}ms at cap w/ ${playersMed} bots   ${tickPass ? "PASS" : "FAIL"}`);
+  console.log(
+    `  tick MAX (steady) ${tickMaxSteady.toFixed(2)}ms < ${TICK_BUDGET_MS}ms at cap w/ ${playersMed} bots   ${tickPass ? "PASS" : "FAIL"}` +
+      (allTainted ? " (save-tainted fallback — upper bound)" : ""),
+  );
   console.log(
     `  persistAll ${saveMsMax === null ? "(none observed)" : saveMsMax.toFixed(2) + "ms"} < ${TICK_BUDGET_MS}ms across ${saveList.length} in-window saves   ${savePass ? "PASS" : "FAIL"}`,
   );
