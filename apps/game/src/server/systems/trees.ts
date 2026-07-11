@@ -590,7 +590,10 @@ export function tryBreakTrunk(state: GameState, player: ServerPlayer): boolean {
     );
   }
   state.physics.removeBody(hit.id);
-  dropWoodAt(state, hit.x, hit.z, TRUNK_WOOD_BONUS);
+  // Wood pays out at the trunk's resting CENTER — co-located with the break
+  // burst above. hit.x/z is the axe-connect point, which can sit metres away
+  // at the end of a long trunk.
+  dropWoodAt(state, pose?.x ?? hit.x, pose?.z ?? hit.z, TRUNK_WOOD_BONUS);
   return true;
 }
 

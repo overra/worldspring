@@ -133,6 +133,22 @@ const dt = 1 / 15;
   check(trunk !== undefined && trunk.asleep === true, `trunk fell asleep after ${steps} steps`);
   check(trunk !== undefined && trunk.y < 1.0, `trunk settled LYING DOWN (y=${trunk?.y.toFixed(2)} < 1.0 — toppled, not standing at ~4)`);
   check(trunk?.dims?.[1] === halfH, "trunk pose carries its dims for the wire");
+
+  // e) bodyPositions segment info (tryBreakTrunk's end-reach closest-point
+  //    test): a dims-carrying trunk exposes its world-space long axis (local
+  //    +Y through the body rotation) and half-length. Lying down, the axis
+  //    must be near-horizontal and unit-length, and an end point projected
+  //    from it must sit ~halfH from the center on the ground plane.
+  const bp = sysC.bodyPositions("trunk").find((b) => b.id === 7);
+  check(bp !== undefined && bp.halfLen === halfH, "bodyPositions exposes the trunk half-length (dims[1])");
+  const axis = bp?.axis;
+  const axisLen = axis ? Math.hypot(axis[0], axis[1], axis[2]) : NaN;
+  check(axis !== undefined && Math.abs(axisLen - 1) < 1e-6, `trunk axis is unit-length (|axis|=${axisLen.toFixed(6)})`);
+  check(axis !== undefined && Math.abs(axis[1]) < 0.3, `toppled trunk's long axis lies near-horizontal (|axis.y|=${Math.abs(axis?.[1] ?? NaN).toFixed(3)} < 0.3)`);
+  if (bp && axis) {
+    const endDist = Math.hypot(axis[0] * bp.halfLen, axis[2] * bp.halfLen);
+    check(Math.abs(endDist - halfH) < 0.5, `projected trunk end sits ~halfH from center on the ground plane (${endDist.toFixed(2)} ≈ ${halfH})`);
+  }
 }
 
 // --- 1.6 physics props: barrels (doc 13 M3) ----------------------------------

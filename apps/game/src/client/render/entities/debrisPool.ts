@@ -139,15 +139,6 @@ export class DebrisPool {
     return this.ready;
   }
 
-  /** Synchronous full build — the destruction-probe harness (which asserts
-   * the complete deterministic template set) and any caller that needs the
-   * templates NOW. */
-  buildTemplates(): void {
-    while (!this.buildNextTemplate()) {
-      // one batch per iteration
-    }
-  }
-
   /** Spawn a burst at `pose`. `group` defaults to the first registered spec
    * (single-family pools like barrels never pass it). False = not ready or
    * zero budget — the caller falls back to a cheap puff. */

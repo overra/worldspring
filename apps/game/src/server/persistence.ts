@@ -1034,8 +1034,9 @@ export function loadWorld(sql: SqlStorage, game: GameState): boolean {
   }
 
   // doc 13 M2 — felled trees: rebuild the set AND tell the physics system
-  // (pre-attach: fellTree just records the index, and attachEngine skips
-  // building those static colliders). Per-entry guard mirrors hasNumericId.
+  // (pre-attach: fellTree just records the index, and attachEngine builds
+  // stump stubs instead of the full colliders). Per-entry guard mirrors
+  // hasNumericId.
   for (const idx of felledEntries) {
     if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0) continue;
     game.felledTrees.add(idx);

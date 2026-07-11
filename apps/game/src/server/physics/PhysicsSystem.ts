@@ -221,8 +221,9 @@ export class PhysicsSystem {
    * toggles swap. Empty until attach; pre-attach mutations are no-ops because
    * attachEngine reads the structure index itself. */
   private structColliders = new Map<number, RapierCollider[]>();
-  /** Felled tree indices — excluded from the static build at attach (restored
-   * worlds) and removed live after it (fresh fells). Grows monotonically. */
+  /** Felled tree indices — their full-height colliders become stump stubs, at
+   * attach (restored worlds) or live on fell (fresh fells). Grows
+   * monotonically. */
   private felledTrees = new Set<number>();
   /** Bodies reaped by cap eviction since the last drain — position captured at
    * removal so systems can pay out (persistent trunks drop their wood instead
