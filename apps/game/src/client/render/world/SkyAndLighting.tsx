@@ -63,7 +63,9 @@ const MOON_INTENSITY = 0.12;
 const STARS_SHOW_ELEVATION = -0.16; // sky is already near-black here — no pop
 
 // Shadows: ortho box centered on the camera, sun pulled this far out along
-// the sun direction. At night the sun intensity is 0 — no special casing.
+// the sun direction. At night the sun intensity is 0 and the shadow pass is
+// frozen via shadow.autoUpdate (end of the useFrame below) — castShadow
+// itself never flips (that would recompile receiver shaders).
 // On/off + map size come from the quality preset (settings store).
 const SUN_SHADOW_DIST = 120;
 const SHADOW_ORTHO_HALF = 55;
@@ -477,6 +479,15 @@ export function SkyAndLighting(): ReactElement | null {
       );
       sky.rainbow.rotation.set(0, Math.atan2(-rainbowDirTmp.x, -rainbowDirTmp.z), 0);
     }
+
+    // Shadow-map economy: when the sun's FINAL intensity is 0 (all night — the
+    // base curve, weather cut, and red-realm override have all run by here;
+    // red keeps a nonzero red sun, so it keeps its shadows), freeze the shadow
+    // pass instead of re-rendering an invisible map every frame. autoUpdate,
+    // NOT castShadow — flipping castShadow recompiles every receiving
+    // material's shader (a visible hitch). Flipping autoUpdate back on at dawn
+    // re-renders the map that same frame.
+    if (sun) sun.shadow.autoUpdate = sun.intensity > 0;
   });
 
   return (

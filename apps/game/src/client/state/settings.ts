@@ -41,16 +41,30 @@ export const QUALITY_CONFIGS: Record<QualityPreset, QualityConfig> = {
 
 // GPU-class heuristics for detectTier(), matched against the (possibly
 // masked) WEBGL_debug_renderer_info UNMASKED_RENDERER string. Deliberately
-// coarse: strong = Apple silicon / discrete desktop parts; weak = mobile and
-// software rasterizers (mostly already caught by the coarse-pointer check).
+// coarse: strong = Apple silicon / RTX-class or GTX 16xx NVIDIA / discrete
+// AMD / Intel Arc (widened to [ab]\d for Battlemage); weak = mobile parts,
+// software rasterizers, and Intel UHD/HD Graphics (any gen — both the Mesa
+// "Mesa Intel(R) UHD Graphics 620" and ANGLE "Intel(R) UHD Graphics 630"
+// forms), which were misrouting to medium's full postFX chain. Intel
+// Iris/Iris Xe deliberately falls through to medium (cheaper now via
+// half-res N8AO). Bare "GeForce" no longer counts as strong — GT 1030 /
+// MX-class laptop parts were routing high whenever cores >= 8; GTX 9xx/10xx
+// flagships demote to medium as the safe default (manual picks are sacred).
 // Anything unrecognized — including privacy-masked strings — lands on medium.
 // Real UNMASKED_RENDERER strings often carry "(TM)" tokens ("AMD Radeon(TM)
 // RX 6800 XT", "Intel Arc(TM) A770") — tolerate them or high-end AMD/Intel
 // desktops silently detect medium. "Basic Render Driver" is D3D WARP, the
 // CPU rasterizer behind RDP/VM sessions — that's a low device.
-const STRONG_GPU = /apple (m\d|gpu)|geforce|rtx\b|radeon\s*(\(tm\)\s*)?(rx|pro)|arc\s*(\(tm\)\s*)?a\d/i;
+const STRONG_GPU =
+  /apple (m\d|gpu)|geforce\s*rtx|rtx\b|gtx\s*1[6-9]\d0|radeon\s*(\(tm\)\s*)?(rx|pro)|arc\s*(\(tm\)\s*)?[ab]\d/i;
 const WEAK_GPU =
-  /mali|adreno|powervr|videocore|swiftshader|llvmpipe|softpipe|software|basic render driver/i;
+  /mali|adreno|powervr|videocore|swiftshader|llvmpipe|softpipe|software|basic render driver|intel(\(r\))?\s*u?hd\s*graphics/i;
+
+/** Bump to force ONE silent re-probe of auto-detected tiers on next load —
+ * detectTier() results are persisted and never re-run otherwise, so regex
+ * fixes above would only ever reach fresh profiles. Manual picks are never
+ * touched, and a `?tier=` QA session never consumes the re-probe. */
+const TIER_PROBE_VERSION = 2;
 
 /**
  * Read the GPU renderer string from a throwaway WebGL context. Returns "" when
@@ -106,6 +120,9 @@ export interface SettingsState {
   quality: QualityPreset;
   /** Auto-detected tier, persisted after the first probe; null = never probed. */
   tier: QualityPreset | null;
+  /** TIER_PROBE_VERSION the persisted tier was probed under (0 = pre-versioning
+   * profile) — a mismatch triggers one re-probe for auto-detected tiers. */
+  tierProbeVersion: number;
   /** True once the player ever picked a quality manually — never re-detect over it. */
   userOverrodeQuality: boolean;
   /** FPS/debug overlay visibility (also toggled with F3). */
@@ -158,6 +175,7 @@ export const useSettingsStore = create<SettingsState>()(
       // never seen by consumers (module eval finishes before any render).
       quality: "high",
       tier: null,
+      tierProbeVersion: 0,
       userOverrodeQuality: false,
       showDebug: false,
 
@@ -177,6 +195,7 @@ export const useSettingsStore = create<SettingsState>()(
         sensitivity: s.sensitivity,
         quality: persistShadowQuality ?? s.quality,
         tier: s.tier,
+        tierProbeVersion: s.tierProbeVersion,
         userOverrodeQuality: s.userOverrodeQuality,
         showDebug: s.showDebug,
       }),
@@ -200,14 +219,28 @@ function applyTierDefaults(): void {
     s.tier !== null && Object.hasOwn(QUALITY_CONFIGS, s.tier) ? s.tier : null;
   const storedQuality = Object.hasOwn(QUALITY_CONFIGS, s.quality) ? s.quality : null;
   const userOverrodeQuality = s.userOverrodeQuality && storedQuality !== null;
+  const probeStale = s.tierProbeVersion !== TIER_PROBE_VERSION;
   if (urlTier !== null) {
+    // A QA session must not consume the re-probe — leave tierProbeVersion be.
     persistShadowQuality = storedQuality ?? storedTier ?? detectTier();
     useSettingsStore.setState({ quality: urlTier, tier: storedTier, userOverrodeQuality });
     return;
   }
-  if (userOverrodeQuality) return;
-  const tier = storedTier ?? detectTier();
-  useSettingsStore.setState({ tier, quality: tier, userOverrodeQuality });
+  if (userOverrodeQuality) {
+    // Manual picks are sacred; just mark the probe current so the staleness
+    // check doesn't linger forever in the persisted blob.
+    if (probeStale) useSettingsStore.setState({ tierProbeVersion: TIER_PROBE_VERSION });
+    return;
+  }
+  // A stale probe version re-detects ONCE (auto-tiers only) — this is how
+  // detection fixes reach existing profiles instead of only fresh installs.
+  const tier = probeStale ? detectTier() : (storedTier ?? detectTier());
+  useSettingsStore.setState({
+    tier,
+    quality: tier,
+    userOverrodeQuality,
+    tierProbeVersion: TIER_PROBE_VERSION,
+  });
 }
 applyTierDefaults();
 
