@@ -93,6 +93,11 @@ const CRATE_HALF = 0.4;
  * MUST equal the shared pair (the client mesh + the server spawn lift read it). */
 const BARREL_HALF_XZ = 0.3;
 const BARREL_HALF_Y = 0.5;
+/** Natural-stump collider half-height. LOCAL mirror of shared STUMP_HEIGHT / 2
+ * (trees.ts) — the BARREL_HALF precedent keeps this module value-import-free
+ * of shared modules for the strip-types replay harness. MUST equal
+ * STUMP_HEIGHT / 2 (Stumps.tsx and fellPlantedTree read the shared value). */
+const STUMP_HALF_HEIGHT = 0.275;
 /** Vehicle hull half-extents (doc 13 M4). LOCAL mirror of shared VEHICLE_HALF_X/
  * Y/Z (constants.ts) — the BARREL_HALF precedent keeps this module value-import-
  * free of non-leaf shared modules for the strip-types replay harness. MUST equal
@@ -156,6 +161,20 @@ export interface VehicleSensors {
   speed: number;
   /** Signed forward speed vf = v·forward (m/s). */
   forward: number;
+}
+
+/** bodyPositions entry: body center plus, for dims-carrying kinds (trunks),
+ * the long-axis segment — so melee callers can reach-test the closest point
+ * on the body instead of its center. */
+export interface BodyPoint {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  /** Local +Y (the cuboid's length axis) rotated into world space. */
+  axis?: [number, number, number];
+  /** Half-length along `axis` (dims[1]). */
+  halfLen?: number;
 }
 
 /** Rotate vector (vx,vy,vz) by quaternion (qx,qy,qz,qw). Pure float math
@@ -274,12 +293,23 @@ export class PhysicsSystem {
       addAabb(b.roof);
     }
     for (const w of this.statics.militaryWalls) addAabb(w);
-    // Trees keep their collider HANDLE per index (doc 13 M2): felling removes
-    // exactly one collider at runtime. Already-felled indices (restored from
-    // the world snapshot via fellTree before attach) are never built at all.
+    // Trees keep their collider HANDLE per index (doc 13 M2): felling swaps
+    // the full-height collider for a stump stub at runtime. Already-felled
+    // indices (restored from the world snapshot via fellTree before attach)
+    // build the STUB directly — dropping it here would silently resurrect the
+    // roll-through-stumps asymmetry after every hibernation.
     this.statics.trees.forEach((t, index) => {
-      if (this.felledTrees.has(index)) return;
       const y0 = this.statics.heightAt(t.x, t.z);
+      if (this.felledTrees.has(index)) {
+        world.createCollider(
+          engine.ColliderDesc.cuboid(t.r, STUMP_HALF_HEIGHT, t.r).setTranslation(
+            t.x,
+            y0 + STUMP_HALF_HEIGHT,
+            t.z,
+          ),
+        );
+        return;
+      }
       this.treeColliders.set(
         index,
         world.createCollider(
@@ -489,15 +519,17 @@ export class PhysicsSystem {
   }
 
   /**
-   * Mark a tree (by index in statics.trees) as felled: its STATIC collider is
-   * removed from the physics world so the dynamic trunk (and future props)
-   * stop colliding where it stood (doc 13 M2). Pre-attach calls just record
-   * the index — attachEngine skips building those colliders — which is how a
-   * restored felled set from the world snapshot is honored. Idempotent. Note
-   * the KINEMATIC statics (movement.ts queryStatics) intentionally still
-   * contain the tree — player movement vs stumps is doc 05's concern.
+   * Mark a tree (by index in statics.trees) as felled: its full-height STATIC
+   * collider is SWAPPED for a stump-height stub so the dynamic trunk (and
+   * future props) stop colliding where it stood (doc 13 M2) while vehicles and
+   * bodies still hit the stump — the same posture planted stumps get from
+   * fellPlantedTree, and the same footprint the KINEMATIC statics
+   * (movement.ts queryStatics) keep treating as solid. Pre-attach calls just
+   * record the index — attachEngine builds the stub instead of the full
+   * collider for restored felled indices. Idempotent.
    */
   fellTree(index: number): void {
+    if (this.felledTrees.has(index)) return;
     this.felledTrees.add(index);
     const collider = this.treeColliders.get(index);
     if (collider && this.world) {
@@ -505,24 +537,21 @@ export class PhysicsSystem {
       this.treeColliders.delete(index);
       this.worldDirty = true;
     }
-  }
-
-  /**
-   * Remove and return every body of `kind` that has been ASLEEP for at least
-   * `ttlS` game-seconds, with its resting pose — the trunk despawn-to-loot
-   * sweep (doc 13 M2). Wake-ups reset the clock (sleptAt nulls on wake), so a
-   * trunk nudged by another body lives on until it re-settles.
-   */
-  expireSettled(kind: BodyKind, ttlS: number, gameTime: number): Array<{ id: number; x: number; y: number; z: number }> {
-    const out: Array<{ id: number; x: number; y: number; z: number }> = [];
-    for (const rec of this.bodies.values()) {
-      if (rec.kind !== kind) continue;
-      if (rec.sleptAt === null || gameTime - rec.sleptAt < ttlS) continue;
-      const t = rec.body.translation();
-      out.push({ id: rec.id, x: t.x, y: t.y, z: t.z });
+    // Anonymous static stub in its place — natural stumps are permanent, so no
+    // handle needs storing.
+    if (this.world && this.engine) {
+      const t = this.statics.trees[index];
+      if (t) {
+        const y0 = this.statics.heightAt(t.x, t.z);
+        this.world.createCollider(
+          this.engine.ColliderDesc.cuboid(t.r, STUMP_HALF_HEIGHT, t.r).setTranslation(
+            t.x,
+            y0 + STUMP_HALF_HEIGHT,
+            t.z,
+          ),
+        );
+      }
     }
-    for (const b of out) this.removeBody(b.id);
-    return out;
   }
 
   removeBody(id: number): void {
@@ -576,15 +605,26 @@ export class PhysicsSystem {
    * (doc 13 M3: the barrel-shove cone test lives in systems/props.ts, which
    * has no engine handle). Reads current translations; empty before the engine
    * attaches or when disabled (a buffered-but-unmaterialized barrel can't be
-   * shoved — it materializes on attach, effectively at boot).
+   * shoved — it materializes on attach, effectively at boot). Dims-carrying
+   * kinds (trunks) additionally expose their long axis — local +Y through the
+   * body rotation — and half-length, so callers can reach-test the closest
+   * point on the segment instead of the center (a lying 6–11 m trunk's ends
+   * sit metres from its center). Fields stay optional: point-only callers and
+   * fakes ignore them.
    */
-  bodyPositions(kind: BodyKind): Array<{ id: number; x: number; y: number; z: number }> {
-    const out: Array<{ id: number; x: number; y: number; z: number }> = [];
+  bodyPositions(kind: BodyKind): BodyPoint[] {
+    const out: BodyPoint[] = [];
     if (!this.engine) return out;
     for (const rec of this.bodies.values()) {
       if (rec.kind !== kind) continue;
       const t = rec.body.translation();
-      out.push({ id: rec.id, x: t.x, y: t.y, z: t.z });
+      const entry: BodyPoint = { id: rec.id, x: t.x, y: t.y, z: t.z };
+      if (rec.dims) {
+        const r = rec.body.rotation();
+        entry.axis = rotateByQuat(r.x, r.y, r.z, r.w, 0, 1, 0);
+        entry.halfLen = rec.dims[1];
+      }
+      out.push(entry);
     }
     return out;
   }
@@ -703,9 +743,9 @@ export class PhysicsSystem {
       // Restored-asleep bodies start with a NULL settle clock even though they
       // sleep: this.gameTime is still 0 when attachEngine drains the buffer
       // before the first step (warm-isolate boot), and stamping 0 would make
-      // expireSettled reap them instantly against the restored game.time. The
-      // first step() stamps sleeping bodies at the CURRENT game time — the
-      // fresh-settle-clock restore behavior tickTrunks documents.
+      // enforceCap treat them as oldest-settled and evict them first against
+      // the restored game.time. The first step() stamps sleeping bodies at the
+      // CURRENT game time.
       sleptAt: null,
       createdAt: this.gameTime,
     };

@@ -17,6 +17,13 @@ export type SnapMsg = Extract<ServerMsg, { t: "snap" }>;
  * body/tree visually changes, not INTERP_DELAY_MS before it. */
 type DelayedFxEvent = Extract<GameEvent, { e: "break" } | { e: "treeCut" }>;
 
+/** THE definition of which event kinds ride the delayed timeline — connection.ts
+ * filters the immediate set as its negation, so a new delayed kind added here
+ * automatically leaves the immediate path. */
+export function isDelayedFxEvent(event: GameEvent): event is DelayedFxEvent {
+  return event.e === "break" || event.e === "treeCut";
+}
+
 interface BufferedSnap {
   arrival: number; // performance.now() at receipt
   /** Server game-time of this snapshot (lag compensation aim timestamps). */
@@ -39,6 +46,13 @@ interface BufferedSnap {
   /** Cosmetic destruction events (break + treeCut) share the delayed timeline. */
   breaks: DelayedFxEvent[];
   breaksApplied: boolean;
+  /** True when this snap carried planted-tree deltas. The shared index mutates
+   * at RECEIPT (prediction/collision must see it immediately, connection.ts);
+   * only the RENDER version bump rides the delayed timeline here, so the
+   * stump swap / growth pop lands in the same frame as the treeCut burst and
+   * trunk body instead of INTERP_DELAY_MS early. */
+  planted: boolean;
+  plantedApplied: boolean;
   weather: number;
 }
 
@@ -78,10 +92,10 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
     bodyById,
     felled: snap.felled,
     felledApplied: false,
-    breaks: snap.events.filter(
-      (event): event is DelayedFxEvent => event.e === "break" || event.e === "treeCut",
-    ),
+    breaks: snap.events.filter(isDelayedFxEvent),
     breaksApplied: false,
+    planted: (snap.planted?.length ?? 0) > 0,
+    plantedApplied: false,
     weather: snap.weather,
   });
   if (buffer.length > MAX_BUFFERED_SNAPS) {
@@ -91,6 +105,7 @@ export function pushSnap(snap: SnapMsg, arrivalMs: number): void {
     if (evicted) {
       applyFelled(evicted);
       applyBreaks(evicted);
+      applyPlanted(evicted);
     }
   }
 
@@ -120,6 +135,15 @@ function applyBreaks(s: BufferedSnap): void {
   if (s.breaksApplied) return;
   s.breaksApplied = true;
   if (s.breaks.length > 0) clientWorld.events.push(...s.breaks);
+}
+
+/** Release a snap's planted-tree RENDER rebuild (PlantedTrees/Stumps read
+ * plantedVersion) on the delayed timeline. The index itself mutated at receipt
+ * and already contains the final state — this only times the visual swap. */
+function applyPlanted(s: BufferedSnap): void {
+  if (s.plantedApplied) return;
+  s.plantedApplied = true;
+  if (s.planted) clientWorld.plantedVersion++;
 }
 
 // Dropping the buffer can discard unapplied felled deltas — safe only because
@@ -174,6 +198,7 @@ export function updateInterpolation(nowMs: number): void {
   for (let i = 0; i <= bIdx; i++) {
     applyFelled(buffer[i]);
     applyBreaks(buffer[i]);
+    applyPlanted(buffer[i]);
   }
   const span = b.arrival - a.arrival;
   const t = span > 0 ? clamp((renderTime - a.arrival) / span, 0, 1) : 1;

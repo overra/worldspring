@@ -96,23 +96,26 @@ const dt = 1 / 15;
   for (let i = 0; i < 450; i++) sysA.step(dt, i * dt);
   check(Math.abs(settleY(sysA, 1) - 8.4) < 0.5, `crate rests ON the standing tree (y=${settleY(sysA, 1).toFixed(2)} ≈ 8.4)`);
 
-  // b) RUNTIME removal: felling the tree drops that same crate to the ground.
+  // b) RUNTIME swap: felling the tree swaps the 8m collider for a stump stub —
+  //    the crate falls from the treetop and rests ON the stub
+  //    (0.55 + crate half 0.4 = 0.95, not 8.4 and not the bare ground 0.4).
   sysA.fellTree(0);
   for (let i = 450; i < 900; i++) sysA.step(dt, i * dt);
-  check(Math.abs(settleY(sysA, 1) - 0.4) < 0.35, `after fellTree the crate falls to the ground (y=${settleY(sysA, 1).toFixed(2)} ≈ 0.4)`);
+  check(Math.abs(settleY(sysA, 1) - 0.95) < 0.35, `after fellTree the crate rests on the stub stump (y=${settleY(sysA, 1).toFixed(2)} ≈ 0.95, full collider gone)`);
 
-  // c) PRE-ATTACH exclusion (the restored-world path): fellTree before
-  //    attachEngine must skip building the static collider entirely.
+  // c) PRE-ATTACH path (the restored-world case): fellTree before attachEngine
+  //    must build the STUB instead of the full collider — a room restart must
+  //    not resurrect the roll-through-stumps asymmetry.
   const sysB = new PhysicsSystem(treeWorld, { enabled: true, bodyCap: 64 });
   sysB.fellTree(0);
   sysB.attachEngine(RAPIER, dt);
   sysB.spawnBody(1, "crate", 0, 12, 0);
   for (let i = 0; i < 450; i++) sysB.step(dt, i * dt);
-  check(Math.abs(settleY(sysB, 1) - 0.4) < 0.35, `restored felled set excludes the collider at attach (y=${settleY(sysB, 1).toFixed(2)} ≈ 0.4)`);
+  check(Math.abs(settleY(sysB, 1) - 0.95) < 0.35, `restored felled set rebuilds the stub, not the full collider (y=${settleY(sysB, 1).toFixed(2)} ≈ 0.95)`);
 
   // d) Trunk body: upright spawn + off-center top impulse TOPPLES it — it
   //    settles lying down (center ≈ its half-WIDTH above ground, not half-
-  //    height), then expireSettled reaps it with a resting pose.
+  //    height). Trunks then PERSIST until axed (tryBreakTrunk) or cap-evicted.
   const sysC = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
   sysC.attachEngine(RAPIER, dt);
   const halfH = 4, r = 0.35;
@@ -130,18 +133,6 @@ const dt = 1 / 15;
   check(trunk !== undefined && trunk.asleep === true, `trunk fell asleep after ${steps} steps`);
   check(trunk !== undefined && trunk.y < 1.0, `trunk settled LYING DOWN (y=${trunk?.y.toFixed(2)} < 1.0 — toppled, not standing at ~4)`);
   check(trunk?.dims?.[1] === halfH, "trunk pose carries its dims for the wire");
-  // Not yet expired: 10s < TTL.
-  const sleepT = steps * dt;
-  check(sysC.expireSettled("trunk", 30, sleepT + 10).length === 0, "expireSettled holds before the TTL");
-  const reaped = sysC.expireSettled("trunk", 30, sleepT + 40);
-  check(reaped.length === 1 && Math.abs(reaped[0].y - (trunk?.y ?? NaN)) < 0.01, "expireSettled reaps the trunk after the TTL with its resting pose");
-  check(sysC.count === 0, "reaped trunk left the body registry");
-  // Kind filter: a crate settled just as long is NOT reaped by the trunk sweep.
-  const sysD = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
-  sysD.attachEngine(RAPIER, dt);
-  sysD.spawnBody(9, "crate", 0, 2, 0);
-  for (let i = 0; i < 450; i++) sysD.step(dt, i * dt);
-  check(sysD.expireSettled("trunk", 30, 450 * dt + 100).length === 0, "expireSettled('trunk') ignores settled crates");
 }
 
 // --- 1.6 physics props: barrels (doc 13 M3) ----------------------------------

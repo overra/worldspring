@@ -2,8 +2,10 @@
 // (follow-up to #85). Axe swings are the wood faucet (doc 05's gather-node
 // design folded into felling): every landed chop grants wood, and the FINAL
 // chop topples the tree as a dynamic "trunk" physics body — static collider
-// out, trunk spawned with an off-center impulse away from the chopper, settle →
-// TTL → despawn dropping bonus wood where it rests.
+// out (swapped for a stump stub), trunk spawned with an off-center impulse away
+// from the chopper. Trunks PERSIST where they settle until axed apart
+// (tryBreakTrunk) or cap-evicted (tickTrunks pays the wood out where they
+// rested).
 //
 // Two tree identities share this code:
 //   • NATURAL trees — fingerprint-coupled entries in world.trees, addressed by
@@ -30,8 +32,9 @@
 // felled NATURAL trees as solid trunk cylinders on BOTH client and server — the
 // shared deterministic sim is untouched (no prediction desync), and walking
 // through stump footprints is doc 05's concern, not M2's. A felled PLANTED tree
-// is REMOVED from the shared index, so its footprint stops colliding on both
-// ends symmetrically (the client applies the same remove delta).
+// is RE-STAGED to a terminal "stump" in the shared index (stub height, full
+// trunk footprint — both ends keep colliding symmetrically via the upsert
+// delta); only clearing the stump with an axe removes it.
 
 import {
   DROPPED_LOOT_TTL_S,
@@ -52,6 +55,7 @@ import {
 } from "@worldspring/shared/constants";
 import { clamp, distSq2D, inMeleeCone, yawToDir, type Aabb } from "@worldspring/shared/math";
 import {
+  STUMP_HEIGHT,
   toPlantedRecord,
   treeStageAt,
   type PlantedTree,
@@ -266,9 +270,10 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
 /** Spawn the dynamic falling-trunk body for a felled tree and topple it AWAY
  * from the chopper. Shared by natural and planted felling — same footprint as
  * the static collider it replaces, base lifted `baseLift` above the sampled
- * heightfield seam. Planted fells pass a taller lift: their stump collider is
- * already in place at the same x/z, and spawning the trunk inside it would let
- * Rapier's depenetration kick fight the tuned topple impulse. */
+ * heightfield seam. Both fell paths pass a taller lift: their stump collider
+ * (planted re-stage / natural stub swap) is already in place at the same x/z,
+ * and spawning the trunk inside it would let Rapier's depenetration kick fight
+ * the tuned topple impulse. */
 function spawnFallingTrunk(
   state: GameState,
   player: ServerPlayer,
@@ -307,7 +312,9 @@ function fellTree(state: GameState, player: ServerPlayer, index: number): void {
   state.felledDelta.push(index);
   state.treesDirty = true; // the `trees` world_state row rewrites on the next save
   state.physics.fellTree(index);
-  spawnFallingTrunk(state, player, tree);
+  // fellTree just swapped the full collider for a stump stub at the same x/z —
+  // lift the trunk clear of it, exactly like the planted-fell path below.
+  spawnFallingTrunk(state, player, tree, STUMP_HEIGHT + TRUNK_SPAWN_LIFT);
   maybeDropFellSeed(state, tree.kind, tree.x, tree.z);
   // Cosmetic cut-burst at the stump line; rides the DELAYED break timeline
   // client-side so it fires exactly when the standing tree vanishes.
@@ -536,14 +543,30 @@ export function tryBreakTrunk(state: GameState, player: ServerPlayer): boolean {
   let bestSq = Infinity;
   let hit: { id: number; x: number; y: number; z: number } | null = null;
   for (const b of state.physics.bodyPositions("trunk")) {
-    if (Math.abs(b.y - py) > TRUNK_HIT_MAX_DY) continue;
+    // Reach-test the CLOSEST point on the trunk's long-axis segment, not its
+    // center — a lying 6–11 m trunk's ends sit metres from the center, so
+    // center-testing made end swings whiff. Point-only entries (the trees.mjs
+    // fake stages trunks without dims) fall back to the center.
+    let cx = b.x, cy = b.y, cz = b.z;
+    if (b.axis && b.halfLen !== undefined) {
+      const t = clamp(
+        (x - b.x) * b.axis[0] + (py - b.y) * b.axis[1] + (z - b.z) * b.axis[2],
+        -b.halfLen,
+        b.halfLen,
+      );
+      cx = b.x + b.axis[0] * t;
+      cy = b.y + b.axis[1] * t;
+      cz = b.z + b.axis[2] * t;
+    }
+    if (Math.abs(cy - py) > TRUNK_HIT_MAX_DY) continue;
     // Reach extended by a lying trunk's rough half-width so grazing swings land.
-    if (!inMeleeCone(x, z, yaw, b.x, b.z, MELEE_RANGE + 0.5, MELEE_HALF_ANGLE_RAD)) continue;
-    const dSq = distSq2D(x, z, b.x, b.z);
+    if (!inMeleeCone(x, z, yaw, cx, cz, MELEE_RANGE + 0.5, MELEE_HALF_ANGLE_RAD)) continue;
+    const dSq = distSq2D(x, z, cx, cz);
     if (dSq >= bestSq) continue;
-    if (meleeBlocked(state, x, py, z, b.x, b.y, b.z)) continue;
+    if (meleeBlocked(state, x, py, z, cx, cy, cz)) continue;
     bestSq = dSq;
-    hit = b;
+    // The impact FX lands where the axe actually connects (the closest point).
+    hit = { id: b.id, x: cx, y: cy, z: cz };
   }
   if (!hit) return false;
 
