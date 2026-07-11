@@ -228,7 +228,10 @@ function applyTierDefaults(): void {
   }
   if (userOverrodeQuality) {
     // Manual picks are sacred; just mark the probe current so the staleness
-    // check doesn't linger forever in the persisted blob.
+    // check doesn't linger forever in the persisted blob. NOTE: `tier` may
+    // still hold a pre-v2 probe result under the fresh stamp — nothing reads
+    // it while overridden, but a future "reset to auto" feature must re-run
+    // detectTier() instead of trusting the stored tier.
     if (probeStale) useSettingsStore.setState({ tierProbeVersion: TIER_PROBE_VERSION });
     return;
   }

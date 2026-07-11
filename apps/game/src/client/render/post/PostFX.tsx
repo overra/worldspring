@@ -22,7 +22,6 @@ import {
   SMAA,
   FXAA,
 } from "@react-three/postprocessing";
-import { UnsignedByteType } from "three";
 import { QUALITY_CONFIGS, useSettingsStore } from "@/client/state/settings";
 
 // Ambient occlusion — grounds the low-poly primitives.
@@ -66,17 +65,17 @@ export function PostFX(): React.ReactElement {
 
   // Low quality: the composer MUST stay mounted — it is the scene's only
   // renderer (R3F auto-render is disabled by PlayerCamera) — so we keep it
-  // with just AA instead of unmounting the whole pipeline. No HDR effect
-  // lives in this branch (no bloom/AO), so an 8-bit framebuffer halves
-  // bandwidth vs the wrapper's HalfFloatType default; mobile additionally
-  // swaps 3-pass SMAA for single-pass FXAA.
+  // with just AA instead of unmounting the whole pipeline; mobile swaps
+  // 3-pass SMAA for single-pass FXAA (children swap via addPass/removePass —
+  // no composer rebuild). Deliberately NO frameBufferType override here: the
+  // wrapper's useMemo keys the internal EffectComposerImpl on it and never
+  // disposes a replaced instance, so differing per-branch buffer types would
+  // leak the old composer's fullscreen render targets on every Esc-menu
+  // quality toggle across the postFx boundary — worse than the 8-bit
+  // bandwidth saving it bought.
   if (!QUALITY_CONFIGS[quality].postFx) {
     return (
-      <EffectComposer
-        renderPriority={2}
-        multisampling={0}
-        frameBufferType={UnsignedByteType}
-      >
+      <EffectComposer renderPriority={2} multisampling={0}>
         {quality === "mobile" ? <FXAA /> : <SMAA />}
       </EffectComposer>
     );
