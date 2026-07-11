@@ -15,9 +15,10 @@
     },
     {
       "name": "dev",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "pnpm",
       "runtimeArgs": [
-        "run",
+        "--filter",
+        "@worldspring/game",
         "dev"
       ],
       "port": 5173
