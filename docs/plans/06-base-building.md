@@ -408,6 +408,27 @@ The steady-save cost is piece-count-independent **by construction**: clean bucke
 
 Residual risks (unchanged from the design review): a map-wide event dirtying all 64 buckets in one 20 s window (mass decay sweep) still writes the full ~545 KB once — rare, event-driven, accepted; a mega-base concentrated in one 48 m region fattens its bucket (density caps bound it); bucket keys are a STABILITY CONTRACT — changing the scheme post-deploy requires an all-buckets rewrite on first save (same mechanism as the legacy migration).
 
+### M8 follow-up — full-cap re-run with split-row persistence, measured 2026-07-11
+
+The at-cap confirmation run the section above asked for: `build-loadtest.mjs --churn=3` (defaults otherwise), miniflare dev, Node 22.21.1, main @ `14273cc` — i.e. a **protocol-13 world**, which now ticks physics props (doc 13 M3), vehicles (M4), fresh water (doc 07 M5), and the tree lifecycle (planting/growth/stumps/trunks) that did not exist at the 2026-07-08 baseline. Fill reached 3000 pieces in 2122 s across 1529 builder lives; 20 online bots + observer + 3 door-churn bots held for the 55 s measure window.
+
+| metric | M8 baseline (2026-07-08) | this run | verdict |
+|---|---|---|---|
+| steady save (idle bases, dirtyBuckets 0) | ~158 ms, 564 KB | **1 ms, ~27.7 KB** | **PASS** — piece-count-independence confirmed at cap |
+| dirty-bucket save (door churn) | same ~158 ms | 1–21 ms (median ~7 ms; worst: `structuresMs` 19 ms, 2 buckets, 41.7 KB) | worst sample **over the 10 ms gate** on miniflare |
+| save-tick peak (`tickMsMax` window) | 162 ms, 71 overruns | 109 ms single peak (direct `lastSave` totals ≤ 21 ms — the delta is co-scheduled tick work/GC, local figure) | under pre-split peak; watch on prod |
+| tick EMA (steady average) | 3.07 ms | **12.67 ms** | — (see reading) |
+| tick MAX ("steady" per harness) | 4 ms | 48 ms | **FAIL** vs 10 ms gate, but metric contaminated (see reading) |
+| effective tick rate under load | 13.9 Hz | 12.36 Hz | — |
+| join sync @ cap | 17 ms | 14 ms (open→welcome 11, →`sFull` done 3) | PASS |
+| `sFull` wire @ cap | 234.3 KB | 235.1 KB (7 batches, 80 B/piece) | unchanged |
+
+Reading the numbers:
+
+- **The persistence design goals all hold at cap.** Steady saves write only the ~27 KB snapshot row regardless of piece count; churn saves rewrite only the touched buckets. The one gate miss is the worst dirty sample (19 ms in the structures phase for 2 buckets / 41.7 KB) — a miniflare-local write-latency figure (sibling saves wrote the same 2 buckets in 1–9 ms). Compare against prod `lastSave.structuresMs` once real players build before treating it as a problem.
+- **The steady-tick FAIL is real growth, but not this milestone's.** Two things at once: (1) the harness's "steady = MIN across `tickMsMax` samples" assumes save-free windows exist on the 20 s cadence, but `persistAll` also fires on join/leave/respawn events — 6 saves landed in the 55 s window (gaps as short as 2 s) against a ~10 s `tickMsMax` memory, so the 48 ms "steady max" is an upper bound with save/join ticks folded in. (2) EMA is only negligibly save-inflated, so **3.07 → 12.67 ms EMA at identical cap and bot count is a genuine ~4× steady-tick growth** vs the 07-08 baseline — the cost of the sim added since (Rapier stepping props/vehicles/trunks, wildlife + water, tree growth, plus this run's residue of 1529 builder lives). That is a *rendering-agnostic server* number and deserves its own per-system tick profile; it is unrelated to persistence (saves are event/interval work, and the dirty scan runs only on save ticks).
+- **Harness debt:** the steady-max metric should exclude windows containing a save by checking `lastSave.at` against the sample window instead of assuming cadence.
+
 ## Open questions
 
 1. **Should crates collide?** Recommendation: **no** in v1 (campfire precedent, keeps them out of the collision-sync surface and kills crate-stair exploits); revisit with a 0.55m-tall steppable collider if walk-through crates feel bad.
