@@ -18,7 +18,7 @@ import { clientWorld, resetClientWorld } from "@/client/runtime";
 import { cueSound } from "@/client/audio/cues";
 import { useUIStore } from "@/client/state/store";
 import { clearPending, reconcile, resetPrediction } from "./prediction";
-import { pushSnap, resetInterpolation, setTimeBase } from "./interpolation";
+import { isDelayedFxEvent, pushSnap, resetInterpolation, setTimeBase } from "./interpolation";
 import type { SnapMsg } from "./interpolation";
 
 const PING_INTERVAL_MS = 2000;
@@ -646,16 +646,16 @@ function onSnap(msg: SnapMsg): void {
   // doc 12 — fold in any newly-explored cells the server revealed this tick.
   if (msg.fog && clientWorld.explored) setExploredIndices(clientWorld.explored, msg.fog);
   // Tree lifecycle — planted deltas (plant/grow/fell) apply to the SHARED index
-  // immediately, unlike felled RENDER deltas (which ride the interp timeline).
-  // A planted remove changes COLLISION, not just visuals, so prediction must
-  // see it now — reconciliation already tracks the server, and this keeps the
-  // shared queryStatics in step. PlantedTrees rebuilds on the version bump.
+  // immediately: a planted change alters COLLISION, not just visuals, so
+  // prediction's queryStatics must see it now. The RENDER version bump does
+  // NOT happen here — it rides the delayed interp timeline (pushSnap buffered
+  // this snap's `planted` flag), so PlantedTrees/Stumps rebuild in lock-step
+  // with the treeCut burst and trunk body instead of INTERP_DELAY_MS early.
   if (msg.planted && clientWorld.world) {
     for (const d of msg.planted) {
       if (d.op === "upsert") clientWorld.world.plantedTrees.upsert(d.tree);
       else clientWorld.world.plantedTrees.remove(d.id);
     }
-    clientWorld.plantedVersion++;
   }
   // doc 13 M2 — felled-tree deltas ride the buffered snap (pushSnap above) and
   // fold in when the interpolation cursor reaches them, so the static tree
@@ -674,7 +674,7 @@ function onSnap(msg: SnapMsg): void {
   // Destruction FX (break + treeCut) are released from interpolation.ts when
   // their snapshot reaches the render cursor — in lock-step with the body
   // removal / tree vanish. Combat/audio events remain immediate.
-  const immediateEvents = msg.events.filter((event) => event.e !== "break" && event.e !== "treeCut");
+  const immediateEvents = msg.events.filter((event) => !isDelayedFxEvent(event));
   if (immediateEvents.length > 0) {
     clientWorld.events.push(...immediateEvents);
     clientWorld.audioEvents.push(...immediateEvents);

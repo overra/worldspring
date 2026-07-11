@@ -24,6 +24,9 @@ import { PhysicsSystem } from "../src/server/physics/PhysicsSystem.ts";
 import { rollFromTable } from "../src/server/systems/loot.ts";
 import { breakBarrel } from "../src/server/systems/barrelBreak.ts";
 import { BARREL_LOOT_TABLE } from "@worldspring/shared/items";
+// Pin the PhysicsSystem STUMP_HALF_HEIGHT mirror: settle expectation derives
+// from shared STUMP_HEIGHT so a drift between the two fails this harness.
+import { STUMP_HEIGHT } from "@worldspring/shared/trees";
 
 let failures = 0;
 const check = (ok, msg) => {
@@ -96,23 +99,30 @@ const dt = 1 / 15;
   for (let i = 0; i < 450; i++) sysA.step(dt, i * dt);
   check(Math.abs(settleY(sysA, 1) - 8.4) < 0.5, `crate rests ON the standing tree (y=${settleY(sysA, 1).toFixed(2)} ≈ 8.4)`);
 
-  // b) RUNTIME removal: felling the tree drops that same crate to the ground.
+  // b) RUNTIME swap: felling the tree swaps the 8m collider for a stump stub —
+  //    the crate falls from the treetop and rests ON the stub
+  //    (STUMP_HEIGHT + crate half 0.4, not 8.4 and not the bare ground 0.4).
+  //    Expected Y is derived from shared STUMP_HEIGHT so PhysicsSystem's
+  //    local STUMP_HALF_HEIGHT mirror cannot silently drift.
+  const CRATE_HALF = 0.4;
+  const stubSettleY = STUMP_HEIGHT + CRATE_HALF;
   sysA.fellTree(0);
   for (let i = 450; i < 900; i++) sysA.step(dt, i * dt);
-  check(Math.abs(settleY(sysA, 1) - 0.4) < 0.35, `after fellTree the crate falls to the ground (y=${settleY(sysA, 1).toFixed(2)} ≈ 0.4)`);
+  check(Math.abs(settleY(sysA, 1) - stubSettleY) < 0.35, `after fellTree the crate rests on the stub stump (y=${settleY(sysA, 1).toFixed(2)} ≈ ${stubSettleY.toFixed(2)}, full collider gone)`);
 
-  // c) PRE-ATTACH exclusion (the restored-world path): fellTree before
-  //    attachEngine must skip building the static collider entirely.
+  // c) PRE-ATTACH path (the restored-world case): fellTree before attachEngine
+  //    must build the STUB instead of the full collider — a room restart must
+  //    not resurrect the roll-through-stumps asymmetry.
   const sysB = new PhysicsSystem(treeWorld, { enabled: true, bodyCap: 64 });
   sysB.fellTree(0);
   sysB.attachEngine(RAPIER, dt);
   sysB.spawnBody(1, "crate", 0, 12, 0);
   for (let i = 0; i < 450; i++) sysB.step(dt, i * dt);
-  check(Math.abs(settleY(sysB, 1) - 0.4) < 0.35, `restored felled set excludes the collider at attach (y=${settleY(sysB, 1).toFixed(2)} ≈ 0.4)`);
+  check(Math.abs(settleY(sysB, 1) - stubSettleY) < 0.35, `restored felled set rebuilds the stub, not the full collider (y=${settleY(sysB, 1).toFixed(2)} ≈ ${stubSettleY.toFixed(2)})`);
 
   // d) Trunk body: upright spawn + off-center top impulse TOPPLES it — it
   //    settles lying down (center ≈ its half-WIDTH above ground, not half-
-  //    height), then expireSettled reaps it with a resting pose.
+  //    height). Trunks then PERSIST until axed (tryBreakTrunk) or cap-evicted.
   const sysC = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
   sysC.attachEngine(RAPIER, dt);
   const halfH = 4, r = 0.35;
@@ -130,18 +140,22 @@ const dt = 1 / 15;
   check(trunk !== undefined && trunk.asleep === true, `trunk fell asleep after ${steps} steps`);
   check(trunk !== undefined && trunk.y < 1.0, `trunk settled LYING DOWN (y=${trunk?.y.toFixed(2)} < 1.0 — toppled, not standing at ~4)`);
   check(trunk?.dims?.[1] === halfH, "trunk pose carries its dims for the wire");
-  // Not yet expired: 10s < TTL.
-  const sleepT = steps * dt;
-  check(sysC.expireSettled("trunk", 30, sleepT + 10).length === 0, "expireSettled holds before the TTL");
-  const reaped = sysC.expireSettled("trunk", 30, sleepT + 40);
-  check(reaped.length === 1 && Math.abs(reaped[0].y - (trunk?.y ?? NaN)) < 0.01, "expireSettled reaps the trunk after the TTL with its resting pose");
-  check(sysC.count === 0, "reaped trunk left the body registry");
-  // Kind filter: a crate settled just as long is NOT reaped by the trunk sweep.
-  const sysD = new PhysicsSystem(fakeWorld, { enabled: true, bodyCap: 64 });
-  sysD.attachEngine(RAPIER, dt);
-  sysD.spawnBody(9, "crate", 0, 2, 0);
-  for (let i = 0; i < 450; i++) sysD.step(dt, i * dt);
-  check(sysD.expireSettled("trunk", 30, 450 * dt + 100).length === 0, "expireSettled('trunk') ignores settled crates");
+
+  // e) bodyPositions segment info (tryBreakTrunk's end-reach closest-point
+  //    test): a dims-carrying trunk exposes its world-space long axis (local
+  //    +Y through the body rotation) and half-length. Lying down, the axis
+  //    must be near-horizontal and unit-length, and an end point projected
+  //    from it must sit ~halfH from the center on the ground plane.
+  const bp = sysC.bodyPositions("trunk").find((b) => b.id === 7);
+  check(bp !== undefined && bp.halfLen === halfH, "bodyPositions exposes the trunk half-length (dims[1])");
+  const axis = bp?.axis;
+  const axisLen = axis ? Math.hypot(axis[0], axis[1], axis[2]) : NaN;
+  check(axis !== undefined && Math.abs(axisLen - 1) < 1e-6, `trunk axis is unit-length (|axis|=${axisLen.toFixed(6)})`);
+  check(axis !== undefined && Math.abs(axis[1]) < 0.3, `toppled trunk's long axis lies near-horizontal (|axis.y|=${Math.abs(axis?.[1] ?? NaN).toFixed(3)} < 0.3)`);
+  if (bp && axis) {
+    const endDist = Math.hypot(axis[0] * bp.halfLen, axis[2] * bp.halfLen);
+    check(Math.abs(endDist - halfH) < 0.5, `projected trunk end sits ~halfH from center on the ground plane (${endDist.toFixed(2)} ≈ ${halfH})`);
+  }
 }
 
 // --- 1.6 physics props: barrels (doc 13 M3) ----------------------------------

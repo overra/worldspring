@@ -174,13 +174,27 @@ export function EffectsLayer(): ReactElement {
     if (fragmentBudget === 0) return;
     const idleWindow = window as unknown as IdleWindow;
     let cancelled = false;
-    const build = () => {
+    let idleHandle: number | undefined;
+    let timeoutHandle: number | undefined;
+    // One `${group}:${count}` batch per pool per slice (all seed variants —
+    // BARREL/TREE_FRACTURE_SEEDS each have length 3), rescheduled until both
+    // pools are ready. Safari ships no requestIdleCallback, and the old
+    // one-shot fallback fractured every template in a single main-thread
+    // task — a visible hitch in the first seconds of gameplay. spawn()'s
+    // not-ready puff covers events that arrive mid-build.
+    const buildSlice = () => {
       if (cancelled) return;
-      pool.debris.buildTemplates();
-      pool.treeDebris.buildTemplates();
+      // Evaluate BOTH before combining — && would short-circuit the second
+      // pool's slice and serialize the builds.
+      const debrisDone = pool.debris.buildNextTemplate();
+      const treeDone = pool.treeDebris.buildNextTemplate();
+      if (!(debrisDone && treeDone)) schedule();
     };
-    const idleHandle = idleWindow.requestIdleCallback?.(build, { timeout: 2_000 });
-    const timeoutHandle = idleHandle === undefined ? window.setTimeout(build, 250) : undefined;
+    const schedule = () => {
+      idleHandle = idleWindow.requestIdleCallback?.(buildSlice, { timeout: 2_000 });
+      if (idleHandle === undefined) timeoutHandle = window.setTimeout(buildSlice, 50);
+    };
+    schedule();
     return () => {
       cancelled = true;
       if (idleHandle !== undefined) idleWindow.cancelIdleCallback?.(idleHandle);

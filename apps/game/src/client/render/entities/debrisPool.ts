@@ -74,6 +74,10 @@ export class DebrisPool {
   private readonly seeds: readonly number[];
   private ready = false;
   private burstCursor = 0;
+  /** Remaining `${group}:${count}` template batches — one per
+   * buildNextTemplate call, so callers can spread the Voronoi fractures
+   * across idle slices. Lazily seeded on the first call. */
+  private buildJobs: Array<{ spec: DebrisGroupSpec; count: FragmentCount }> | null = null;
 
   constructor(
     name: string,
@@ -111,16 +115,28 @@ export class DebrisPool {
     }
   }
 
-  buildTemplates(): void {
-    if (this.ready) return;
-    for (const spec of this.specs) {
-      for (const count of FRAGMENT_COUNTS) {
-        const variants: FragmentTemplate[][] = [];
-        for (const seed of this.seeds) variants.push(spec.build(count, seed));
-        this.templates.set(`${spec.group}:${count}`, variants);
+  /** Build ONE `${group}:${count}` template batch (its seed variants) per
+   * call; returns true once every batch exists (and `ready` is set). A batch
+   * is a few Voronoi fractures — spreading calls across idle slices keeps any
+   * single main-thread task small (Safari ships no requestIdleCallback, so
+   * its fallback path runs on plain timeouts and used to fracture EVERYTHING
+   * in one task). spawn() covers events arriving mid-build with a cheap puff. */
+  buildNextTemplate(): boolean {
+    if (this.ready) return true;
+    if (this.buildJobs === null) {
+      this.buildJobs = [];
+      for (const spec of this.specs) {
+        for (const count of FRAGMENT_COUNTS) this.buildJobs.push({ spec, count });
       }
     }
-    this.ready = true;
+    const job = this.buildJobs.shift();
+    if (job) {
+      const variants: FragmentTemplate[][] = [];
+      for (const seed of this.seeds) variants.push(job.spec.build(job.count, seed));
+      this.templates.set(`${job.spec.group}:${job.count}`, variants);
+    }
+    if (this.buildJobs.length === 0) this.ready = true;
+    return this.ready;
   }
 
   /** Spawn a burst at `pose`. `group` defaults to the first registered spec

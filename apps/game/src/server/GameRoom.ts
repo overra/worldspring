@@ -1426,7 +1426,8 @@ export class GameRoom extends DurableObject<Env> {
     // riders follow the hull (kinematic — their walking was short-circuited).
     tickVehicles(game, dt);
     phase("physics");
-    // doc 13 M2 — settled felled trunks despawn to wood loot after their TTL.
+    // Tree lifecycle — cap-evicted trunks pay their wood out where they rested
+    // (trunks otherwise persist until axed).
     tickTrunks(game);
     // Tree lifecycle — budgeted ambient seed rain (per-player, game-time
     // cadence) + the wall-clock growth-stage scan (coarse, planted-cap bounded).
