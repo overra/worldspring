@@ -70,6 +70,15 @@ if (!existsSync(gltfTransform)) {
 }
 for (const fname of EXPORTED_GLBS) {
   const glbPath = join(outDir, fname);
+  // Blender exiting 0 does not guarantee every expected GLB landed (e.g. this
+  // list drifting from the .py MANIFEST) — fail with a clear message instead
+  // of an ENOENT stack trace from statSync.
+  if (!existsSync(glbPath)) {
+    console.error(
+      `models:export: expected ${fname} missing from ${outDir} after Blender export — check MANIFEST in export-models.py`,
+    );
+    process.exit(1);
+  }
   const before = statSync(glbPath).size;
   const o = spawnSync(
     gltfTransform,
