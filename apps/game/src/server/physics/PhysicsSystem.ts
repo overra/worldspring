@@ -209,6 +209,11 @@ export class PhysicsSystem {
    * removal so systems can pay out (persistent trunks drop their wood instead
    * of silently vanishing). Bounded by eviction rate, drained every tick. */
   private evicted: Array<{ id: number; kind: BodyKind; x: number; y: number; z: number }> = [];
+  /** Set by every collider/body add+remove; forces the next step() to run the
+   * substeps even with all bodies asleep, so wakes that only materialize
+   * during a step (support removed under a sleeper, spawn-into-overlap) are
+   * processed. Cleared when the forced step runs. See step(). */
+  private worldDirty = false;
   private statics: PhysicsStaticsSource;
   private cfg: PhysicsConfig;
   private gameTime = 0;
@@ -325,6 +330,7 @@ export class PhysicsSystem {
       );
     }
     this.structColliders.set(id, handles);
+    if (handles.length > 0) this.worldDirty = true;
   }
 
   /** doc 06 — remove a demolished piece's colliders (fellTree precedent).
@@ -335,6 +341,7 @@ export class PhysicsSystem {
     this.structColliders.delete(id);
     if (!this.world) return;
     for (const h of handles) this.world.removeCollider(h, true);
+    if (handles.length > 0) this.worldDirty = true;
   }
 
   /**
@@ -359,13 +366,17 @@ export class PhysicsSystem {
         this.engine.ColliderDesc.cuboid(r, height / 2, r).setTranslation(x, groundY + height / 2, z),
       ),
     );
+    this.worldDirty = true;
   }
 
   removePlantedTree(id: number): void {
     const collider = this.plantedTreeColliders.get(id);
     if (!collider) return;
     this.plantedTreeColliders.delete(id);
-    if (this.world) this.world.removeCollider(collider, true);
+    if (this.world) {
+      this.world.removeCollider(collider, true);
+      this.worldDirty = true;
+    }
   }
 
   get ready(): boolean {
@@ -492,6 +503,7 @@ export class PhysicsSystem {
     if (collider && this.world) {
       this.world.removeCollider(collider, true);
       this.treeColliders.delete(index);
+      this.worldDirty = true;
     }
   }
 
@@ -518,6 +530,7 @@ export class PhysicsSystem {
     if (!rec || !this.world) return;
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
+    this.worldDirty = true;
   }
 
   /** Step the world one tick. No-op until the engine attaches or when
@@ -525,8 +538,31 @@ export class PhysicsSystem {
   step(dt: number, gameTime: number): void {
     this.gameTime = gameTime;
     if (!this.world || !this.cfg.enabled) return;
-    this.world.timestep = dt / PHYSICS_SUBSTEPS;
-    for (let i = 0; i < PHYSICS_SUBSTEPS; i++) this.world.step();
+    // All-asleep worlds cannot move: players/zombies are not Rapier bodies
+    // (they live in the kinematic shared sim), so with every dynamic body
+    // sleeping the substeps are pure broadphase overhead — measured ~6ms/tick
+    // against the 3000-piece static set (doc 06 M8 full-cap re-run). Impulse
+    // paths (shove, vehicle controls) and fresh spawns flip isSleeping()
+    // BEFORE this runs; collider/body add+remove instead sets worldDirty,
+    // because removeCollider(_, wakeUp=true)'s wake of resting bodies only
+    // materializes DURING a step (proven by the replay harness's fell-under-
+    // crate probe) — one forced step processes it, then the woken bodies keep
+    // stepping via the awake scan. Sleep bookkeeping and cap eviction below
+    // still run every tick.
+    let mustStep = this.worldDirty;
+    if (!mustStep) {
+      for (const rec of this.bodies.values()) {
+        if (!rec.body.isSleeping()) {
+          mustStep = true;
+          break;
+        }
+      }
+    }
+    if (mustStep) {
+      this.worldDirty = false;
+      this.world.timestep = dt / PHYSICS_SUBSTEPS;
+      for (let i = 0; i < PHYSICS_SUBSTEPS; i++) this.world.step();
+    }
     for (const rec of this.bodies.values()) {
       const sleeping = rec.body.isSleeping();
       if (sleeping && rec.sleptAt === null) rec.sleptAt = gameTime;
@@ -675,6 +711,7 @@ export class PhysicsSystem {
     };
     if (p.dims) rec.dims = p.dims;
     this.bodies.set(p.id, rec);
+    this.worldDirty = true;
     this.enforceCap();
   }
 
