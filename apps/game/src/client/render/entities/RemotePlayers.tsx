@@ -132,7 +132,12 @@ function createPool(): PlayerPool {
     label.position.y = LABEL_Y;
     label.scale.set(1.6, 0.4, 1);
     rig.root.add(label);
-    root.add(rig.root);
+    // Pooled rigs start DETACHED from the scene graph (visible=false alone is
+    // belt-and-suspenders): three r184's Object3D.updateMatrixWorld recurses
+    // into ALL children unconditionally, so an attached-but-hidden rig still
+    // pays updateMatrix + matrixWorld multiplies for its dozens of bones every
+    // frame (~0.29ms for a full idle pool, measured). Acquire attaches;
+    // release detaches.
     slots.push({ rig, label, appliedName: "", lastAttacking: false, accumDt: 0 });
     free.push(MAX_PLAYERS - 1 - i); // pop() hands out slot 0 first
   }
@@ -177,6 +182,8 @@ export function RemotePlayers(): ReactElement {
       pool.byId.delete(id);
       pool.free.push(idx);
       pool.slots[idx].rig.root.visible = false;
+      // Detach so the idle rig costs zero matrix work per frame (createPool).
+      pool.root.remove(pool.slots[idx].rig.root);
     }
 
     const dt = Math.min(delta, MAX_FRAME_DT);
@@ -192,6 +199,11 @@ export function RemotePlayers(): ReactElement {
         pool.byId.set(view.id, idx);
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
+        // Re-attach (see createPool). Position/rotation are written right
+        // below with matrixAutoUpdate on, and this useFrame (priority 0) runs
+        // before the composer's render at priority 2 — world matrices are
+        // correct within the same frame.
+        pool.root.add(fresh.rig.root);
         fresh.rig.setTint(TINT_PALETTE[hashId(view.id) % TINT_PALETTE.length]);
         fresh.rig.setLocomotion("idle");
         fresh.lastAttacking = false;
