@@ -1,17 +1,24 @@
 // Scatter props: rocks, sandbag walls, barriers and tents from props.glb,
-// drawn with one InstancedMesh per (prop kind x GLB primitive) — rocks are
-// single-prim, sandbag_wall 2, barrier 1, tent 3, so the whole scatter set is
-// a handful of instanced draws. Geometry and materials come straight from the
+// drawn with one InstancedMesh per (world cell x prop kind x GLB primitive)
+// via chunkedDressing.ts so three frustum-culls the scatter per chunk in both
+// the camera and shadow passes. Geometry and materials come straight from the
 // shared GLTF cache (never cloned per instance); matrices are written once per
-// world on mount — fully static, no per-frame work. Placement comes from
-// world.props (seed-deterministic worldgen), grounded via world.groundHeight.
+// world on mount — fully static. Placement comes from world.props
+// (seed-deterministic worldgen), grounded via world.groundHeight.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
+import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import type { World, WorldProp } from "@worldspring/shared/world";
+import type { World } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingBucket,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 const PROPS_MODEL_URL = "/models/props.glb";
 useGLTF.preload(PROPS_MODEL_URL);
@@ -45,43 +52,35 @@ function extractParts(scene: THREE.Group, name: string): PropPart[] {
 
 const dummy = new THREE.Object3D();
 
-interface ScatterBuild {
-  root: THREE.Group;
-  meshes: THREE.InstancedMesh[];
-}
-
-function buildScatter(scene: THREE.Group, world: World): ScatterBuild {
-  const buckets = new Map<PropKind, WorldProp[]>();
-  for (const prop of world.props) {
-    const list = buckets.get(prop.kind);
-    if (list) list.push(prop);
-    else buckets.set(prop.kind, [prop]);
-  }
-
-  const root = new THREE.Group();
-  const meshes: THREE.InstancedMesh[] = [];
+function buildScatter(scene: THREE.Group, world: World): ChunkedDressing {
+  const buckets: DressingBucket[] = [];
+  const kindBuckets = new Map<PropKind, number[]>();
   for (const kind of PROP_KINDS) {
-    const instances = buckets.get(kind);
-    if (!instances || instances.length === 0) continue;
-    for (const part of extractParts(scene, kind)) {
-      const mesh = new THREE.InstancedMesh(part.geometry, part.material, instances.length);
-      mesh.frustumCulled = false;
-      mesh.castShadow = true;
-      // Rocks are big grounded lumps — they should catch tree/building shadows.
-      mesh.receiveShadow = isRock(kind);
-      instances.forEach((prop, slot) => {
-        dummy.position.set(prop.x, world.groundHeight(prop.x, prop.z), prop.z);
-        dummy.rotation.set(0, prop.yaw, 0);
-        dummy.scale.setScalar(prop.scale);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(slot, dummy.matrix);
+    const ids = extractParts(scene, kind).map((part) => {
+      buckets.push({
+        geometry: part.geometry,
+        material: part.material,
+        castShadow: true,
+        // Rocks are big grounded lumps — they should catch tree/building shadows.
+        receiveShadow: isRock(kind),
       });
-      mesh.instanceMatrix.needsUpdate = true;
-      root.add(mesh);
-      meshes.push(mesh);
-    }
+      return buckets.length - 1;
+    });
+    kindBuckets.set(kind, ids);
   }
-  return { root, meshes };
+
+  const entries: DressingEntry[] = [];
+  for (const prop of world.props) {
+    const ids = kindBuckets.get(prop.kind);
+    if (!ids || ids.length === 0) continue;
+    dummy.position.set(prop.x, world.groundHeight(prop.x, prop.z), prop.z);
+    dummy.rotation.set(0, prop.yaw, 0);
+    dummy.scale.setScalar(prop.scale);
+    dummy.updateMatrix();
+    const matrix = dummy.matrix.clone();
+    for (const bucket of ids) entries.push({ bucket, matrix });
+  }
+  return buildChunkedDressing(buckets, entries);
 }
 
 export function Scatter(): ReactElement | null {
@@ -95,13 +94,15 @@ export function Scatter(): ReactElement | null {
 
   useEffect(() => {
     if (!scatter) return;
-    return () => {
-      // Frees instance buffers only — geometry/materials belong to the
-      // shared GLTF cache and must outlive this component.
-      for (const mesh of scatter.meshes) mesh.dispose();
-    };
+    // Frees instance buffers only — geometry/materials belong to the
+    // shared GLTF cache and must outlive this component.
+    return () => scatter.dispose();
   }, [scatter]);
 
+  useFrame((state) => {
+    scatter?.updateVisibility(state.camera.position.x, state.camera.position.z);
+  });
+
   if (!scatter) return null;
-  return <primitive object={scatter.root} />;
+  return <primitive object={scatter.group} />;
 }

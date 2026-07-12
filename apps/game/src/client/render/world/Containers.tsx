@@ -1,18 +1,24 @@
 // Searchable containers (doc 05 §3): placeholder per-kind boxes rendered
-// instanced, one InstancedMesh per ContainerKind. Same structure as
-// BuildingTrim.tsx — geometry/material built once, all matrices written on
-// mount, fully static (no per-frame work). Positions/kinds come straight from
-// the deterministic worldgen `world.containers` array (client and server agree
-// bit-for-bit), so there is no rng here.
+// instanced, one InstancedMesh per (world cell x ContainerKind) via
+// chunkedDressing.ts. Geometry/material built once, all matrices written on
+// mount, fully static. Positions/kinds come straight from the deterministic
+// worldgen `world.containers` array (client and server agree bit-for-bit), so
+// there is no rng here.
 //
 // These are render-only: worldgen attaches no collision AABB. Art (a real GLB
 // per kind) can replace the boxes later without touching placement.
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { ContainerKind, World } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 const KINDS: readonly ContainerKind[] = ["wardrobe", "cabinet", "toolbox", "locker"];
 
@@ -28,52 +34,46 @@ const KIND_BOX: Record<ContainerKind, { w: number; h: number; d: number; color: 
 const dummy = new THREE.Object3D();
 
 interface ContainersBuild {
-  root: THREE.Group;
-  meshes: THREE.InstancedMesh[];
+  dressing: ChunkedDressing;
   geometries: THREE.BufferGeometry[];
   materials: THREE.Material[];
 }
 
 function buildContainers(world: World): ContainersBuild {
-  const byKind = new Map<ContainerKind, World["containers"]>();
-  for (const c of world.containers) {
-    const list = byKind.get(c.kind);
-    if (list) list.push(c);
-    else byKind.set(c.kind, [c]);
-  }
-
-  const root = new THREE.Group();
-  const meshes: THREE.InstancedMesh[] = [];
   const geometries: THREE.BufferGeometry[] = [];
   const materials: THREE.Material[] = [];
-
-  for (const kind of KINDS) {
-    const list = byKind.get(kind);
-    if (!list || list.length === 0) continue;
+  const bucketOf = new Map<ContainerKind, number>();
+  KINDS.forEach((kind, i) => {
     const box = KIND_BOX[kind];
     // Unit box translated so its origin is the base center (sits on the floor).
     const geom = new THREE.BoxGeometry(box.w, box.h, box.d);
     geom.translate(0, box.h / 2, 0);
     const mat = new THREE.MeshStandardMaterial({ color: box.color, flatShading: true });
-    const mesh = new THREE.InstancedMesh(geom, mat, list.length);
-    mesh.name = `containers-${kind}`;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.frustumCulled = false;
-    list.forEach((c, slot) => {
-      dummy.position.set(c.x, c.y, c.z);
-      dummy.rotation.set(0, c.yaw, 0);
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(slot, dummy.matrix);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    root.add(mesh);
-    meshes.push(mesh);
     geometries.push(geom);
     materials.push(mat);
+    bucketOf.set(kind, i);
+  });
+
+  const entries: DressingEntry[] = [];
+  for (const c of world.containers) {
+    const bucket = bucketOf.get(c.kind);
+    if (bucket === undefined) continue;
+    dummy.position.set(c.x, c.y, c.z);
+    dummy.rotation.set(0, c.yaw, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    entries.push({ bucket, matrix: dummy.matrix.clone() });
   }
-  return { root, meshes, geometries, materials };
+  const dressing = buildChunkedDressing(
+    KINDS.map((kind, i) => ({
+      geometry: geometries[i],
+      material: materials[i],
+      castShadow: true,
+      receiveShadow: true,
+    })),
+    entries,
+  );
+  return { dressing, geometries, materials };
 }
 
 export function Containers(): ReactElement | null {
@@ -86,12 +86,16 @@ export function Containers(): ReactElement | null {
     return () => {
       // Geometry + materials are owned here (not the shared GLTF cache), so
       // free them all on unmount.
-      for (const mesh of build.meshes) mesh.dispose();
+      build.dressing.dispose();
       for (const geom of build.geometries) geom.dispose();
       for (const mat of build.materials) mat.dispose();
     };
   }, [build]);
 
+  useFrame((state) => {
+    build?.dressing.updateVisibility(state.camera.position.x, state.camera.position.z);
+  });
+
   if (!build) return null;
-  return <primitive object={build.root} />;
+  return <primitive object={build.dressing.group} />;
 }

@@ -1,11 +1,12 @@
-// Forest: four EZ-Tree-generated trees.glb variants
-// (tree_conifer_a/b, tree_oak_a/b)
-// drawn with one InstancedMesh per (variant x GLB primitive) — trunk +
-// foliage, so 8 instanced draws for the whole ~700-tree forest. Geometry and
-// materials come straight from the shared GLTF cache (never cloned per
-// instance); matrices are written once per world — fully static, no sway.
-// Variant choice hashes the tree's index in world.trees, which is
-// seed-deterministic, so every client sees the same forest.
+// Forest: the EZ-Tree-generated trees.glb variants drawn with one
+// InstancedMesh per (world cell x variant x GLB primitive) via
+// chunkedDressing.ts — per-chunk bounding spheres let three frustum-cull the
+// forest per camera (view AND shadow pass) instead of vertex-processing all
+// ~190K forest triangles every frame, and far chunks radius-hide past the
+// fog. Geometry and materials come straight from the shared GLTF cache
+// (never cloned per instance); matrices are written once per world — fully
+// static, no sway. Variant choice hashes the tree's index in world.trees,
+// which is seed-deterministic, so every client sees the same forest.
 //
 // doc 13 M2 — felled trees: the server ships felled indices (welcome.felled +
 // snap.felled deltas → clientWorld.felledTrees); this component zero-scales
@@ -19,6 +20,12 @@ import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Tree } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingBucket,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 export const TREES_MODEL_URL = "/models/trees.glb";
 useGLTF.preload(TREES_MODEL_URL);
@@ -34,12 +41,6 @@ export const VARIANT_NODES = {
   conifer: ["tree_conifer_a", "tree_conifer_b", "tree_conifer_c", "tree_conifer_d"],
   oak: ["tree_oak_a", "tree_oak_b", "tree_oak_c", "tree_oak_d"],
 } as const;
-
-interface TreeInstance {
-  tree: Tree;
-  /** Index in world.trees — drives deterministic yaw/tilt/variant variance. */
-  index: number;
-}
 
 export interface VariantPart {
   geometry: THREE.BufferGeometry;
@@ -86,54 +87,7 @@ const dummy = new THREE.Object3D();
 /** All-zero-scale matrix — collapses a felled tree's instance to nothing. */
 const ZERO_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
-/** Where a tree index landed in the instanced buckets — one entry per GLB
- * primitive mesh — so a fell can zero exactly its matrices (doc 13 M2). */
-type InstanceSlots = Array<{ mesh: THREE.InstancedMesh; slot: number }>;
-
-function buildBucketMeshes(
-  assets: VariantAssets,
-  instances: TreeInstance[],
-  tiltable: boolean,
-  byIndex: Map<number, InstanceSlots>,
-): THREE.InstancedMesh[] {
-  const meshes: THREE.InstancedMesh[] = [];
-  assets.parts.forEach((part) => {
-    const mesh = new THREE.InstancedMesh(part.geometry, part.material, instances.length);
-    mesh.frustumCulled = false;
-    mesh.castShadow = true;
-    mesh.receiveShadow = part.role === "branches";
-    instances.forEach(({ tree, index }, slot) => {
-      const s = tree.height / assets.nativeHeight;
-      const yaw = (index * YAW_STEP) % (Math.PI * 2);
-      // Slight deterministic lean (oaks only, like the old blob canopy);
-      // origin is at the trunk base so the lean never unroots the tree.
-      const tilt = tiltable ? Math.sin(index * 1.7) * 0.08 : 0;
-      dummy.position.set(tree.x, tree.groundY, tree.z);
-      dummy.rotation.set(tilt, yaw, -tilt);
-      dummy.scale.setScalar(s);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(slot, dummy.matrix);
-      let slots = byIndex.get(index);
-      if (!slots) {
-        slots = [];
-        byIndex.set(index, slots);
-      }
-      slots.push({ mesh, slot });
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    meshes.push(mesh);
-  });
-  return meshes;
-}
-
-interface Forest {
-  root: THREE.Group;
-  meshes: THREE.InstancedMesh[];
-  /** tree index in world.trees → its instanced-mesh slots (doc 13 M2). */
-  byIndex: Map<number, InstanceSlots>;
-}
-
-function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
+function buildForest(scene: THREE.Group, trees: readonly Tree[]): ChunkedDressing {
   // N variants per kind (VARIANT_NODES-driven); a missing node falls back to
   // the next available sibling (skip the kind only if every node is gone).
   const variants: Record<"conifer" | "oak", Array<VariantAssets | null>> = {
@@ -141,33 +95,52 @@ function buildForest(scene: THREE.Group, trees: readonly Tree[]): Forest {
     oak: VARIANT_NODES.oak.map((name) => extractVariant(scene, name)),
   };
 
-  const buckets: Record<"conifer" | "oak", TreeInstance[][]> = {
-    conifer: VARIANT_NODES.conifer.map(() => []),
-    oak: VARIANT_NODES.oak.map(() => []),
+  // One dressing bucket per (variant x GLB primitive); the chunker splits
+  // each into per-cell InstancedMeshes with real bounding spheres.
+  const buckets: DressingBucket[] = [];
+  const partBuckets: Record<"conifer" | "oak", Array<number[] | null>> = {
+    conifer: variants.conifer.map(() => null),
+    oak: variants.oak.map(() => null),
   };
+  for (const kind of ["conifer", "oak"] as const) {
+    variants[kind].forEach((assets, v) => {
+      if (!assets) return;
+      partBuckets[kind][v] = assets.parts.map((part) => {
+        buckets.push({
+          geometry: part.geometry,
+          material: part.material,
+          castShadow: true,
+          receiveShadow: part.role === "branches",
+        });
+        return buckets.length - 1;
+      });
+    });
+  }
+
+  const entries: DressingEntry[] = [];
   trees.forEach((tree, index) => {
     const pool = variants[tree.kind];
     let v = variantOf(index, pool.length);
     for (let step = 0; step < pool.length && !pool[v]; step++) v = (v + 1) % pool.length;
-    if (!pool[v]) return; // every node missing — kind unrenderable
-    buckets[tree.kind][v].push({ tree, index });
+    const assets = pool[v];
+    const ids = partBuckets[tree.kind][v];
+    if (!assets || !ids) return; // every node missing — kind unrenderable
+    const s = tree.height / assets.nativeHeight;
+    const yaw = (index * YAW_STEP) % (Math.PI * 2);
+    // Slight deterministic lean (oaks only, like the old blob canopy);
+    // origin is at the trunk base so the lean never unroots the tree.
+    const tilt = tree.kind === "oak" ? Math.sin(index * 1.7) * 0.08 : 0;
+    dummy.position.set(tree.x, tree.groundY, tree.z);
+    dummy.rotation.set(tilt, yaw, -tilt);
+    dummy.scale.setScalar(s);
+    dummy.updateMatrix();
+    // One matrix shared by the tree's branches + leaves entries; ref = the
+    // world.trees index so fells can zero exactly this tree's slots.
+    const matrix = dummy.matrix.clone();
+    for (const bucket of ids) entries.push({ bucket, matrix, ref: index });
   });
 
-  const root = new THREE.Group();
-  const meshes: THREE.InstancedMesh[] = [];
-  const byIndex = new Map<number, InstanceSlots>();
-  for (const kind of ["conifer", "oak"] as const) {
-    for (let v = 0; v < variants[kind].length; v++) {
-      const assets = variants[kind][v];
-      const instances = buckets[kind][v];
-      if (!assets || instances.length === 0) continue;
-      for (const mesh of buildBucketMeshes(assets, instances, kind === "oak", byIndex)) {
-        root.add(mesh);
-        meshes.push(mesh);
-      }
-    }
-  }
-  return { root, meshes, byIndex };
+  return buildChunkedDressing(buckets, entries);
 }
 
 export function Trees(): ReactElement | null {
@@ -181,11 +154,9 @@ export function Trees(): ReactElement | null {
 
   useEffect(() => {
     if (!forest) return;
-    return () => {
-      // Frees instance buffers only — geometry/materials belong to the
-      // shared GLTF cache and must outlive this component.
-      for (const mesh of forest.meshes) mesh.dispose();
-    };
+    // Frees instance buffers only — geometry/materials belong to the
+    // shared GLTF cache and must outlive this component.
+    return () => forest.dispose();
   }, [forest]);
 
   // doc 13 M2 — hide felled trees. A fresh forest (new world / rejoin) starts
@@ -195,13 +166,16 @@ export function Trees(): ReactElement | null {
     appliedVersion.current = -1;
   }, [forest]);
 
-  useFrame(() => {
-    if (!forest || appliedVersion.current === clientWorld.felledVersion) return;
+  useFrame((state) => {
+    if (!forest) return;
+    forest.updateVisibility(state.camera.position.x, state.camera.position.z);
+    if (appliedVersion.current === clientWorld.felledVersion) return;
     appliedVersion.current = clientWorld.felledVersion;
     // Re-stamps every felled index each change — idempotent and ≤ TREE_COUNT
-    // matrix writes, at chop rate (not frame rate).
+    // matrix writes, at chop rate (not frame rate). The chunk bounding
+    // spheres are deliberately NOT recomputed (see refSlots docs).
     for (const index of clientWorld.felledTrees) {
-      const slots = forest.byIndex.get(index);
+      const slots = forest.refSlots.get(index);
       if (!slots) continue;
       for (const { mesh, slot } of slots) {
         mesh.setMatrixAt(slot, ZERO_MATRIX);
@@ -211,5 +185,5 @@ export function Trees(): ReactElement | null {
   });
 
   if (!forest) return null;
-  return <primitive object={forest.root} />;
+  return <primitive object={forest.group} />;
 }
