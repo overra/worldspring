@@ -16,7 +16,7 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { BUILD_CELL, BUILD_WALL_THICKNESS } from "@worldspring/shared/constants";
-import { PIECE_DEFS, crateAabb, pieceAabbs, pieceCenter, type StructurePiece } from "@worldspring/shared/structures";
+import { PIECE_DEFS, crateAabb, pieceAabbs, type StructurePiece } from "@worldspring/shared/structures";
 import type { Aabb } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
 import {
@@ -151,6 +151,10 @@ export function Structures(): ReactElement {
     return () => {
       dressingRef.current?.dispose();
       dressingRef.current = null;
+      // Same remount hardening as Stumps/PlantedTrees: Fast Refresh re-runs
+      // effects but preserves refs — a matching version would skip the
+      // rebuild and leave every base invisible until the next placement.
+      builtVersion.current = -1;
       shared.geometry.dispose();
       for (const m of Object.values(shared.materials)) m.dispose();
     };
