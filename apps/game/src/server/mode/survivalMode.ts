@@ -6,16 +6,19 @@
 // handlers + world seeding; only the tick ORDER lives here now.
 import type { GameMode, ModeTickCtx, PhaseTimer } from "./GameMode";
 import type { GameState } from "../systems/state";
+import { DECAY_SWEEP_INTERVAL_S } from "@worldspring/shared/constants";
 import { performAttack } from "../systems/combat";
 import { stepPortals, tickActiveActions } from "../systems/players";
-import { tickStructures } from "../systems/structures";
+import { spawnInitialProps } from "../systems/props";
+import { sweepDecay, tickStructures } from "../systems/structures";
 import { tickAmbientSeeds, tickTreeGrowth, tickTrunks } from "../systems/trees";
-import { tickZombieRespawns, tickZombies } from "../systems/zombies";
+import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "../systems/zombies";
 import { tickFires, tickSurvival } from "../systems/survival";
 import { tickWeather } from "../systems/weather";
 import { tickAirdrops } from "../systems/airdrops";
-import { tickDeerRespawns, tickWildlife } from "../systems/wildlife";
-import { tickCorpses, tickDroppedLoot, tickLootRespawns } from "../systems/loot";
+import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "../systems/wildlife";
+import { spawnInitialVehicles } from "../systems/vehicles";
+import { stockInitialLoot, tickCorpses, tickDroppedLoot, tickLootRespawns } from "../systems/loot";
 
 export const survivalMode: GameMode = {
   id: "survival",
@@ -66,5 +69,26 @@ export const survivalMode: GameMode = {
     tickCorpses(game, dt);
     tickDroppedLoot(game, dt);
     phase("world");
+  },
+
+  onWorldReady(game: GameState, fresh: boolean, ctx: ModeTickCtx): void {
+    // loadWorld hydrated loot/corpses/fires/timers (and rebuilt vehicles/barrels
+    // from the persisted bodies snapshot) for a RESTORED world; a fresh database
+    // stocks them here instead — never both, so nothing double-spawns.
+    if (fresh) {
+      stockInitialLoot(game);
+      // doc 13 M3/M4 — deterministic barrels + vehicles (buffer in PhysicsSystem
+      // until the async engine attaches).
+      spawnInitialProps(game);
+      spawnInitialVehicles(game);
+    }
+    // Zombies and deer are never persisted — always spawn fresh.
+    spawnInitialZombies(game);
+    spawnInitialDeer(game);
+    // doc 06 M7 — boot decay sweep: an abandoned base disappears the first time
+    // anyone wakes the room past the window; the tick's tickStructures owns the
+    // cadence from here.
+    sweepDecay(game, ctx.lastSeenMs);
+    game.decayNextAt = game.time + DECAY_SWEEP_INTERVAL_S;
   },
 };
