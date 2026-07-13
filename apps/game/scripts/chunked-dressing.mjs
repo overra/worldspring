@@ -106,6 +106,42 @@ const m = (x, y, z, s = 1) =>
   d.dispose();
 }
 
+// --- 2b. non-uniform instance scale (Buildings walls) ------------------------
+{
+  // Long thin wall boxes (e.g. 10 x 3 x 0.35) — computeBoundingSphere must
+  // union each instance's transformed corners, not just its center, or a wall
+  // end would poke outside its chunk sphere and cull mid-view.
+  const nu = (x, z, sx, sy, sz) =>
+    new THREE.Matrix4().compose(
+      new THREE.Vector3(x, sy / 2, z),
+      new THREE.Quaternion(),
+      new THREE.Vector3(sx, sy, sz),
+    );
+  const entries = [
+    { bucket: 0, matrix: nu(30, 30, 10, 3, 0.35) }, // long X wall
+    { bucket: 0, matrix: nu(30, 40, 0.35, 3, 10) }, // long Z wall
+    { bucket: 0, matrix: nu(40, 35, 6, 0.2, 6) }, // thin floor slab
+  ];
+  const d = buildChunkedDressing(buckets, entries);
+  check(d.meshes.length === 1, "non-uniform boxes in one cell -> one mesh");
+  const mesh = d.meshes[0];
+  const sphere = mesh.boundingSphere;
+  // Every one of each box's 8 world corners must sit inside the chunk sphere.
+  const corner = new THREE.Vector3();
+  const em = new THREE.Matrix4();
+  let cornersIn = true;
+  for (let s = 0; s < mesh.count; s++) {
+    mesh.getMatrixAt(s, em);
+    for (let c = 0; c < 8; c++) {
+      corner.set(c & 1 ? 0.5 : -0.5, c & 2 ? 0.5 : -0.5, c & 4 ? 0.5 : -0.5).applyMatrix4(em);
+      if (sphere.center.distanceTo(corner) > sphere.radius + 1e-6) cornersIn = false;
+    }
+  }
+  check(cornersIn, "sphere contains every non-uniform box corner (not just centers)");
+  check(sphere.radius <= DRESSING_CHUNK_SIZE * Math.SQRT2, "non-uniform chunk sphere stays chunk-sized");
+  d.dispose();
+}
+
 // --- 3. refSlots + zero-scale mutation ---------------------------------------
 {
   // One logical object with parts in BOTH buckets (the Trees branches+leaves
