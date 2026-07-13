@@ -136,11 +136,12 @@ function createRig(deerSource: THREE.Object3D | null): DeerRig {
   return { root, torso, legs };
 }
 
-/** Allocate a single new deer slot into the pool (lazy growth path). */
+/** Allocate a single new deer slot into the pool (lazy growth path). The rig
+ * stays DETACHED like createPool's — the caller acquires (and attaches) it in
+ * the same frame. */
 function growPool(pool: DeerPool): void {
   const idx = pool.slots.length;
   const rig = createRig(pool.deerSource);
-  pool.root.add(rig.root);
   pool.slots.push({ rig, phase: idx * 1.3, amp: 0, gallop: 0 });
   pool.free.push(idx);
 }
@@ -160,7 +161,10 @@ function createPool(scene: THREE.Group): DeerPool {
   const initialSize = effectiveDeerMax(clientWorld.config) + 4;
   for (let i = 0; i < initialSize; i++) {
     const rig = createRig(deerSource);
-    root.add(rig.root);
+    // Pooled rigs start DETACHED (the RemotePlayers pattern) — attached-but-
+    // hidden objects still pay updateMatrixWorld every frame in three r184.
+    // Deer are plain mesh clones, not skinned rigs, so the win is small; the
+    // pattern is applied for consistency with the other entity pools.
     // Stagger phases so a herd never moves in lockstep.
     slots.push({ rig, phase: i * 1.3, amp: 0, gallop: 0 });
     free.push(initialSize - 1 - i);
@@ -184,6 +188,8 @@ export function Animals(): ReactElement {
       pool.byId.delete(id);
       pool.free.push(idx);
       pool.slots[idx].rig.root.visible = false;
+      // Detach so the idle rig costs zero matrix work per frame (createPool).
+      pool.root.remove(pool.slots[idx].rig.root);
     }
 
     for (const a of animals.values()) {
@@ -197,6 +203,9 @@ export function Animals(): ReactElement {
         pool.byId.set(a.id, idx);
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
+        // Re-attach (see createPool); position is written right below in this
+        // priority-0 useFrame, before the priority-2 composer render.
+        pool.root.add(fresh.rig.root);
         fresh.amp = 0;
         fresh.gallop = 0;
       }

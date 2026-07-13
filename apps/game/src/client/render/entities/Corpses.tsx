@@ -69,14 +69,18 @@ interface CorpsePool {
   free: number[];
 }
 
-function createPool(kind: CharacterKind, size: number, sceneRoot: THREE.Group): CorpsePool {
+function createPool(kind: CharacterKind, size: number): CorpsePool {
   const slots: CorpseSlot[] = [];
   const free: number[] = [];
   for (let i = 0; i < size; i++) {
     const rig = createCharacterRig(kind);
     rig.root.visible = false;
     rig.setTint(CORPSE_TINT[kind]);
-    sceneRoot.add(rig.root);
+    // Pooled rigs start DETACHED from the scene graph (the RemotePlayers
+    // pattern): three r184's updateMatrixWorld recurses into ALL children
+    // unconditionally, so 48 attached-but-hidden skinned rigs would pay
+    // per-bone matrix work every frame while live corpses are usually few.
+    // Acquire attaches; releaseMissing detaches.
     slots.push({ rig, animRemaining: 0 });
     free.push(size - 1 - i); // pop() hands out slot 0 first
   }
@@ -90,6 +94,9 @@ function releaseMissing(pool: CorpsePool, presentIds: Set<number>): void {
     pool.free.push(idx);
     const slot = pool.slots[idx];
     slot.rig.root.visible = false;
+    // Detach the idle rig (createPool). CorpsePool holds no root reference,
+    // so detach via the rig itself — same API dispose uses.
+    slot.rig.root.removeFromParent();
     slot.animRemaining = 0;
   }
 }
@@ -123,8 +130,8 @@ export function Corpses(): ReactElement {
     const root = new THREE.Group();
     return {
       root,
-      player: createPool("survivor", PLAYER_POOL_SIZE, root),
-      zombie: createPool("zombie", ZOMBIE_POOL_SIZE, root),
+      player: createPool("survivor", PLAYER_POOL_SIZE),
+      zombie: createPool("zombie", ZOMBIE_POOL_SIZE),
     };
   }, []);
 
@@ -158,6 +165,9 @@ export function Corpses(): ReactElement {
         idx = pool.free.pop();
         if (idx === undefined) continue; // pool exhausted: skip the excess
         pool.byId.set(corpse.id, idx);
+        // Re-attach before the pose/position writes (see createPool); this
+        // priority-0 useFrame runs before the priority-2 composer render.
+        pools.root.add(pool.slots[idx].rig.root);
         // Fresh kill = first sighting of an id newer than everything seen,
         // on a client past the initial world download.
         assignSlot(pool.slots[idx], pool, corpse.id, liveClient && corpse.id > watermark);

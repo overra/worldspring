@@ -54,12 +54,13 @@ interface ZombiePool {
   frame: number;
 }
 
-/** Allocate a single new zombie slot into the pool (lazy growth path). */
+/** Allocate a single new zombie slot into the pool (lazy growth path). The
+ * rig stays DETACHED like createPool's — the caller acquires (and attaches)
+ * it in the same frame. */
 function growPool(pool: ZombiePool): number {
   const idx = pool.slots.length;
   const rig = createCharacterRig("zombie");
   rig.root.visible = false;
-  pool.root.add(rig.root);
   pool.slots.push({ rig, lastState: null, nextSwingIn: 0, accumDt: 0 });
   pool.free.push(idx);
   return idx;
@@ -76,7 +77,10 @@ function createPool(): ZombiePool {
   for (let i = 0; i < initialSize; i++) {
     const rig = createCharacterRig("zombie");
     rig.root.visible = false;
-    root.add(rig.root);
+    // Pooled rigs start DETACHED from the scene graph (the RemotePlayers
+    // pattern): three r184's updateMatrixWorld recurses into ALL children
+    // unconditionally, so an attached-but-hidden skinned rig still pays
+    // per-bone matrix work every frame. Acquire attaches; release detaches.
     slots.push({ rig, lastState: null, nextSwingIn: 0, accumDt: 0 });
     free.push(initialSize - 1 - i);
   }
@@ -96,6 +100,8 @@ export function Zombies(): ReactElement {
       pool.byId.delete(id);
       pool.free.push(idx);
       pool.slots[idx].rig.root.visible = false;
+      // Detach so the idle rig costs zero matrix work per frame (createPool).
+      pool.root.remove(pool.slots[idx].rig.root);
     }
 
     const dt = Math.min(delta, MAX_FRAME_DT);
@@ -112,6 +118,10 @@ export function Zombies(): ReactElement {
         pool.byId.set(z.id, idx);
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
+        // Re-attach (see createPool). Position/rotation are written right
+        // below in this priority-0 useFrame, before the priority-2 composer
+        // render — world matrices are correct within the same frame.
+        pool.root.add(fresh.rig.root);
         // Variant styling on assignment (slots are reused — always set both ways).
         fresh.rig.setTint(z.mil ? MIL_TINT : NORMAL_TINT);
         fresh.rig.root.scale.setScalar(z.mil ? MIL_SCALE : 1);
