@@ -2,58 +2,108 @@
 // /policy — the listing policy (doc 02 §7, M7). Prerendered (Astro 6 static
 // default — no prerender export): the vouch/no-vouch paragraph that also
 // sits under every Join button, plus the plain enforcement statement.
+// Redesign (doc 00): rebuilt on the shared Layout / "field manual" design
+// system. Policy copy is CURRENT and verbatim — presentation only changed.
+import Layout from "../layouts/Layout.astro";
 const title = "Listing policy";
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title} — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
-      .vouch { border-left: 3px solid #8886; padding: 0.25rem 0 0.25rem 0.9rem; margin: 1.25rem 0; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>{title}</h1>
+<Layout
+  title={`${title} — Worldspring`}
+  description="How the Worldspring directory verifies listed servers, what it does and doesn't vouch for, and how enforcement and reporting work."
+>
+  <article class="doc">
+    <div class="doc-inner">
+      <header class="doc-head">
+        <p class="eyebrow">Directory · Trust &amp; enforcement</p>
+        <h1>{title}</h1>
+      </header>
 
-      <h2>What the directory vouches for — and what it does not</h2>
-      {/* Doc 02 §7, verbatim — the same words render on every /join/:id page. */}
-      <div class="vouch">
+      <section class="doc-section">
+        <h2>What the directory vouches for — and what it does not</h2>
+        {/* Doc 02 §7, verbatim — the same words render on every /join/:id page. */}
+        <div class="vouch">
+          <p>
+            Listed servers are community-run copies of Worldspring at their own
+            web addresses. We verify that the owner controls the address and that
+            it answers as a Worldspring server.
+            <strong>We do not review or control the code it runs</strong> — it may
+            be modified, and its version of the game (including its login screen
+            and everything you type there) is served by that operator, not by us.
+          </p>
+        </div>
         <p>
-          Listed servers are community-run copies of Worldspring at their own
-          web addresses. We verify that the owner controls the address and that
-          it answers as a Worldspring server.
-          <strong>We do not review or control the code it runs</strong> — it may
-          be modified, and its version of the game (including its login screen
-          and everything you type there) is served by that operator, not by us.
+          Your identity is per-server: you'll have a separate character on each
+          server you join, and the directory never passes tokens or saved data to
+          a community server.
         </p>
-      </div>
-      <p>
-        Your identity is per-server: you'll have a separate character on each
-        server you join, and the directory never passes tokens or saved data to
-        a community server.
-      </p>
+      </section>
 
-      <h2>Enforcement</h2>
-      <p>
-        Fabricated player counts, impersonation of other servers, or malicious
-        listing content get a server delisted and its host banned from
-        re-registering. Reports and admin review are the enforcement loop:
-        anyone can report a listing — every row on the
-        <a href="/servers">server list</a> has a Report link, as does each join
-        page — reports never remove a server automatically, and repeated
-        independent reports flag it for a human.
-      </p>
-      <p>
-        Server owners can delist their own server at any time with their
-        registration token.
-      </p>
+      <hr class="rule" />
 
-      <p><a href="/servers">&larr; Back to servers</a></p>
-    </main>
-  </body>
-</html>
+      <section class="doc-section">
+        <h2>Enforcement</h2>
+        <p>
+          Fabricated player counts, impersonation of other servers, or malicious
+          listing content get a server delisted and its host banned from
+          re-registering. Reports and admin review are the enforcement loop:
+          anyone can report a listing — every row on the
+          <a href="/servers">server list</a> has a Report link, as does each join
+          page — reports never remove a server automatically, and repeated
+          independent reports flag it for a human.
+        </p>
+        <p>
+          Server owners can delist their own server at any time with their
+          registration token.
+        </p>
+      </section>
+
+      <p class="back mono"><a href="/servers">&larr; Back to servers</a></p>
+    </div>
+  </article>
+</Layout>
+
+<style>
+  .doc { border-bottom: 1px solid var(--hairline); }
+  .doc-inner { max-width: 680px; margin: 0 auto; padding: 0 28px; }
+
+  .doc-head { padding: 72px 0 8px; border-bottom: 1px solid var(--hairline); }
+  .doc-head h1 {
+    font-weight: 700; font-size: clamp(34px, 6vw, 52px); line-height: 1.04;
+    letter-spacing: 0.02em; margin: 14px 0 24px; text-wrap: balance;
+  }
+
+  .doc-section { padding: 40px 0 4px; }
+  .doc-section h2 {
+    font-family: var(--font-display); font-weight: 600; font-size: 17px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink);
+    margin: 0 0 18px;
+  }
+
+  .doc p {
+    color: var(--ink-body); font-size: 16px; line-height: 1.72; margin: 0 0 16px;
+  }
+  .doc p:last-child { margin-bottom: 0; }
+  .doc strong { color: var(--ink); font-weight: 700; }
+
+  /* Key trust statement — hairline box over a faint fill with an olive spine. */
+  .vouch {
+    border: 1px solid var(--hairline-2); border-left: 2px solid var(--accent);
+    background: var(--accent-wash); padding: 18px 22px; margin: 0 0 22px;
+  }
+  .vouch p { margin: 0; color: var(--ink-2); }
+  .vouch strong { color: var(--accent-bright); }
+
+  .rule { border: 0; border-top: 1px solid var(--hairline); margin: 40px 0 0; }
+
+  .back {
+    padding: 48px 0 8px; font-size: 13px; letter-spacing: 0.04em;
+  }
+  .back a { color: var(--ink-3); }
+  .back a:hover { color: var(--ink); }
+
+  @media (max-width: 720px) {
+    .doc-head { padding-top: 52px; }
+    .doc-section { padding-top: 32px; }
+  }
+</style>

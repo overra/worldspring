@@ -1,0 +1,239 @@
+---
+// /about — what Worldspring is (doc 00). A static editorial page built on the
+// shared Layout / "field manual" design system: near-black ground, olive accent,
+// hairline borders, mono data readouts. Copy is the CURRENT survival framing only
+// — the "fork it, make your own game" platform messaging is a separate pass and is
+// deliberately NOT here. No SSR data loads: prerendered.
+import Layout from "../layouts/Layout.astro";
+
+export const prerender = true;
+
+// Field spec — grounded in the values the rest of the site already surfaces
+// (seed 1337 · 800m in the footer, 40 max per world on the landing page).
+const spec = [
+  { k: "Survivors / world", v: "40 max" },
+  { k: "World", v: "seed 1337 · 800m" },
+  { k: "Simulation", v: "server-authoritative" },
+  { k: "Install", v: "none — runs in the tab" },
+  { k: "Host it", v: "Cloudflare · self-serve" },
+];
+
+const pillars = [
+  {
+    n: "01",
+    h: "Browser-native",
+    p: "No download, no launcher, no account wall. It runs in the tab you already have open — click a link, name yourself, and you're standing on the sand.",
+  },
+  {
+    n: "02",
+    h: "One honest world",
+    p: "Up to 40 survivors share a single authoritative world. The server runs the simulation — movement, loot, damage, day and night — so no client can lie about what happened.",
+  },
+  {
+    n: "03",
+    h: "Yours to host",
+    p: "The official island is just one server. The whole game is self-hostable on Cloudflare for pennies, and every world can list itself in the public directory.",
+  },
+];
+
+const beats = [
+  { n: "1", h: "Wash up", p: "You come to on a beach with nothing — cold, empty-handed, and already losing daylight." },
+  { n: "2", h: "Scavenge the coast", p: "Comb the shoreline and the treeline for food, water, tools, and anything that keeps the meters off zero." },
+  { n: "3", h: "Hold off the island", p: "Hunger, thirst, exposure, and the dark are all working against you. So, sometimes, are the other survivors." },
+  { n: "4", h: "Last another night", p: "There's no finish line — only the next morning, and whatever you carried through the dark to reach it." },
+];
+
+const routes = [
+  { label: "Play", href: "https://play.worldspring.games", note: "Official server — click and you're on the beach.", primary: true },
+  { label: "Browse", href: "/servers", note: "Every community world, ranked and live." },
+  { label: "Host", href: "/host", note: "Stand up your own island on Cloudflare." },
+  { label: "Docs", href: "/getting-started", note: "How to play, and how to run a server." },
+];
+---
+
+<Layout
+  title="About — what Worldspring is"
+  description="Worldspring is a browser-native, DayZ-inspired multiplayer survival island. One authoritative Cloudflare server, up to 40 survivors, no install — and the whole thing is yours to self-host."
+  active="about"
+>
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <p class="eyebrow">About · Browser-native survival</p>
+      <h1>What Worldspring is.</h1>
+      <p class="lede">
+        Worldspring is a browser-native, DayZ-inspired multiplayer survival island. A hostile
+        procedural world, up to 40 survivors, one authoritative server keeping everyone honest.
+        No install — click a link, name yourself, you're on the beach. And when you want your own
+        world, the whole thing is yours to host.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://play.worldspring.games">Play now</a>
+        <a class="btn" href="/servers">Browse servers</a>
+        <span class="mono note">no install · click, name, beach</span>
+      </div>
+    </div>
+    <div class="topo" aria-hidden="true"></div>
+  </section>
+
+  <div class="wrap">
+    <section class="block">
+      <div class="sec-head">
+        <span class="eyebrow">The shape of it</span>
+        <h2>Three things that make it what it is</h2>
+      </div>
+      <div class="pillars">
+        {pillars.map((p) => (
+          <article class="pillar">
+            <span class="p-n mono">{p.n}</span>
+            <h3>{p.h}</h3>
+            <p>{p.p}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="block split">
+      <div class="beats">
+        <div class="sec-head">
+          <span class="eyebrow">How a run goes</span>
+          <h2>From the sand to the next morning</h2>
+        </div>
+        <ol class="beat-list">
+          {beats.map((b) => (
+            <li class="beat">
+              <span class="b-n mono">{b.n}</span>
+              <div class="b-body">
+                <h3>{b.h}</h3>
+                <p>{b.p}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      <aside class="spec">
+        <div class="spec-head mono">Field spec</div>
+        <dl class="spec-table">
+          {spec.map((s) => (
+            <div class="spec-row">
+              <dt>{s.k}</dt>
+              <dd class="mono">{s.v}</dd>
+            </div>
+          ))}
+        </dl>
+        <p class="spec-foot dim mono">seed 1337 · one authoritative world · self-hostable</p>
+      </aside>
+    </section>
+
+    <section class="block">
+      <div class="sec-head">
+        <span class="eyebrow">Where to go next</span>
+        <h2>Play it, browse it, or run your own</h2>
+      </div>
+      <div class="routes">
+        {routes.map((r) => (
+          <a class={`route${r.primary ? " is-primary" : ""}`} href={r.href}>
+            <span class="r-label">{r.label}</span>
+            <span class="r-note">{r.note}</span>
+            <span class="r-arrow mono" aria-hidden="true">→</span>
+          </a>
+        ))}
+      </div>
+    </section>
+  </div>
+</Layout>
+
+<style>
+  /* ---- Hero (mirrors the landing hero, editorial variant) ---- */
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--hairline); }
+  .hero-inner { position: relative; z-index: 1; padding: 88px 28px 72px; }
+  .hero h1 {
+    font-weight: 700; font-size: clamp(38px, 6.4vw, 60px); line-height: 1.03;
+    margin: 16px 0 0; text-wrap: balance;
+  }
+  .lede { max-width: 620px; margin: 22px 0 0; color: var(--ink-2); font-size: 17px; }
+  .cta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 32px 0 0; }
+  .cta .note { color: var(--ink-3); font-size: 12px; letter-spacing: 0.02em; }
+
+  /* faint procedural-contour motif, right side of the hero (matches index) */
+  .topo {
+    position: absolute; inset: 0 -10% 0 40%; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 100% at 100% 0%, rgba(125, 160, 107, 0.08), transparent 60%),
+      repeating-radial-gradient(circle at 92% 30%, transparent 0 38px, rgba(125, 160, 107, 0.05) 38px 39px);
+    mask-image: linear-gradient(90deg, transparent, #000 55%);
+  }
+
+  /* ---- Section scaffolding ---- */
+  .block { margin: 72px 0 0; }
+  .sec-head { margin: 0 0 26px; }
+  .sec-head h2 { font-size: clamp(22px, 3vw, 27px); font-weight: 700; letter-spacing: 0.05em; margin: 10px 0 0; }
+
+  /* ---- Pillars ---- */
+  .pillars { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--hairline); }
+  .pillar { padding: 24px 24px 28px; border-right: 1px solid var(--hairline); }
+  .pillar:last-child { border-right: none; }
+  .p-n { display: block; font-size: 12px; letter-spacing: 0.14em; color: var(--accent); }
+  .pillar h3 { font-size: 16px; font-weight: 600; letter-spacing: 0.06em; margin: 14px 0 0; color: var(--ink); }
+  .pillar p { margin: 10px 0 0; color: var(--ink-2); font-size: 14.5px; }
+
+  /* ---- Split: how-it-plays + field spec ---- */
+  .split { display: grid; grid-template-columns: 1.5fr 1fr; gap: 44px; align-items: start; }
+  .beat-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hairline); }
+  .beat { display: flex; gap: 18px; padding: 20px 2px; border-bottom: 1px solid var(--hairline); }
+  .b-n {
+    flex: none; width: 34px; height: 34px; display: grid; place-items: center;
+    border: 1px solid var(--hairline-2); color: var(--accent); font-size: 14px; font-weight: 500;
+  }
+  .b-body h3 { font-size: 15px; font-weight: 600; letter-spacing: 0.06em; color: var(--ink); margin: 4px 0 0; }
+  .b-body p { margin: 8px 0 0; color: var(--ink-2); font-size: 14.5px; }
+
+  .spec { border: 1px solid var(--hairline); border-left: 2px solid var(--accent); }
+  .spec-head {
+    font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-3);
+    padding: 14px 18px; border-bottom: 1px solid var(--hairline);
+  }
+  .spec-table { margin: 0; padding: 6px 0; }
+  .spec-row { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 9px 18px; }
+  .spec-row dt {
+    font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .spec-row dd { margin: 0; font-size: 13px; color: var(--ink-body); text-align: right; }
+  .spec-foot { padding: 12px 18px 16px; font-size: 11px; letter-spacing: 0.04em; border-top: 1px solid var(--hairline); margin: 0; }
+
+  /* ---- Route cards ---- */
+  .routes { display: grid; grid-template-columns: repeat(2, 1fr); border: 1px solid var(--hairline); }
+  .route {
+    position: relative; display: block; padding: 22px 22px 24px;
+    border-right: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline);
+    color: var(--ink-body);
+  }
+  .route:nth-child(2n) { border-right: none; }
+  .route:nth-child(n + 3) { border-bottom: none; }
+  .route:hover { background: rgba(125, 160, 107, 0.04); }
+  .route.is-primary { border-left: 2px solid var(--accent); }
+  .r-label {
+    display: block; font-family: var(--font-display); font-weight: 600; font-size: 15px;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink);
+  }
+  .route:hover .r-label { color: var(--accent-bright); }
+  .r-note { display: block; margin: 8px 0 0; color: var(--ink-2); font-size: 14px; max-width: 32ch; }
+  .r-arrow { position: absolute; top: 22px; right: 22px; color: var(--ink-3); font-size: 15px; }
+  .route:hover .r-arrow { color: var(--accent); }
+
+  @media (max-width: 820px) {
+    .split { grid-template-columns: 1fr; gap: 34px; }
+    .pillars { grid-template-columns: 1fr; }
+    .pillar { border-right: none; border-bottom: 1px solid var(--hairline); }
+    .pillar:last-child { border-bottom: none; }
+  }
+  @media (max-width: 720px) {
+    .hero-inner { padding: 60px 28px 52px; }
+    .block { margin: 56px 0 0; }
+    .routes { grid-template-columns: 1fr; }
+    .route { border-right: none; }
+    .route:nth-child(n + 3) { border-bottom: 1px solid var(--hairline); }
+    .route:last-child { border-bottom: none; }
+  }
+</style>

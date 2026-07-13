@@ -12,6 +12,7 @@
 // so. The optional name prefill reads the SITE origin's own localStorage
 // (`ws_name` — the doc's `dcd_name` is stale pre-rename vocabulary).
 export const prerender = false;
+import Layout from "../../layouts/Layout.astro";
 import { env } from "cloudflare:workers";
 import { MAX_NAME_LENGTH } from "@worldspring/shared/constants";
 
@@ -65,46 +66,49 @@ if (!row) {
   return new Response("Not found", { status: 404, headers: { "content-type": "text/plain" } });
 }
 
+// The shared Layout owns <head>, so the original `<meta name="robots" noindex>`
+// can't live in the page body (Astro doesn't hoist it there). Preserve the
+// noindex intent on this SSR route with the equivalent response header.
+Astro.response.headers.set("X-Robots-Tag", "noindex");
+
 const host = new URL(row.url).hostname;
 const ageDays = Math.max(0, Math.floor((now - row.created_at) / 86400_000));
 const continueUrl = `${row.url}/?ref=worldspring-directory`;
+const uptimePct = uptimeRatio20d === null ? null : Math.round(uptimeRatio20d * 100);
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex" />
-    <title>Joining {row.name} — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
-      .host { font-size: 1.6rem; font-weight: 700; word-break: break-all; background: #8881; border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.75rem 0; }
-      .facts { color: #666; }
-      .vouch { border-left: 3px solid #8886; padding: 0.25rem 0 0.25rem 0.9rem; margin: 1.25rem 0; }
-      .name-row { margin: 1rem 0; }
-      .name-row input[type="text"] { padding: 0.4rem 0.5rem; font-size: 1rem; }
-      .continue { display: inline-block; font-size: 1.1rem; font-weight: 600; padding: 0.6rem 1.4rem; border: 1px solid #8886; border-radius: 6px; text-decoration: none; }
-      .skip-row { margin-top: 1rem; color: #666; font-size: 0.9em; }
-      .footer { margin-top: 2rem; font-size: 0.9em; color: #888; }
-    </style>
-  </head>
-  <body>
-    <main>
+<Layout
+  title={`Joining ${row.name} — Worldspring`}
+  description="You're leaving Worldspring for a community-run server."
+  active="servers"
+>
+  <div class="wrap">
+    <section class="join">
+      <p class="eyebrow">Outbound · Community server</p>
       <h1>You're leaving Worldspring</h1>
-      <p>
+      <p class="lede">
         <strong>{row.name}</strong> is a community server. Joining takes you to:
       </p>
-      <div class="host">{host}</div>
-      <p class="facts">
-        Listed for {ageDays} {ageDays === 1 ? "day" : "days"} ·
-        {uptimeRatio20d === null
-          ? "no uptime data yet"
-          : `${Math.round(uptimeRatio20d * 100)}% uptime over the last 20 days`}
-      </p>
+
+      <div class="dest">
+        <span class="dest-label">Destination host</span>
+        <div class="host mono">{host}</div>
+      </div>
+
+      <div class="stats">
+        <div class="stat">
+          <b class="mono">{ageDays}</b>
+          <span>Listed · {ageDays === 1 ? "day" : "days"}</span>
+        </div>
+        <div class="stat">
+          <b class="mono">{uptimePct === null ? "—" : `${uptimePct}%`}</b>
+          <span>{uptimeRatio20d === null ? "no uptime data yet" : "uptime · 20d"}</span>
+        </div>
+      </div>
 
       {/* Doc 02 §7 vouch/no-vouch paragraph — M6 acceptance: verbatim-or-better. */}
-      <div class="vouch">
+      <div class="notice">
+        <span class="notice-label">Before you continue</span>
         <p>
           Listed servers are community-run copies of Worldspring at their own
           web addresses. We verify that the owner controls the address and that
@@ -119,108 +123,179 @@ const continueUrl = `${row.url}/?ref=worldspring-directory`;
         </p>
       </div>
 
-      {/* Hidden until the script that makes it functional reveals it — a
-          no-JS visitor must not see a dangling "()" and a dead checkbox. */}
-      <div class="name-row" id="name-row" hidden>
-        <label>
-          <input type="checkbox" id="send-name" />
-          Prefill my survivor name (<code id="name-preview"></code>) on that server
+      <div class="opts">
+        {/* Hidden until the script that makes it functional reveals it — a
+            no-JS visitor must not see a dangling "()" and a dead checkbox. */}
+        <div class="name-row" id="name-row" hidden>
+          <label class="opt">
+            <input type="checkbox" id="send-name" />
+            <span>Prefill my survivor name (<code id="name-preview"></code>) on that server</span>
+          </label>
+          <input type="text" id="name-input" maxlength={MAX_NAME_LENGTH} placeholder="survivor name" hidden />
+        </div>
+
+        <a
+          class="btn primary continue"
+          id="continue"
+          href={continueUrl}
+          data-server-id={row.id}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Continue to {host} &rarr;
+        </a>
+
+        <label class="opt skip-row">
+          <input type="checkbox" id="skip" />
+          <span>Don't warn me again for this server</span>
         </label>
-        <input type="text" id="name-input" maxlength={MAX_NAME_LENGTH} placeholder="survivor name" hidden />
       </div>
 
-      <a
-        class="continue"
-        id="continue"
-        href={continueUrl}
-        data-server-id={row.id}
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        Continue to {host} &rarr;
-      </a>
-
-      <p class="skip-row">
-        <label>
-          <input type="checkbox" id="skip" />
-          Don't warn me again for this server
-        </label>
-      </p>
-
-      <p class="footer">
-        <a href="/servers">&larr; Back to servers</a> ·
-        <a href={`/servers/${row.id}/report`}>Report this server</a> ·
+      <p class="actions mono">
+        <a href="/servers">&larr; Back to servers</a>
+        <span class="sep">·</span>
+        <a href={`/servers/${row.id}/report`}>Report this server</a>
+        <span class="sep">·</span>
         <a href="/policy/">Listing policy</a>
       </p>
-    </main>
+    </section>
+  </div>
 
-    <script>
-      // Opt-in name pass-through + don't-warn-again (doc 02 §9, open Q7).
-      // Everything here touches ONLY the site origin's storage; the outbound
-      // href carries at most ?ref and the opt-in ?name.
-      import { MAX_NAME_LENGTH } from "@worldspring/shared/constants";
-      const NAME_KEY = "ws_name";
-      const skipKeyOf = (serverId: string) => `ws_join_skip:${serverId}`;
+  <script>
+    // Opt-in name pass-through + don't-warn-again (doc 02 §9, open Q7).
+    // Everything here touches ONLY the site origin's storage; the outbound
+    // href carries at most ?ref and the opt-in ?name.
+    import { MAX_NAME_LENGTH } from "@worldspring/shared/constants";
+    const NAME_KEY = "ws_name";
+    const skipKeyOf = (serverId: string) => `ws_join_skip:${serverId}`;
 
-      const link = document.getElementById("continue") as HTMLAnchorElement;
-      const sendName = document.getElementById("send-name") as HTMLInputElement;
-      const nameInput = document.getElementById("name-input") as HTMLInputElement;
-      const namePreview = document.getElementById("name-preview")!;
-      const skip = document.getElementById("skip") as HTMLInputElement;
-      const baseHref = link.href;
-      // The server-rendered id, NOT location.pathname parsing: a trailing
-      // slash (/join/:id/ — Astro serves it) would make .pop() return "" and
-      // silently store the skip preference under the wrong key.
-      const serverId = link.dataset.serverId ?? "";
+    const link = document.getElementById("continue") as HTMLAnchorElement;
+    const sendName = document.getElementById("send-name") as HTMLInputElement;
+    const nameInput = document.getElementById("name-input") as HTMLInputElement;
+    const namePreview = document.getElementById("name-preview")!;
+    const skip = document.getElementById("skip") as HTMLInputElement;
+    const baseHref = link.href;
+    // The server-rendered id, NOT location.pathname parsing: a trailing
+    // slash (/join/:id/ — Astro serves it) would make .pop() return "" and
+    // silently store the skip preference under the wrong key.
+    const serverId = link.dataset.serverId ?? "";
 
-      // JS is running — the prefill controls work now, so reveal them.
-      document.getElementById("name-row")!.hidden = false;
+    // JS is running — the prefill controls work now, so reveal them.
+    document.getElementById("name-row")!.hidden = false;
 
-      let saved = "";
+    let saved = "";
+    try {
+      saved = localStorage.getItem(NAME_KEY) ?? "";
+    } catch {
+      // blocked storage — the checkbox still works with a typed name
+    }
+    nameInput.value = saved;
+    namePreview.textContent = saved || "none saved";
+
+    function syncHref(): void {
+      const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
+      link.href =
+        sendName.checked && name !== ""
+          ? `${baseHref}&name=${encodeURIComponent(name)}`
+          : baseHref;
+    }
+    sendName.addEventListener("change", () => {
+      nameInput.hidden = !sendName.checked;
+      syncHref();
+    });
+    nameInput.addEventListener("input", syncHref);
+
+    // Persist "don't warn me again" the moment it's toggled — a click
+    // listener on the link misses middle-click / context-menu "open in new
+    // tab" navigations. The checkbox itself is the preference statement.
+    skip.addEventListener("change", () => {
       try {
-        saved = localStorage.getItem(NAME_KEY) ?? "";
+        if (skip.checked) localStorage.setItem(skipKeyOf(serverId), "1");
+        else localStorage.removeItem(skipKeyOf(serverId));
       } catch {
-        // blocked storage — the checkbox still works with a typed name
+        // storage blocked — the join itself still proceeds
       }
-      nameInput.value = saved;
-      namePreview.textContent = saved || "none saved";
+    });
 
-      function syncHref(): void {
+    // Save the name on any activation of the link (auxclick = middle-click).
+    const saveName = () => {
+      try {
         const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
-        link.href =
-          sendName.checked && name !== ""
-            ? `${baseHref}&name=${encodeURIComponent(name)}`
-            : baseHref;
+        if (sendName.checked && name !== "") localStorage.setItem(NAME_KEY, name);
+      } catch {
+        // storage blocked — the join itself still proceeds
       }
-      sendName.addEventListener("change", () => {
-        nameInput.hidden = !sendName.checked;
-        syncHref();
-      });
-      nameInput.addEventListener("input", syncHref);
+    };
+    link.addEventListener("click", saveName);
+    link.addEventListener("auxclick", saveName);
+  </script>
+</Layout>
 
-      // Persist "don't warn me again" the moment it's toggled — a click
-      // listener on the link misses middle-click / context-menu "open in new
-      // tab" navigations. The checkbox itself is the preference statement.
-      skip.addEventListener("change", () => {
-        try {
-          if (skip.checked) localStorage.setItem(skipKeyOf(serverId), "1");
-          else localStorage.removeItem(skipKeyOf(serverId));
-        } catch {
-          // storage blocked — the join itself still proceeds
-        }
-      });
+<style>
+  .join { max-width: 660px; padding: 72px 0 24px; }
+  .join h1 {
+    font-weight: 700; font-size: clamp(30px, 5vw, 42px); line-height: 1.04;
+    margin: 14px 0 0; text-wrap: balance;
+  }
+  .lede { color: var(--ink-2); font-size: 17px; margin: 18px 0 0; }
+  .lede strong { color: var(--ink); font-weight: 600; }
 
-      // Save the name on any activation of the link (auxclick = middle-click).
-      const saveName = () => {
-        try {
-          const name = nameInput.value.trim().slice(0, MAX_NAME_LENGTH);
-          if (sendName.checked && name !== "") localStorage.setItem(NAME_KEY, name);
-        } catch {
-          // storage blocked — the join itself still proceeds
-        }
-      };
-      link.addEventListener("click", saveName);
-      link.addEventListener("auxclick", saveName);
-    </script>
-  </body>
-</html>
+  /* Destination host — the literal address, large mono, the page's anchor. */
+  .dest { margin: 26px 0 0; border: 1px solid var(--hairline); border-left: 2px solid var(--accent); background: var(--accent-wash); }
+  .dest-label {
+    display: block; padding: 12px 18px 0;
+    font-family: var(--font-display); font-weight: 600; font-size: 10px;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .host {
+    padding: 6px 18px 16px; color: var(--accent-bright);
+    font-size: clamp(22px, 4vw, 30px); font-weight: 500;
+    letter-spacing: 0.01em; word-break: break-all; line-height: 1.15;
+  }
+
+  /* Facts — hairline stat rail, mirrors the landing page. */
+  .stats { display: flex; gap: 0; margin: 22px 0 0; border: 1px solid var(--hairline); width: fit-content; max-width: 100%; flex-wrap: wrap; }
+  .stat { padding: 14px 24px; border-right: 1px solid var(--hairline); }
+  .stat:last-child { border-right: none; }
+  .stat b { display: block; font-size: 22px; font-weight: 700; color: var(--ink); }
+  .stat span { display: block; margin-top: 4px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* Vouch / no-vouch disclaimer — verbatim §7 language. */
+  .notice { margin: 32px 0 0; border: 1px solid var(--hairline); border-left: 2px solid var(--gold); padding: 20px 22px; }
+  .notice-label {
+    display: block; margin: 0 0 12px;
+    font-family: var(--font-display); font-weight: 600; font-size: 11px;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold);
+  }
+  .notice p { margin: 0; color: var(--ink-body); font-size: 15px; }
+  .notice p + p { margin-top: 12px; color: var(--ink-2); }
+  .notice strong { color: var(--ink); font-weight: 600; }
+
+  /* Opt-ins + continue. */
+  .opts { margin: 30px 0 0; }
+  .opt { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: var(--ink-body); font-size: 14px; line-height: 1.5; }
+  .opt input[type="checkbox"] { flex: none; margin-top: 3px; width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .opt code { font-family: var(--font-mono); font-size: 12px; color: var(--accent-bright); }
+
+  .name-row { margin: 0 0 20px; }
+  .name-row input[type="text"] {
+    display: block; margin: 10px 0 0 25px; max-width: 320px; width: 100%;
+    padding: 9px 12px; background: var(--surface); color: var(--ink);
+    border: 1px solid var(--hairline-2); border-radius: 0;
+    font-family: var(--font-mono); font-size: 14px;
+  }
+  .name-row input[type="text"]:focus { outline: none; border-color: var(--accent); }
+
+  .continue { font-size: 14px; padding: 13px 22px; }
+  .skip-row { margin: 18px 0 0; color: var(--ink-2); }
+
+  .actions { margin: 40px 0 0; font-size: 12px; letter-spacing: 0.04em; color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .actions a { color: var(--ink-2); }
+  .actions a:hover { color: var(--ink); }
+  .actions .sep { color: var(--hairline-2); }
+
+  @media (max-width: 720px) {
+    .join { padding: 48px 0 16px; }
+    .stat { padding: 12px 18px; }
+  }
+</style>

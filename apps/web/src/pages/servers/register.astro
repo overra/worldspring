@@ -2,122 +2,256 @@
 // Manual-claim wizard (doc 02 §5 Path B). Static shell + a small inline
 // script that drives POST /api/v1/servers and /verify — the token is shown
 // exactly once and never persists anywhere but the operator's clipboard.
+// Redesign (doc 00): rebuilt on the shared Layout / "field manual" design
+// system. The claim flow reads as a deploy/verify console; the inline step
+// logic and every element id it reads/writes are preserved verbatim.
+import Layout from "../../layouts/Layout.astro";
 export const prerender = false;
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Register a server — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
-      input[type="url"] { width: 100%; padding: 0.5rem; font-size: 1rem; }
-      button { padding: 0.5rem 1rem; font-size: 1rem; margin-top: 0.75rem; }
-      pre { background: #8881; padding: 0.75rem; overflow-x: auto; }
-      .error { color: #c33; }
-      .hidden { display: none; }
-      code { word-break: break-all; }
-    </style>
-  </head>
-  <body>
-    <main>
+<Layout
+  title="Register a server — Worldspring"
+  description="Claim your copy of Worldspring in the directory. Submit its URL, save the one-time token, redeploy, and verify."
+  active="host"
+>
+  <section class="reg">
+    <div class="wrap reg-inner">
+      <p class="eyebrow">Host · Claim your listing</p>
       <h1>Register your server</h1>
-      <p>
+      <p class="lede">
         List your own copy of Worldspring in the directory. You only submit the
         URL — the name, MOTD, and player counts come from your server itself.
       </p>
-      <ol>
-        <li>Deploy your server (it must answer at <code>https://&lt;your-host&gt;/api/server-info</code>).</li>
-        <li>Submit its URL below to get a one-time <code>DIRECTORY_TOKEN</code>.</li>
-        <li>Set the secret and redeploy, then hit Verify.</li>
+
+      <ol class="steps" aria-label="How claiming works">
+        <li>
+          <span class="s-num mono">01</span>
+          <span class="s-body">
+            Deploy your server (it must answer at
+            <code>https://&lt;your-host&gt;/api/server-info</code>).
+          </span>
+        </li>
+        <li>
+          <span class="s-num mono">02</span>
+          <span class="s-body">
+            Submit its URL below to get a one-time <code>DIRECTORY_TOKEN</code>.
+          </span>
+        </li>
+        <li>
+          <span class="s-num mono">03</span>
+          <span class="s-body">
+            Set the secret and redeploy, then hit Verify.
+          </span>
+        </li>
       </ol>
 
-      <section id="step-url">
-        <label for="url"><strong>Server URL</strong></label>
-        <input id="url" type="url" placeholder="https://my-server.someone.workers.dev" required />
-        <button id="submit">Register</button>
-        <p id="register-error" class="error hidden"></p>
+      <section id="step-url" class="console">
+        <div class="console-head">
+          <span class="c-title">Submit — server URL</span>
+          <span class="c-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <div class="console-body">
+          <label class="field-label" for="url">Server URL</label>
+          <input id="url" type="url" placeholder="https://my-server.someone.workers.dev" required />
+          <div class="actions">
+            <button id="submit" class="btn primary">Register</button>
+          </div>
+          <p id="register-error" class="error hidden mono"></p>
+        </div>
       </section>
 
-      <section id="step-token" class="hidden">
-        <h2>Your token — shown once, save it now</h2>
-        <p>
-          This token is stored only as a hash. If you lose it, delist and
-          re-register.
-        </p>
-        <pre><code id="token"></code></pre>
-        <p>Set it on your server and redeploy:</p>
-        <pre>npx wrangler secret put DIRECTORY_TOKEN    # paste the token
+      <section id="step-token" class="console hidden">
+        <div class="console-head">
+          <span class="c-title">Directory token</span>
+          <span class="tag">shown once</span>
+          <span class="c-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <div class="console-body">
+          <h2 class="tok-h">Your token — shown once, save it now</h2>
+          <p class="tok-note muted">
+            This token is stored only as a hash. If you lose it, delist and
+            re-register.
+          </p>
+          <pre class="token-box"><code id="token"></code></pre>
+          <p class="field-label deploy-label">Set it on your server and redeploy</p>
+          <pre class="term">npx wrangler secret put DIRECTORY_TOKEN    # paste the token
 npx wrangler deploy</pre>
-        <button id="verify">Verify now</button>
-        <p id="verify-result"></p>
+          <div class="actions">
+            <button id="verify" class="btn primary">Verify now</button>
+          </div>
+          <p id="verify-result" class="verify-out mono"></p>
+        </div>
       </section>
-    </main>
+    </div>
+  </section>
 
-    <script>
-      const $ = (id: string) => document.getElementById(id)!;
-      let verifyUrl = "";
+  <script>
+    const $ = (id: string) => document.getElementById(id)!;
+    let verifyUrl = "";
 
-      // Both handlers disable their button while in flight (a double-click
-      // would double-submit — the loser's 409 painting an error next to a
-      // fresh token panel) and catch fetch rejections (each attempt burns one
-      // of the 5/h/IP register slots, so a silent unhandled rejection on a
-      // flaky connection invites blind retries).
-      $("submit").addEventListener("click", async () => {
-        const btn = $("submit") as HTMLButtonElement;
-        const errEl = $("register-error");
-        errEl.classList.add("hidden");
-        btn.disabled = true;
-        try {
-          const url = ($("url") as HTMLInputElement).value.trim();
-          const res = await fetch("/api/v1/servers", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ url }),
-          });
-          const body = (await res.json().catch(() => null)) as {
-            token?: string;
-            verifyUrl?: string;
-            error?: string;
-          } | null;
-          if (!res.ok || !body?.token || !body.verifyUrl) {
-            errEl.textContent = `Registration failed: ${body?.error ?? res.status}`;
-            errEl.classList.remove("hidden");
-            return;
-          }
-          verifyUrl = body.verifyUrl;
-          $("token").textContent = body.token;
-          $("step-token").classList.remove("hidden");
-        } catch {
-          errEl.textContent = "Registration failed: network error — check your connection and try again.";
+    // Both handlers disable their button while in flight (a double-click
+    // would double-submit — the loser's 409 painting an error next to a
+    // fresh token panel) and catch fetch rejections (each attempt burns one
+    // of the 5/h/IP register slots, so a silent unhandled rejection on a
+    // flaky connection invites blind retries).
+    $("submit").addEventListener("click", async () => {
+      const btn = $("submit") as HTMLButtonElement;
+      const errEl = $("register-error");
+      errEl.classList.add("hidden");
+      btn.disabled = true;
+      try {
+        const url = ($("url") as HTMLInputElement).value.trim();
+        const res = await fetch("/api/v1/servers", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const body = (await res.json().catch(() => null)) as {
+          token?: string;
+          verifyUrl?: string;
+          error?: string;
+        } | null;
+        if (!res.ok || !body?.token || !body.verifyUrl) {
+          errEl.textContent = `Registration failed: ${body?.error ?? res.status}`;
           errEl.classList.remove("hidden");
-        } finally {
-          btn.disabled = false;
+          return;
         }
-      });
+        verifyUrl = body.verifyUrl;
+        $("token").textContent = body.token;
+        $("step-token").classList.remove("hidden");
+      } catch {
+        errEl.textContent = "Registration failed: network error — check your connection and try again.";
+        errEl.classList.remove("hidden");
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
-      $("verify").addEventListener("click", async () => {
-        const btn = $("verify") as HTMLButtonElement;
-        const out = $("verify-result");
-        out.textContent = "Probing…";
-        btn.disabled = true;
-        try {
-          const res = await fetch(verifyUrl, { method: "POST" });
-          const body = (await res.json().catch(() => null)) as {
-            ok?: boolean;
-            error?: string;
-          } | null;
-          out.textContent = body?.ok
-            ? "Verified — your server is live in the directory."
-            : `Not verified yet (${body?.error ?? res.status}). Set the secret, redeploy, and try again.`;
-        } catch {
-          out.textContent = "Probe request failed (network error) — try again.";
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    </script>
-  </body>
-</html>
+    $("verify").addEventListener("click", async () => {
+      const btn = $("verify") as HTMLButtonElement;
+      const out = $("verify-result");
+      out.textContent = "Probing…";
+      btn.disabled = true;
+      try {
+        const res = await fetch(verifyUrl, { method: "POST" });
+        const body = (await res.json().catch(() => null)) as {
+          ok?: boolean;
+          error?: string;
+        } | null;
+        out.textContent = body?.ok
+          ? "Verified — your server is live in the directory."
+          : `Not verified yet (${body?.error ?? res.status}). Set the secret, redeploy, and try again.`;
+      } catch {
+        out.textContent = "Probe request failed (network error) — try again.";
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</Layout>
+
+<style>
+  .reg { border-bottom: 1px solid var(--hairline); }
+  .reg-inner { max-width: 760px; padding: 72px 28px 88px; }
+  .reg h1 {
+    font-weight: 700; font-size: clamp(32px, 5vw, 46px); line-height: 1.04;
+    margin: 16px 0 0; text-wrap: balance;
+  }
+  .lede { max-width: 560px; margin: 20px 0 0; color: var(--ink-2); font-size: 17px; }
+
+  /* ---- Numbered process rail ---- */
+  .steps {
+    list-style: none; margin: 40px 0 0; padding: 0;
+    border: 1px solid var(--hairline);
+  }
+  .steps li {
+    display: flex; gap: 18px; align-items: baseline;
+    padding: 16px 20px; border-bottom: 1px solid var(--hairline);
+  }
+  .steps li:last-child { border-bottom: none; }
+  .s-num {
+    flex: none; font-size: 12px; font-weight: 700; letter-spacing: 0.12em;
+    color: var(--accent);
+  }
+  .s-body { color: var(--ink-body); font-size: 15px; }
+  code {
+    font-family: var(--font-mono); font-size: 0.86em; color: var(--accent-bright);
+    word-break: break-all;
+  }
+
+  /* ---- Deploy/verify console panels ---- */
+  .console {
+    margin: 28px 0 0; border: 1px solid var(--hairline);
+    background: var(--surface);
+  }
+  .console-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px; border-bottom: 1px solid var(--hairline);
+    background: rgba(255, 255, 255, 0.015);
+  }
+  .c-title {
+    font-family: var(--font-display); font-weight: 600; font-size: 11px;
+    letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-2);
+  }
+  .c-dots { margin-left: auto; display: inline-flex; gap: 6px; }
+  .c-dots i { width: 7px; height: 7px; border: 1px solid var(--hairline-2); }
+  .c-dots i:last-child { background: var(--accent); border-color: var(--accent); }
+  .console-body { padding: 20px 20px 22px; }
+
+  .tag {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em;
+    text-transform: uppercase; border: 1px solid var(--hairline-2);
+    color: var(--ink-3); padding: 1px 6px;
+  }
+
+  /* ---- Field / input ---- */
+  .field-label {
+    display: block; font-family: var(--font-display); font-weight: 600;
+    font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 9px;
+  }
+  #url {
+    width: 100%; padding: 12px 14px; font-family: var(--font-mono);
+    font-size: 14px; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--hairline-2); border-radius: 0;
+    outline: none;
+  }
+  #url::placeholder { color: var(--ink-3); }
+  #url:focus { border-color: var(--accent); }
+
+  .actions { margin-top: 16px; }
+  button { border-radius: 0; }
+
+  .error { color: var(--danger); font-size: 13px; margin: 14px 0 0; }
+  .hidden { display: none; }
+
+  /* ---- Token reveal ---- */
+  .tok-h {
+    font-size: 16px; font-weight: 600; letter-spacing: 0.06em; margin: 0;
+  }
+  .tok-note { font-size: 14px; margin: 8px 0 0; }
+  .token-box {
+    margin: 16px 0 0; padding: 14px 16px; overflow-x: auto;
+    background: var(--bg); border: 1px solid var(--hairline-2);
+    border-left: 2px solid var(--accent);
+  }
+  #token {
+    font-family: var(--font-mono); font-size: 14px; color: var(--accent-bright);
+    word-break: break-all;
+  }
+  .deploy-label { margin: 22px 0 9px; }
+  .term {
+    margin: 0; padding: 14px 16px; overflow-x: auto;
+    background: var(--bg); border: 1px solid var(--hairline);
+    font-family: var(--font-mono); font-size: 13px; line-height: 1.7;
+    color: var(--ink-body); white-space: pre;
+  }
+  .verify-out {
+    font-size: 13px; color: var(--ink-2); margin: 16px 0 0; min-height: 1em;
+  }
+
+  @media (max-width: 720px) {
+    .reg-inner { padding: 52px 28px 64px; }
+    .console-body { padding: 18px; }
+  }
+</style>

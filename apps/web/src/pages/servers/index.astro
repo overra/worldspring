@@ -6,16 +6,16 @@
 // All listing text is untrusted operator content; Astro {expr} auto-escapes,
 // and join links only ever carry the registration-pinned normalized https
 // origin (never heartbeat/probe values — doc 03 §7).
+//
+// Redesign (doc 00): rebuilt on the shared Layout / "field manual" design
+// system. The filter/sort/paginate contract, the ping.js hook, and the join
+// routing are UNCHANGED — only the presentation (chips, hairline table, stat
+// readout) is new.
 export const prerender = false;
+import Layout from "../../layouts/Layout.astro";
 import { env } from "cloudflare:workers";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import {
-  applyBrowse,
-  BROWSE_PRESETS,
-  BROWSE_SORTS,
-  parseBrowseParams,
-  type BrowseSort,
-} from "@worldspring/shared/browse";
+import { applyBrowse, BROWSE_PRESETS, parseBrowseParams } from "@worldspring/shared/browse";
 import { loadRankedList } from "../../lib/listing";
 
 const db = (env as unknown as { DB: D1Database }).DB;
@@ -30,171 +30,217 @@ try {
   // reads as a DB failure in the tail, not as a silently empty list.
   console.error("[servers] D1 lookup failed — rendering empty list:", err);
 }
-const result = applyBrowse(list, params);
+
+// "Show" facet (all | official | community) — a BOUNDED, page-local view filter
+// backing the directory's Official/Community toggle. It is NOT part of the shared
+// browse vocabulary; kept to a fixed 3-value whitelist so it stays cache-safe (it
+// can only ever mint 3× the existing key space, never the unbounded fragmentation
+// §11 warns about) and applied BEFORE applyBrowse so total/pageCount/paging stay
+// exact. "all" leaves the ranked list untouched (identical to the old behavior).
+const SHOW_VALUES = ["all", "official", "community"] as const;
+type ShowFacet = (typeof SHOW_VALUES)[number];
+const showRaw = Astro.url.searchParams.get("show");
+const show: ShowFacet = (SHOW_VALUES as readonly string[]).includes(showRaw ?? "")
+  ? (showRaw as ShowFacet)
+  : "all";
+const shown =
+  show === "official"
+    ? list.filter((s) => s.official)
+    : show === "community"
+      ? list.filter((s) => !s.official)
+      : list;
+const result = applyBrowse(shown, params);
 
 // Doc 02 §11: HTML cached 60 s. Safe to cache publicly — the browse page has
 // no per-visitor content (ping is client-side JS, not baked into the HTML).
 Astro.response.headers.set("cache-control", "public, max-age=60");
 
-const SORT_LABELS: Record<BrowseSort, string> = {
-  score: "Recommended",
-  players: "Players",
-  uptime: "Uptime",
-  name: "Name",
-};
+// Header live readout, derived from the already-loaded list (no extra load),
+// mirroring the landing page so the shared chrome reads consistently.
+const survivorsOnline = list.reduce((sum, s) => sum + s.players, 0);
+const live = list.length > 0 ? `${list.length} live · ${survivorsOnline} on` : null;
 
+// The six named presets (BROWSE_PRESETS minus "custom") as filter chips; "All"
+// clears the filter. Custom-preset worlds still surface under "All".
+const PRESET_CHIPS = BROWSE_PRESETS.filter((p) => p !== "custom");
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** Build a /servers URL preserving the active filter + sort, varying page. */
+// Every filtered view is a cacheable URL: build /servers links that vary ONE
+// facet and preserve the rest, always resetting to page 1 (a filter change).
+function browseUrl(next: { preset?: string | null; sort?: string; show?: string }): string {
+  const preset = next.preset !== undefined ? next.preset : params.preset;
+  const sort = next.sort !== undefined ? next.sort : params.sort;
+  const sh = next.show !== undefined ? next.show : show;
+  const p = new URLSearchParams();
+  if (preset) p.set("preset", preset);
+  if (sort && sort !== "score") p.set("sort", sort);
+  if (sh && sh !== "all") p.set("show", sh);
+  const qs = p.toString();
+  return qs ? `/servers?${qs}` : "/servers";
+}
+
+// Column-header sort: clicking the ACTIVE column returns to the default
+// "Recommended" (score) order, so all four sort states stay reachable.
+function sortUrl(col: string): string {
+  return browseUrl({ sort: params.sort === col ? "score" : col });
+}
+
+/** Build a /servers URL preserving the active filter + sort + show, varying page. */
 function pageUrl(n: number): string {
   const p = new URLSearchParams();
   if (params.preset) p.set("preset", params.preset);
   if (params.sort !== "score") p.set("sort", params.sort);
+  if (show !== "all") p.set("show", show);
   if (n !== 1) p.set("page", String(n));
   const qs = p.toString();
   return qs ? `/servers?${qs}` : "/servers";
 }
+
+const pct = (r: number): string => `${Math.round(r * 100)}%`;
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Servers — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 68rem; padding: 0 1rem; }
-      /* The 7-column table can exceed a phone's width; scroll it inside its own
-         container so the page body never scrolls horizontally (mobile). */
-      .table-wrap { overflow-x: auto; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; vertical-align: top; }
-      a.name { font-weight: 600; text-decoration: none; }
-      a.name:hover { text-decoration: underline; }
-      .motd { color: #888; font-size: 0.85em; }
-      .badge { font-size: 0.75em; border: 1px solid #8886; border-radius: 4px; padding: 0 0.35em; margin-left: 0.4em; white-space: nowrap; }
-      .dot { display: inline-block; width: 0.5em; height: 0.5em; border-radius: 50%; margin-right: 0.4em; }
-      .dot.active { background: #3c3; }
-      .dot.idle { background: #999; }
-      .region { color: #666; }
-      .ping { color: #888; font-size: 0.85em; }
-      .empty { color: #888; margin-top: 2rem; }
-      .report { color: #888; font-size: 0.85em; }
-      .filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin: 1rem 0; }
-      .filters label { display: flex; flex-direction: column; font-size: 0.85em; color: #666; gap: 0.2rem; }
-      .filters select, .filters button { font: inherit; padding: 0.3rem 0.5rem; }
-      .pager { display: flex; gap: 1rem; align-items: center; margin-top: 1.25rem; }
-      .pager .muted { color: #888; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Community servers</h1>
-      <p>
-        {/* Unfiltered live count is the honest headline; the filtered subset is
-            called out separately so "N live" never reads as "only N exist". */}
-        {list.length} live{result.total !== list.length ? ` · ${result.total} matching this filter` : ""}.
-        {" "}<a href="/servers/register">Register your server</a>.
-      </p>
+<Layout
+  title="Community servers — Worldspring"
+  description="Browse live Worldspring worlds — filter by preset, sort by players or uptime, and jump straight in."
+  active="servers"
+  live={live}
+>
+  <section class="dir">
+    <div class="wrap">
+      <div class="dir-head">
+        <div class="dir-title">
+          <p class="eyebrow">Server directory</p>
+          <h1>Community servers</h1>
+        </div>
+        <div class="dir-meta">
+          {/* Unfiltered live count is the honest headline; the filtered subset is
+              called out separately so "N live" never reads as "only N exist". */}
+          <p class="dir-count mono">
+            {list.length} live{result.total !== list.length ? ` · ${result.total} matching this filter` : ""}
+          </p>
+          <a class="dir-reg" href="/servers/register">Register your server →</a>
+        </div>
+      </div>
 
-      {/* Filters are a plain GET form — every submit produces a cacheable URL,
-          no JS required. Changing a filter resets to page 1 (no page field).
-          Deferred (doc 02 §8, tracked here): "has space", "up to date", "show
-          idle" toggle, and name search are not yet wired — only preset + sort are.
-          Name search especially must NOT go straight into the cache key: unbounded
-          query strings would re-open the §11 cache-busting hole, so it needs a
-          bounded/uncached path when it lands. */}
-      <form class="filters" method="get" action="/servers">
-        <label>
-          Preset
-          <select name="preset">
-            <option value="" selected={params.preset === null}>All presets</option>
-            {BROWSE_PRESETS.map((p) => (
-              <option value={p} selected={params.preset === p}>{cap(p)}</option>
+      {/* Filters are plain GET links — every click produces a cacheable URL, no
+          JS required. Changing a facet resets to page 1. Preset + sort ride the
+          shared browse vocabulary; the show facet is a bounded page-local view. */}
+      <div class="filters" role="group" aria-label="Filter servers">
+        <div class="filt-group">
+          <span class="filt-label">Preset</span>
+          <div class="chips">
+            <a class={`chip ${params.preset === null ? "on" : ""}`} href={browseUrl({ preset: null })}>All</a>
+            {PRESET_CHIPS.map((p) => (
+              <a class={`chip ${params.preset === p ? "on" : ""}`} href={browseUrl({ preset: p })}>{cap(p)}</a>
             ))}
-          </select>
-        </label>
-        <label>
-          Sort
-          <select name="sort">
-            {BROWSE_SORTS.map((s) => (
-              <option value={s} selected={params.sort === s}>{SORT_LABELS[s]}</option>
-            ))}
-          </select>
-        </label>
-        <button type="submit">Apply</button>
-      </form>
+          </div>
+        </div>
+        <div class="filt-group">
+          <span class="filt-label">Show</span>
+          <div class="chips">
+            <a class={`chip ${show === "all" ? "on" : ""}`} href={browseUrl({ show: "all" })}>All</a>
+            <a class={`chip ${show === "official" ? "on" : ""}`} href={browseUrl({ show: "official" })}>Official</a>
+            <a class={`chip ${show === "community" ? "on" : ""}`} href={browseUrl({ show: "community" })}>Community</a>
+          </div>
+        </div>
+      </div>
 
       {
         list.length === 0 ? (
-          <p class="empty">
-            No live servers yet. Run your own copy of Worldspring and{" "}
-            <a href="/servers/register">list it here</a>.
-          </p>
+          <div class="empty">
+            <p>No live servers yet. Run your own copy of Worldspring and{" "}
+              <a href="/servers/register">list it here</a>.</p>
+          </div>
         ) : result.rows.length === 0 ? (
-          <p class="empty">
-            No servers match this filter. <a href="/servers">Clear filters</a>.
-          </p>
+          <div class="empty">
+            <p>No servers match this filter. <a href="/servers">Clear filters</a>.</p>
+          </div>
         ) : (
           <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Players</th>
-                <th>Preset</th>
-                <th>Version</th>
-                <th>Region / Ping</th>
-                <th>Uptime (20d)</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.map((s) => (
+            <table>
+              <thead>
                 <tr>
-                  <td>
-                    <span
-                      class={`dot ${s.activeNow ? "active" : "idle"}`}
-                      title={s.activeNow ? "active now" : "idle — wakes on join"}
-                    />
-                    <a class="name" href={`/servers/${s.id}`}>{s.name}</a>
-                    {s.official && <span class="badge">Official</span>}
-                    {s.outdated && <span class="badge" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>}
-                    {s.motd && <div class="motd">{s.motd}</div>}
-                  </td>
-                  <td>{s.players}/{s.maxPlayers}</td>
-                  {/* `||` not `??`: the sanitizer can store "" (doc 02 §8's
-                      fallback covers empty as well as null). */}
-                  <td>{s.preset || "custom"}</td>
-                  <td>{s.version || "—"}</td>
-                  <td>
-                    <div class="region">{s.region ?? "—"}</div>
-                    {/* ping.js fills this per-session, viewport-only, ≤6 in
-                        flight; "—" when the server doesn't answer. */}
-                    <div class="ping" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">—</div>
-                  </td>
-                  {/* No non-verify probes yet (brand-new listing) is "no data",
-                      never a false 0%. */}
-                  <td>{s.hasUptime ? `${Math.round(s.uptimeRatio20d * 100)}%` : "—"}</td>
-                  <td>
-                    {/* Doc 02 §9: every Join routes through /join/:id EXCEPT the
-                        official pinned row (first-party; ?ref + new tab). s.joinUrl
-                        is the registration-pinned normalized https origin. ping.js
-                        rewrites community links straight out for opted-out visitors. */}
-                    {s.official ? (
-                      <a href={`${s.joinUrl}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">Join</a>
-                    ) : (
-                      <>
-                        <a href={`/join/${s.id}`} data-server-id={s.id} data-join-url={s.joinUrl}>Join</a>
-                        {" · "}
-                        <a class="report" href={`/servers/${s.id}/report`}>Report</a>
-                      </>
-                    )}
-                  </td>
+                  <th class="col-name">
+                    <a class={`sort ${params.sort === "name" ? "on" : ""}`} href={sortUrl("name")}>
+                      Server{params.sort === "name" && <span class="ar" aria-hidden="true">↑</span>}
+                    </a>
+                  </th>
+                  <th>
+                    <a class={`sort ${params.sort === "players" ? "on" : ""}`} href={sortUrl("players")}>
+                      Players{params.sort === "players" && <span class="ar" aria-hidden="true">↓</span>}
+                    </a>
+                  </th>
+                  <th>Preset</th>
+                  <th>Version</th>
+                  <th>Region / Ping</th>
+                  <th>
+                    <a class={`sort ${params.sort === "uptime" ? "on" : ""}`} href={sortUrl("uptime")}>
+                      Uptime (20d){params.sort === "uptime" && <span class="ar" aria-hidden="true">↓</span>}
+                    </a>
+                  </th>
+                  <th />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {result.rows.map((s) => (
+                  <tr>
+                    <td class="c-name">
+                      <div class="name-row">
+                        <span
+                          class={`dot ${s.activeNow ? "on" : "idle"}`}
+                          title={s.activeNow ? "active now" : "idle — wakes on join"}
+                        />
+                        <a class="name" href={`/servers/${s.id}`}>{s.name}</a>
+                        {s.official && <span class="tag gold">Official</span>}
+                        {s.outdated && (
+                          <span class="tag" title="runs an older version of Worldspring — content and fixes may be missing">
+                            outdated
+                          </span>
+                        )}
+                      </div>
+                      {s.motd && <div class="motd">{s.motd}</div>}
+                    </td>
+                    <td class="mono num">{s.players}/{s.maxPlayers}</td>
+                    {/* `||` not `??`: the sanitizer can store "" (doc 02 §8's
+                        fallback covers empty as well as null). */}
+                    <td><span class="tag">{cap(s.preset || "custom")}</span></td>
+                    <td class="mono ver">{s.version || "—"}</td>
+                    <td class="reg">
+                      <div class="region">{s.region ?? "—"}</div>
+                      {/* ping.js fills this per-session, viewport-only, ≤6 in
+                          flight; "—" when the server doesn't answer. */}
+                      <div class="ping mono" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">—</div>
+                    </td>
+                    {/* No non-verify probes yet (brand-new listing) is "no data",
+                        never a false 0%. */}
+                    <td class="mono num">{s.hasUptime ? pct(s.uptimeRatio20d) : "—"}</td>
+                    <td class="act">
+                      {/* Doc 02 §9: every Join routes through /join/:id EXCEPT the
+                          official pinned row (first-party; ?ref + new tab). s.joinUrl
+                          is the registration-pinned normalized https origin. ping.js
+                          rewrites community links straight out for opted-out visitors. */}
+                      {s.official ? (
+                        <a
+                          class="btn join"
+                          href={`${s.joinUrl}/?ref=worldspring-directory`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Join
+                        </a>
+                      ) : (
+                        <>
+                          <a class="btn join" href={`/join/${s.id}`} data-server-id={s.id} data-join-url={s.joinUrl}>
+                            Join
+                          </a>
+                          <a class="report" href={`/servers/${s.id}/report`}>Report</a>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )
       }
@@ -203,23 +249,150 @@ function pageUrl(n: number): string {
         result.pageCount > 1 && (
           <nav class="pager">
             {result.page > 1 ? (
-              <a href={pageUrl(result.page - 1)} rel="prev">&larr; Prev</a>
+              <a href={pageUrl(result.page - 1)} rel="prev">← Prev</a>
             ) : (
-              <span class="muted">&larr; Prev</span>
+              <span class="muted">← Prev</span>
             )}
-            <span class="muted">Page {result.page} of {result.pageCount}</span>
+            <span class="page-of">Page {result.page} of {result.pageCount}</span>
             {result.page < result.pageCount ? (
-              <a href={pageUrl(result.page + 1)} rel="next">Next &rarr;</a>
+              <a href={pageUrl(result.page + 1)} rel="next">Next →</a>
             ) : (
-              <span class="muted">Next &rarr;</span>
+              <span class="muted">Next →</span>
             )}
           </nav>
         )
       }
-    </main>
+    </div>
+  </section>
 
-    {/* Progressive enhancement only (doc 02 §1): fills the Ping column and
-        rewrites opted-out Join links. The table is complete without it. */}
-    <script src="/ping.js" defer is:inline></script>
-  </body>
-</html>
+  {/* Progressive enhancement only (doc 02 §1): fills the Ping column and
+      rewrites opted-out Join links. The table is complete without it. */}
+  <script src="/ping.js" defer is:inline></script>
+</Layout>
+
+<style>
+  .dir { padding: 40px 0 0; }
+
+  .dir-head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 20px 32px; flex-wrap: wrap; padding-bottom: 22px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .dir-title h1 {
+    font-size: clamp(30px, 5vw, 46px); font-weight: 700;
+    letter-spacing: 0.02em; margin-top: 8px;
+  }
+  .dir-meta { text-align: right; }
+  .dir-count { color: var(--ink-2); font-size: 13px; margin: 0; letter-spacing: 0.02em; }
+  .dir-reg {
+    display: inline-block; margin-top: 6px;
+    font-family: var(--font-display); font-weight: 600; font-size: 12px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+  }
+  .dir-reg:hover { color: var(--accent-bright); }
+
+  /* ---- Filter bar ---- */
+  .filters {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px 28px; flex-wrap: wrap;
+    border: 1px solid var(--hairline); padding: 12px 14px; margin: 22px 0 0;
+  }
+  .filt-group { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+  .filt-label {
+    font-family: var(--font-display); font-weight: 600; font-size: 10px;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); flex: none;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: var(--font-display); font-weight: 500; font-size: 11px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2);
+    padding: 6px 12px; border: 1px solid var(--hairline-2);
+    background: transparent; white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--ink); }
+  .chip.on { border-color: rgba(125, 160, 107, 0.5); background: var(--accent-wash); color: var(--accent-bright); }
+
+  /* ---- Table ---- */
+  .table-wrap { overflow-x: auto; margin: 20px 0 0; border: 1px solid var(--hairline); }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; }
+  thead th {
+    text-align: left; font-family: var(--font-display); font-weight: 600;
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink-3); padding: 12px 16px; border-bottom: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
+  thead .sort {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: inherit; letter-spacing: inherit; text-transform: inherit; color: var(--ink-3);
+  }
+  thead .sort:hover { color: var(--ink-2); }
+  thead .sort.on { color: var(--accent); }
+  thead .ar { font-family: var(--font-mono); font-size: 9px; }
+
+  tbody td { padding: 13px 16px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(125, 160, 107, 0.04); }
+
+  .num { white-space: nowrap; color: var(--ink-body); font-size: 13px; }
+  .ver { color: var(--ink-2); font-size: 13px; }
+
+  .c-name { min-width: 230px; }
+  .name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .name {
+    font-family: var(--font-display); font-weight: 600; font-size: 15px;
+    letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-body);
+  }
+  .name:hover { color: var(--ink); }
+  .motd { color: var(--ink-3); font-size: 12px; margin-top: 5px; max-width: 48ch; }
+
+  .reg .region { color: var(--ink-2); font-size: 13px; }
+  .reg .ping { color: var(--ink-3); font-size: 12px; margin-top: 2px; }
+
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 6px rgba(125, 160, 107, 0.6); }
+  .dot.idle { background: var(--ink-3); }
+
+  .tag {
+    display: inline-block; font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--hairline-2);
+    color: var(--ink-3); padding: 1px 6px; white-space: nowrap;
+  }
+  .tag.gold { border-color: var(--gold); color: var(--gold); }
+
+  .act { white-space: nowrap; }
+  .btn.join { padding: 6px 14px; font-size: 11px; letter-spacing: 0.14em; }
+  .report {
+    display: inline-block; margin-left: 12px;
+    font-family: var(--font-display); font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .report:hover { color: var(--danger); }
+
+  /* ---- Pager ---- */
+  .pager {
+    display: flex; align-items: center; gap: 22px; margin: 22px 0 0;
+    font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .pager a { color: var(--accent); }
+  .pager a:hover { color: var(--accent-bright); }
+  .pager .muted { color: var(--ink-3); }
+  .pager .page-of {
+    font-family: var(--font-mono); letter-spacing: 0.04em;
+    text-transform: none; color: var(--ink-2);
+  }
+
+  /* ---- Empty states ---- */
+  .empty {
+    border: 1px solid var(--hairline); padding: 30px 22px; margin: 20px 0 0;
+    color: var(--ink-2); font-family: var(--font-mono); font-size: 13px;
+  }
+  .empty p { margin: 0; }
+
+  @media (max-width: 720px) {
+    .dir { padding: 28px 0 0; }
+    .dir-head { align-items: flex-start; }
+    .dir-meta { text-align: left; }
+    .filters { flex-direction: column; align-items: flex-start; }
+  }
+</style>

@@ -3,6 +3,10 @@
 // read-only account list captured at the one-time discovery. No session (or
 // disabled mode) → bounce to /login, which either starts the flow or renders
 // the "not configured" page.
+// Redesign (doc 00): rebuilt on the shared Layout / "field manual" design system.
+// Copy is intentionally the CURRENT text; a separate messaging pass owns any
+// rewrite.
+import Layout from "../layouts/Layout.astro";
 import { authEnv, readSession, SESSION_COOKIE } from "../lib/auth";
 
 export const prerender = false;
@@ -12,45 +16,170 @@ const session = SESSION_HMAC_KEY
   ? await readSession(SESSION_HMAC_KEY, Astro.cookies.get(SESSION_COOKIE)?.value)
   : null;
 if (!session) return Astro.redirect("/login?next=/account", 302);
+
+// The original page carried `<meta name="robots" content="noindex">`. The shared
+// Layout owns <head> and exposes no robots prop, so the equivalent noindex signal
+// rides the response header instead (X-Robots-Tag is honored identically to the
+// meta tag). Set only past the redirect guard — the signed-out path never renders
+// this page, so it never needs the marker.
+Astro.response.headers.set("X-Robots-Tag", "noindex");
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex" />
-    <title>Account — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
-      code { background: #8881; padding: 0.1rem 0.3rem; word-break: break-all; }
-      li { margin: 0.25rem 0; }
-    </style>
-  </head>
-  <body>
-    <main>
+<Layout
+  title="Account — Worldspring"
+  description="Your Worldspring account — signed-in identity and the Cloudflare accounts discovered at sign-in."
+  auth={{ configured: true, signedIn: true }}
+>
+  <section class="acct">
+    <div class="wrap acct-inner">
+      <p class="eyebrow">Account</p>
       <h1>Your account</h1>
-      <p>Signed in as <code>{session.sub}</code>.</p>
 
-      <h2>Cloudflare accounts</h2>
-      {
-        session.accounts.length > 0 ? (
-          <ul>
-            {session.accounts.map((a) => (
-              <li>
-                {a.name} <code>{a.id}</code>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No accounts were discovered at sign-in.</p>
-        )
-      }
-      <p>
-        Deploying your own server from here lands in a later milestone — this
-        page only proves sign-in and account discovery.
-      </p>
-      <p><a href="/logout">Sign out</a> · <a href="/">Home</a></p>
-    </main>
-  </body>
-</html>
+      <div class="ident">
+        <span class="dot on" title="session active"></span>
+        <span class="ident-label mono">Signed in as</span>
+        <span class="ident-sub mono">{session.sub}</span>
+      </div>
+
+      <section class="block">
+        <div class="block-head">
+          <h2>Cloudflare accounts</h2>
+          <span class="count mono">{session.accounts.length} discovered</span>
+        </div>
+        {
+          session.accounts.length > 0 ? (
+            <ul class="acct-list">
+              {session.accounts.map((a) => (
+                <li class="acct-row">
+                  <span class="acct-name">{a.name}</span>
+                  <span class="acct-id mono">{a.id}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="empty mono">No accounts were discovered at sign-in.</p>
+          )
+        }
+      </section>
+
+      <aside class="note">
+        <span class="tag">Roadmap</span>
+        <p>
+          Deploying your own server from here lands in a later milestone — this
+          page only proves sign-in and account discovery.
+        </p>
+      </aside>
+
+      <div class="actions">
+        <a class="btn" href="/logout">Sign out</a>
+        <a class="btn" href="/">Home</a>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .acct-inner { padding: 72px 28px 40px; }
+  .acct h1 {
+    font-weight: 700;
+    font-size: clamp(32px, 5vw, 44px);
+    line-height: 1.04;
+    margin: 14px 0 0;
+  }
+
+  /* signed-in identity — a hairline instrument readout */
+  .ident {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    border: 1px solid var(--hairline);
+    padding: 14px 18px;
+    margin: 28px 0 0;
+    width: fit-content;
+    max-width: 100%;
+  }
+  .ident-label {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .ident-sub {
+    font-size: 14px;
+    color: var(--ink);
+    word-break: break-all;
+  }
+
+  .block { margin: 44px 0 0; }
+  .block-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .block-head h2 { font-size: 22px; font-weight: 700; letter-spacing: 0.06em; }
+  .count { font-size: 12px; color: var(--ink-3); }
+
+  /* discovered accounts — hairline list */
+  .acct-list {
+    list-style: none;
+    margin: 14px 0 0;
+    padding: 0;
+    border: 1px solid var(--hairline);
+  }
+  .acct-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .acct-row:last-child { border-bottom: none; }
+  .acct-row:hover { background: rgba(125, 160, 107, 0.04); }
+  .acct-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--ink-body);
+  }
+  .acct-id { font-size: 13px; color: var(--ink-3); word-break: break-all; }
+
+  .empty { margin: 14px 0 0; color: var(--ink-3); font-size: 14px; }
+
+  /* placeholder note — accent hairline callout */
+  .note {
+    border: 1px solid var(--hairline);
+    border-left: 2px solid var(--accent);
+    padding: 16px 18px;
+    margin: 40px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .note p { margin: 0; color: var(--ink-2); max-width: 60ch; }
+
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; margin: 40px 0 0; }
+
+  /* status dot + tag — same instruments as the directory (index.astro) */
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 6px rgba(125, 160, 107, 0.6); }
+  .dot.idle { background: var(--ink-3); }
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--hairline-2);
+    color: var(--ink-3);
+    padding: 1px 6px;
+  }
+
+  @media (max-width: 720px) {
+    .acct-inner { padding: 52px 28px 40px; }
+  }
+</style>

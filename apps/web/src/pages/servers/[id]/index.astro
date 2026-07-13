@@ -6,8 +6,10 @@
 // pending, and unreachable rows are not browsable). NO server secrets
 // (token_hash/challenge_hash/ip_hash) are selected, let alone rendered
 // (doc 02 §7). All listing text is untrusted operator content; Astro {expr}
-// auto-escapes it.
+// auto-escapes it. Redesign (doc 00): rebuilt on the shared Layout / "field
+// manual" design system — presentation only, the loader + 404 are untouched.
 export const prerender = false;
+import Layout from "../../../layouts/Layout.astro";
 import { env } from "cloudflare:workers";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import { GAME_VERSION } from "@worldspring/shared/version";
@@ -54,75 +56,80 @@ const strip = Array.from({ length: 20 }, (_, i) => {
   const ratio = ratioByDay.get(day);
   return { day, ratio: ratio ?? null };
 });
+// Health scale for the strip, mapped to design tokens where they exist. --gold
+// is deliberately NOT used here (reserved for the Official marker); the two mid
+// buckets use distinct amber/orange status hues instead.
 function stripColor(ratio: number | null): string {
-  if (ratio === null) return "#8883"; // no data
-  if (ratio > 0.99) return "#3c3";
-  if (ratio >= 0.5) return "#dc3";
-  if (ratio > 0) return "#e84";
-  return "#c33";
+  if (ratio === null) return "var(--hairline-2)"; // no data
+  if (ratio > 0.99) return "var(--accent)";
+  if (ratio >= 0.5) return "#c68a34"; // degraded — amber (not the reserved gold)
+  if (ratio > 0) return "#c15a2b"; // poor — burnt orange
+  return "var(--danger)"; // down
 }
+
+const eyebrow = s.official ? "Official world" : "Community world";
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{s.name} — Worldspring server</title>
-    <meta name="description" content={s.motd || `${s.name} — a community Worldspring server at ${s.host}`} />
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 46rem; padding: 0 1rem; }
-      .official { border-left: 4px solid #c9a227; padding-left: 0.9rem; }
-      h1 { margin-bottom: 0.25rem; }
-      .badge { font-size: 0.7em; border: 1px solid #8886; border-radius: 4px; padding: 0.1em 0.4em; margin-left: 0.4em; vertical-align: middle; white-space: nowrap; }
-      .badge.gold { border-color: #c9a227; color: #c9a227; }
-      .dot { display: inline-block; width: 0.55em; height: 0.55em; border-radius: 50%; margin-right: 0.4em; }
-      .dot.active { background: #3c3; }
-      .dot.idle { background: #999; }
-      .status { color: #666; margin: 0.25rem 0 1rem; }
-      .motd { font-size: 1.05em; margin: 1rem 0; }
-      .host { font-size: 1.1rem; font-weight: 600; word-break: break-all; background: #8881; border-radius: 6px; padding: 0.4rem 0.6rem; display: inline-block; }
-      dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.2rem; margin: 1.25rem 0; }
-      dt { color: #888; }
-      dd { margin: 0; }
-      .strip { display: flex; gap: 2px; margin-top: 0.35rem; }
-      .strip span { width: 0.7rem; height: 1rem; border-radius: 2px; }
-      .actions { display: flex; gap: 1rem; align-items: center; margin: 1.75rem 0 1rem; }
-      .join { display: inline-block; font-size: 1.05rem; font-weight: 600; padding: 0.55rem 1.3rem; border: 1px solid #8886; border-radius: 6px; text-decoration: none; }
-      .report { color: #888; }
-      .footer { margin-top: 2rem; font-size: 0.9em; color: #888; }
-      .ping { color: #888; }
-    </style>
-  </head>
-  <body>
-    <main class={s.official ? "official" : undefined}>
-      <h1>
-        {s.name}
-        {s.official && <span class="badge gold">Official</span>}
-        {s.outdated && <span class="badge" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>}
-      </h1>
-      <p class="status">
-        <span class={`dot ${s.activeNow ? "active" : "idle"}`} />
-        {s.activeNow ? "Active now" : "Idle — wakes on join"} · {s.players}/{s.maxPlayers} players
-      </p>
+<Layout
+  title={`${s.name} — Worldspring server`}
+  description={s.motd || `${s.name} — a community Worldspring server at ${s.host}`}
+  active="servers"
+>
+  <main class={`detail wrap${s.official ? " is-official" : ""}`}>
+    <div class="d-head">
+      <div class="d-ident">
+        <p class="eyebrow">{eyebrow}</p>
+        <div class="d-name-row">
+          <h1 class="d-name">{s.name}</h1>
+          {s.official && <span class="tag gold">Official</span>}
+          {s.outdated && (
+            <span class="tag" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>
+          )}
+        </div>
+        <p class="d-status mono">
+          <span class={`dot ${s.activeNow ? "on" : "idle"}`}></span>
+          {s.activeNow ? "Active now" : "Idle — wakes on join"} · {s.players}/{s.maxPlayers} players
+        </p>
+      </div>
 
-      {s.motd && <p class="motd">{s.motd}</p>}
+      <div class="d-cta">
+        {
+          s.joinExternal ? (
+            <a class="btn primary d-join" href={s.joinHref} target="_blank" rel="noopener noreferrer">
+              Join {s.host} &rarr;
+            </a>
+          ) : (
+            <a class="btn primary d-join" href={s.joinHref} data-server-id={s.id} data-join-url={s.joinUrl}>
+              Join &rarr;
+            </a>
+          )
+        }
+        {!s.official && <a class="d-report mono" href={`/servers/${s.id}/report`}>Report this server</a>}
+      </div>
+    </div>
 
-      <p><span class="host">{s.host}</span></p>
+    {s.motd && <p class="d-motd">{s.motd}</p>}
 
-      <dl>
+    <div class="host-chip mono" title="server address">{s.host}</div>
+
+    <dl class="spec">
+      <div class="cell">
         <dt>Preset</dt>
-        <dd>{s.preset}</dd>
+        <dd class="mono">{s.preset}</dd>
+      </div>
 
+      <div class="cell">
         <dt>Version</dt>
-        <dd>
+        <dd class="mono">
           {s.version || "unknown"}
           {s.protocol !== null && <> · protocol {s.protocol}</>}
-          {s.outdated && <> (latest is {GAME_VERSION}, protocol {PROTOCOL_VERSION})</>}
+          {s.outdated && <span class="cell-note"> (latest {GAME_VERSION}, protocol {PROTOCOL_VERSION})</span>}
         </dd>
+      </div>
 
+      <div class="cell">
         <dt>Region</dt>
-        <dd>
+        <dd class="mono">
           {/* Compare case-insensitively: regionOf upper-cases an unmapped colo, so a
               stored lower/mixed-case code must not render twice as "ZZZ (zzz)". */}
           {s.region ?? "unknown"}{s.colo && s.region?.toUpperCase() !== s.colo.toUpperCase() ? ` (${s.colo})` : ""} ·
@@ -130,43 +137,120 @@ function stripColor(ratio: number | null): string {
               degrades honestly instead of a stuck "measuring…" that never resolves. */}
           {" "}<span class="ping" data-server-id={s.id} data-ping-url={s.joinUrl} data-pending="0">—</span>
         </dd>
-
-        <dt>Uptime (20d)</dt>
-        <dd>
-          {s.uptimePct === null ? "no probe data yet" : `${s.uptimePct}%`}
-          <div class="strip" title="probe uptime, one cell per day (oldest → newest)">
-            {strip.map((c) => (
-              <span
-                style={`background:${stripColor(c.ratio)}`}
-                title={`${isoDay(c.day * 86400_000)}: ${c.ratio === null ? "no data" : `${Math.round(c.ratio * 100)}%`}`}
-              />
-            ))}
-          </div>
-        </dd>
-
-        <dt>Listed since</dt>
-        <dd>{isoDay(s.createdAt)} ({s.ageDays} {s.ageDays === 1 ? "day" : "days"})</dd>
-
-        <dt>Last checked</dt>
-        <dd>{ago(s.lastProbeAt)}</dd>
-      </dl>
-
-      <div class="actions">
-        {
-          s.joinExternal ? (
-            <a class="join" href={s.joinHref} target="_blank" rel="noopener noreferrer">Join {s.host} &rarr;</a>
-          ) : (
-            <a class="join" href={s.joinHref} data-server-id={s.id} data-join-url={s.joinUrl}>Join &rarr;</a>
-          )
-        }
-        {!s.official && <a class="report" href={`/servers/${s.id}/report`}>Report this server</a>}
       </div>
 
-      <p class="footer">
-        <a href="/servers">&larr; All servers</a> · <a href="/policy/">Listing policy</a>
-      </p>
-    </main>
+      <div class="cell">
+        <dt>Listed since</dt>
+        <dd class="mono">{isoDay(s.createdAt)}<span class="cell-note"> ({s.ageDays} {s.ageDays === 1 ? "day" : "days"})</span></dd>
+      </div>
 
-    <script src="/ping.js" defer is:inline></script>
-  </body>
-</html>
+      <div class="cell">
+        <dt>Last checked</dt>
+        <dd class="mono">{ago(s.lastProbeAt)}</dd>
+      </div>
+
+      <div class="cell">
+        <dt>Uptime (20d)</dt>
+        <dd class="mono">{s.uptimePct === null ? "no probe data yet" : `${s.uptimePct}%`}</dd>
+      </div>
+    </dl>
+
+    <section class="uptime">
+      <div class="u-head">
+        <span class="u-label">20-day daily uptime</span>
+        <span class="u-avg mono">{s.uptimePct === null ? "no data" : `${s.uptimePct}% avg`}</span>
+      </div>
+      <div class="strip" title="probe uptime, one cell per day (oldest → newest)">
+        {strip.map((c) => (
+          <span
+            style={`background:${stripColor(c.ratio)}`}
+            title={`${isoDay(c.day * 86400_000)}: ${c.ratio === null ? "no data" : `${Math.round(c.ratio * 100)}%`}`}
+          />
+        ))}
+      </div>
+      <div class="u-scale mono">
+        <span>20 days ago</span>
+        <span>today</span>
+      </div>
+    </section>
+
+    <p class="d-foot mono">
+      <a href="/servers">&larr; All servers</a> · <a href="/policy/">Listing policy</a>
+    </p>
+  </main>
+
+  <script src="/ping.js" defer is:inline></script>
+</Layout>
+
+<style>
+  .detail { padding: 44px 28px 0; }
+  .detail.is-official { border-left: 2px solid var(--gold); }
+
+  /* ---- header: identity + join CTA ---- */
+  .d-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; flex-wrap: wrap; }
+  .d-ident { min-width: 0; flex: 1 1 auto; }
+  .d-name-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0 0; }
+  .d-name {
+    font-weight: 700; font-size: clamp(30px, 5vw, 46px); line-height: 1.04;
+    letter-spacing: 0.02em; text-wrap: balance; word-break: break-word;
+  }
+  .d-status { color: var(--ink-2); font-size: 13px; margin: 14px 0 0; display: flex; align-items: center; gap: 9px; }
+
+  .d-cta { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex: none; padding-top: 4px; }
+  .d-join { padding: 13px 24px; font-size: 14px; }
+  .d-report { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+  .d-report:hover { color: var(--danger); }
+
+  .d-motd { color: var(--ink-body); font-size: 17px; max-width: 62ch; margin: 26px 0 0; }
+
+  /* ---- host chip ---- */
+  .host-chip {
+    display: inline-block; margin: 26px 0 0; padding: 12px 18px;
+    border: 1px solid var(--hairline-2); background: var(--surface);
+    color: var(--ink); font-size: 15px; letter-spacing: 0.02em; word-break: break-all;
+  }
+
+  /* ---- spec grid (hairline cells over a hairline ground) ---- */
+  .spec {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: var(--hairline); border: 1px solid var(--hairline);
+    margin: 32px 0 0;
+  }
+  .spec .cell { background: var(--bg); padding: 15px 18px 17px; min-width: 0; }
+  .spec dt {
+    font-family: var(--font-display); font-weight: 600; font-size: 10px;
+    letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .spec dd { margin: 7px 0 0; color: var(--ink); font-size: 15px; line-height: 1.4; }
+  .cell-note { color: var(--ink-3); }
+  .ping { color: var(--ink-2); }
+
+  /* ---- 20-day uptime strip ---- */
+  .uptime { margin: 32px 0 0; border: 1px solid var(--hairline); padding: 16px 18px 18px; }
+  .u-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+  .u-label { font-family: var(--font-display); font-weight: 600; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); }
+  .u-avg { font-size: 12px; color: var(--accent); }
+  .strip { display: flex; gap: 3px; margin-top: 12px; }
+  .strip span { flex: 1 1 0; height: 30px; border: 1px solid rgba(0, 0, 0, 0.35); }
+  .u-scale { display: flex; justify-content: space-between; margin-top: 8px; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); }
+
+  .d-foot { margin: 30px 0 0; font-size: 12px; color: var(--ink-3); }
+  .d-foot a { color: var(--ink-2); }
+  .d-foot a:hover { color: var(--ink); }
+
+  /* ---- status dot + tags (page-local copies of the directory language) ---- */
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 6px rgba(125, 160, 107, 0.6); }
+  .dot.idle { background: var(--ink-3); }
+  .tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--hairline-2); color: var(--ink-3); padding: 2px 7px; }
+  .tag.gold { border-color: var(--gold); color: var(--gold); }
+
+  @media (max-width: 760px) {
+    .spec { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 620px) {
+    .detail { padding: 32px 28px 0; }
+    .d-cta { align-items: flex-start; width: 100%; }
+    .spec { grid-template-columns: 1fr; }
+  }
+</style>

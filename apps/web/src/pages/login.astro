@@ -4,6 +4,11 @@
 //    200 info page. No redirect, no cookie.
 //  - ENABLED: mint nonce + PKCE verifier, set the signed ws_oauth_state
 //    cookie, 302 to Cloudflare's authorize endpoint (S256 only).
+// Redesign (doc 00): the reachable DISABLED body is rebuilt on the shared
+// Layout / "field manual" design system. The ENABLED path still 302s before
+// any HTML renders, so its behaviour is unchanged — the only rendered state
+// is the disabled notice below.
+import Layout from "../layouts/Layout.astro";
 import {
   authEnv,
   buildAuthorizeUrl,
@@ -39,31 +44,104 @@ if (OAUTH_CLIENT_ID && OAUTH_CLIENT_SECRET && SESSION_HMAC_KEY) {
 logAuthDisabledOnce();
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex" />
-    <title>Sign in — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
-    </style>
-  </head>
-  <body>
-    <main>
+<Layout
+  title="Sign in — Worldspring"
+  description="Sign in to Worldspring with a Cloudflare account to deploy and manage your own survival server."
+>
+  <section class="auth">
+    <div class="wrap auth-inner">
+      <p class="eyebrow">Account · Sign in</p>
       <h1>Sign-in isn't configured yet</h1>
-      <p>
+
+      <div class="status mono" role="status">
+        <span class="dot idle" aria-hidden="true"></span>
+        <span>sign-in · not configured</span>
+      </div>
+
+      <p class="lede">
         Signing in with a Cloudflare account will let you deploy and manage
         your own Worldspring server from here. It's not switched on yet —
         check back soon.
       </p>
-      <p>
-        In the meantime you can <a href="https://play.worldspring.games">play now</a>,
-        <a href="/servers">browse servers</a>, or
-        <a href="/servers/register">register a server you already host</a>.
-      </p>
-      <p><a href="/">&larr; Back home</a></p>
-    </main>
-  </body>
-</html>
+
+      <div class="signin-row">
+        <button type="button" class="btn" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="10.5" width="16" height="10" rx="0" />
+            <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+          </svg>
+          Sign in with Cloudflare
+        </button>
+        <span class="mono note">disabled until OAuth is switched on</span>
+      </div>
+
+      <div class="alt">
+        <p class="eyebrow alt-label">In the meantime</p>
+        <p class="alt-copy">
+          You can <a href="https://play.worldspring.games">play now</a>,
+          <a href="/servers">browse servers</a>, or
+          <a href="/servers/register">register a server you already host</a>.
+        </p>
+      </div>
+
+      <p class="back mono"><a href="/">&larr; Back home</a></p>
+    </div>
+    <div class="topo" aria-hidden="true"></div>
+  </section>
+
+  <script is:inline>
+    // Preserve the original route's noindex directive. The shared Layout owns
+    // <head>, so re-add the robots meta at runtime rather than dropping it.
+    if (!document.querySelector('meta[name="robots"]')) {
+      const m = document.createElement("meta");
+      m.name = "robots";
+      m.content = "noindex";
+      document.head.appendChild(m);
+    }
+  </script>
+</Layout>
+
+<style>
+  .auth { position: relative; overflow: hidden; border-bottom: 1px solid var(--hairline); }
+  .auth-inner { position: relative; z-index: 1; padding: 96px 28px 84px; max-width: 640px; }
+  .auth h1 {
+    font-weight: 700; font-size: clamp(30px, 5vw, 46px); line-height: 1.05;
+    margin: 14px 0 0; text-wrap: balance;
+  }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 9px; margin: 22px 0 0;
+    border: 1px solid var(--hairline); padding: 7px 12px;
+    font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .dot.idle { background: var(--ink-3); }
+
+  .lede { max-width: 540px; margin: 22px 0 0; color: var(--ink-2); font-size: 17px; }
+
+  .signin-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 30px 0 0; }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .btn[disabled]:hover { border-color: var(--hairline-2); color: var(--ink-body); }
+  .note { color: var(--ink-3); font-size: 12px; letter-spacing: 0.02em; }
+
+  .alt { margin: 40px 0 0; border: 1px solid var(--hairline); border-left: 2px solid var(--accent); padding: 18px 22px; }
+  .alt-label { display: block; }
+  .alt-copy { margin: 12px 0 0; color: var(--ink-2); }
+
+  .back { margin: 40px 0 0; font-size: 13px; }
+  .back a { color: var(--ink-2); }
+  .back a:hover { color: var(--ink); }
+
+  /* faint procedural-contour motif, echoing the landing hero */
+  .topo {
+    position: absolute; inset: 0 -10% 0 48%; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 100% at 100% 0%, rgba(125, 160, 107, 0.08), transparent 60%),
+      repeating-radial-gradient(circle at 92% 30%, transparent 0 38px, rgba(125, 160, 107, 0.05) 38px 39px);
+    mask-image: linear-gradient(90deg, transparent, #000 55%);
+  }
+
+  @media (max-width: 720px) {
+    .auth-inner { padding: 64px 28px 56px; }
+  }
+</style>
