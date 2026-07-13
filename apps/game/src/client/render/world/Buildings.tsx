@@ -1,16 +1,29 @@
 // Static building shells: every wall AABB from world gen becomes a box (door
 // gaps are already encoded in the wall layout), plus a floor slab and a roof
-// slab per building, plus the military perimeter. That is ~300 boxes; they
-// never move, so all boxes sharing a material are merged into a single
-// BufferGeometry — 8 draw calls total instead of ~300 individual meshes.
+// slab per building, plus the military perimeter — ~300 boxes that never move.
+//
+// Each box is one instance of a shared unit cube, scaled + positioned by its
+// per-instance matrix, partitioned into per-256m-cell InstancedMeshes via
+// chunkedDressing.ts. Real per-chunk bounding spheres let three frustum-cull
+// each town / compound / lone cabin independently in BOTH the camera and shadow
+// passes, and updateVisibility() radius-hides distant cells past the fog. (The
+// old build merged every box of a material into one world-spanning mesh — 8
+// draw calls, but each spanned the whole island so its bounds defeated culling
+// and all ~300 boxes were vertex-processed every frame in both passes.)
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Aabb } from "@worldspring/shared/math";
 import type { BuildingKind, World } from "@worldspring/shared/world";
 import { clientWorld } from "@/client/runtime";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingBucket,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 const WALL_COLORS: Record<BuildingKind, string> = {
   house: "#8a7f6a",
@@ -30,6 +43,21 @@ const FLOOR_THICKNESS = 0.2;
 const FLOOR_INSET = 0.36;
 
 type MaterialKey = BuildingKind | "roof" | "floor" | "milwall";
+
+// Each MaterialKey's stable DressingBucket index. A Record literal is
+// exhaustive by construction: a new BuildingKind that isn't added here is a
+// compile error, never a silent mis-bucket into another material's mesh.
+// Unused keys (no boxes) simply produce no chunk meshes.
+const MATERIAL_BUCKET: Record<MaterialKey, number> = {
+  house: 0,
+  shed: 1,
+  barn: 2,
+  barracks: 3,
+  hangar: 4,
+  milwall: 5,
+  roof: 6,
+  floor: 7,
+};
 
 interface BoxSpec {
   material: MaterialKey;
@@ -59,54 +87,52 @@ function buildBoxes(world: World): BoxSpec[] {
     });
   }
   // Military compound perimeter (walls + corner towers). Already colliders in
-  // world gen — this is rendering only. Merged like everything else.
+  // world gen — this is rendering only.
   for (const wall of world.militaryWalls) {
     boxes.push(aabbToBox("milwall", wall));
   }
   return boxes;
 }
 
+// Shared unit cube: every box is this geometry scaled non-uniformly by its
+// instance matrix. Module-level + app-lifetime (Stumps' STUMP_GEOMETRY
+// precedent) — chunkedDressing frees only the instance buffers, never the
+// caller's geometry. flatShading derives normals per-fragment from screen
+// derivatives, so non-uniform per-instance scale renders identically to the
+// old merged boxes.
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const dummy = new THREE.Object3D();
+
 /**
- * One mesh per material: every box sharing a material is baked (scaled +
- * translated unit cube) into a single merged BufferGeometry. Exact positions,
- * dimensions and colors match the old per-box meshes — only the draw-call
- * count changes (~300 -> 8).
+ * One DressingBucket per MaterialKey (all sharing the unit cube); each box
+ * becomes a DressingEntry whose matrix carries its center + extents. The
+ * chunker splits them into per-(cell x material) InstancedMeshes with real
+ * bounding spheres. Exact positions, dimensions and colors match the old
+ * per-box meshes — only the draw-call / culling model changes.
  */
-function buildMergedMeshes(
+function buildBuildings(
   world: World,
   materials: Record<MaterialKey, THREE.MeshStandardMaterial>,
-): THREE.Mesh[] {
-  const byMaterial = new Map<MaterialKey, BoxSpec[]>();
-  for (const box of buildBoxes(world)) {
-    const list = byMaterial.get(box.material);
-    if (list) list.push(box);
-    else byMaterial.set(box.material, [box]);
+): ChunkedDressing {
+  const buckets: DressingBucket[] = [];
+  for (const key of Object.keys(MATERIAL_BUCKET) as MaterialKey[]) {
+    buckets[MATERIAL_BUCKET[key]] = {
+      geometry: UNIT_BOX,
+      material: materials[key],
+      castShadow: true,
+      receiveShadow: true,
+    };
   }
 
-  const unit = new THREE.BoxGeometry(1, 1, 1);
-  const matrix = new THREE.Matrix4();
-  const meshes: THREE.Mesh[] = [];
-  for (const [key, specs] of byMaterial) {
-    const parts = specs.map((spec) => {
-      const part = unit.clone();
-      matrix
-        .makeScale(spec.scale[0], spec.scale[1], spec.scale[2])
-        .setPosition(spec.position[0], spec.position[1], spec.position[2]);
-      part.applyMatrix4(matrix);
-      return part;
-    });
-    const merged: THREE.BufferGeometry | null = mergeGeometries(parts);
-    for (const part of parts) part.dispose();
-    if (!merged) continue; // identical attribute layouts — should not happen
+  const entries: DressingEntry[] = buildBoxes(world).map((box) => {
+    dummy.position.set(box.position[0], box.position[1], box.position[2]);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(box.scale[0], box.scale[1], box.scale[2]);
+    dummy.updateMatrix();
+    return { bucket: MATERIAL_BUCKET[box.material], matrix: dummy.matrix.clone() };
+  });
 
-    const mesh = new THREE.Mesh(merged, materials[key]);
-    mesh.name = `buildings-${key}`;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    meshes.push(mesh);
-  }
-  unit.dispose();
-  return meshes;
+  return buildChunkedDressing(buckets, entries);
 }
 
 export function Buildings(): ReactElement | null {
@@ -126,10 +152,16 @@ export function Buildings(): ReactElement | null {
     [],
   );
 
-  const meshes = useMemo(
-    () => (world ? buildMergedMeshes(world, materials) : null),
+  const dressing = useMemo(
+    () => (world ? buildBuildings(world, materials) : null),
     [world, materials],
   );
+
+  // Frees instance buffers only; UNIT_BOX + materials are caller-owned.
+  useEffect(() => {
+    if (!dressing) return;
+    return () => dressing.dispose();
+  }, [dressing]);
 
   useEffect(() => {
     return () => {
@@ -137,19 +169,10 @@ export function Buildings(): ReactElement | null {
     };
   }, [materials]);
 
-  useEffect(() => {
-    if (!meshes) return;
-    return () => {
-      for (const mesh of meshes) mesh.geometry.dispose();
-    };
-  }, [meshes]);
+  useFrame((state) => {
+    dressing?.updateVisibility(state.camera.position.x, state.camera.position.z);
+  });
 
-  if (!meshes) return null;
-  return (
-    <group>
-      {meshes.map((mesh) => (
-        <primitive key={mesh.name} object={mesh} />
-      ))}
-    </group>
-  );
+  if (!dressing) return null;
+  return <primitive object={dressing.group} />;
 }
