@@ -5,6 +5,7 @@
 // only, injectable fetch) so vitest covers it without a workerd harness.
 // Sources: docs/plans/02-server-directory.md §2/§3/§7/§8, doc 03 §6/§9.
 
+import { MAX_PLAYERS } from "./constants.ts";
 import type { HeartbeatBody, HeartbeatEvent, ServerInfo } from "./serverInfo";
 // Explicit .ts extension: apps/game's offline harnesses load this module via
 // `node --experimental-strip-types` (no bundler), where extensionless
@@ -337,10 +338,13 @@ export interface ScorableServerRow {
 /** The exact doc 02 §8 score. No votes, no paid placement, no raw-player-count
  * default sort; client-measured ping never enters the stored score. */
 export function score(s: ScorableServerRow, latestProtocol: number, now: number): number {
-  const players = Math.min(s.players, 24); // cap = official MAX_PLAYERS
+  const players = Math.min(s.players, MAX_PLAYERS); // cap = official MAX_PLAYERS
   const uptime = s.uptimeRatio20d * 8; // 0..8, from probes
   const age = Math.min((now - s.created_at) / (30 * 86400_000), 6); // 0..6
-  const absurdCapacity = s.players_max > 32 ? -8 : 0;
+  // A legit server hard-clamps its advertised cap to MAX_PLAYERS; anything more
+  // than a slot beyond it reads as fake capacity gaming the sort. Threshold
+  // tracks the official cap (doc 02 §8 intent) with the original +8 slack.
+  const absurdCapacity = s.players_max > MAX_PLAYERS + 8 ? -8 : 0;
   const outdated = s.protocol !== null && s.protocol < latestProtocol ? -4 : 0;
   return players + uptime + age + absurdCapacity + outdated;
 }

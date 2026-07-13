@@ -136,8 +136,8 @@ export interface BuildingConfig {
 }
 
 export interface SessionConfig {
-  /** Soft cap; hard-clamped to MAX_PLAYERS (24) — the verified perf envelope. */
-  maxPlayers: number; // 2..24
+  /** Soft cap; hard-clamped to MAX_PLAYERS (40) — the verified perf envelope. */
+  maxPlayers: number; // 2..40
   respawnDelayS: number; // 0..30   (RESPAWN_DELAY_S default 4)
   /** Combat-log linger for disconnected living bodies. 0 = instant despawn-save. */
   logoutLingerS: number; // 0..300  (LOGOUT_LINGER_S default 60)

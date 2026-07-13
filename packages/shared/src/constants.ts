@@ -65,7 +65,12 @@ export const INPUT_BUDGET_CAP_S = 0.4;
 // this many per frame (matches the server burst allowance: 6 x 0.05 = 0.3).
 export const MAX_CMDS_PER_FRAME = 6;
 export const MAX_NAME_LENGTH = 16;
-export const MAX_PLAYERS = 24;
+// The verified perf envelope for one room. Raising this only presses the
+// snapshot broadcast, the sole O(players²) cost (each client gets its own
+// interest-filtered snapshot built + JSON.stringify'd every tick). At 40 that
+// phase is ~6.6 ms vs the 66.7 ms 15 Hz budget — ~10× headroom; the sim itself
+// has ~130×. Chasing hundreds needs a spatial index + binary/delta wire first.
+export const MAX_PLAYERS = 40;
 
 // --- Player movement ---
 export const PLAYER_RADIUS = 0.45;

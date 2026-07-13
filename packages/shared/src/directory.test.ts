@@ -19,6 +19,7 @@ import {
   sha256Hex,
   ulid,
 } from "./directory";
+import { MAX_PLAYERS } from "./constants";
 import { sanitizeListingText, SERVER_NAME_MAX } from "./text";
 import type { ServerInfo } from "./serverInfo";
 
@@ -244,11 +245,13 @@ describe("score (doc 02 §8 exact formula)", () => {
   };
   const now = 200 * 86400_000; // 200 days in ms → age term saturates at 6
 
-  it("caps players at 24 and age at 6", () => {
-    expect(score({ ...base, players: 500 }, 6, now)).toBe(24 + 8 + 6);
+  it("caps players at MAX_PLAYERS and age at 6", () => {
+    expect(score({ ...base, players: 500 }, 6, now)).toBe(MAX_PLAYERS + 8 + 6);
   });
   it("penalizes absurd capacity and outdated protocol", () => {
-    expect(score({ ...base, players_max: 33 }, 6, now)).toBe(10 + 8 + 6 - 8);
+    // Absurd = advertised cap more than +8 over the official MAX_PLAYERS.
+    expect(score({ ...base, players_max: MAX_PLAYERS + 9 }, 6, now)).toBe(10 + 8 + 6 - 8);
+    expect(score({ ...base, players_max: MAX_PLAYERS + 8 }, 6, now)).toBe(10 + 8 + 6);
     expect(score({ ...base, protocol: 5 }, 6, now)).toBe(10 + 8 + 6 - 4);
     expect(score({ ...base, protocol: null }, 6, now)).toBe(10 + 8 + 6);
   });
