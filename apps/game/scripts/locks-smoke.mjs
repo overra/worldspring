@@ -26,6 +26,7 @@ import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
+import { decodeSnap } from "@worldspring/shared/snapCodec";
 import {
   BUILD_CELL,
   BUILD_RANGE,
@@ -111,6 +112,7 @@ class Bot {
   connect(url, joinOverrides = {}) {
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(url);
+      this.ws.binaryType = "arraybuffer"; // snapshots ship as binary (snapCodec)
       this.ws.addEventListener("error", () =>
         reject(new Error(`cannot connect to ${url} — is the dev server running?`)),
       );
@@ -129,11 +131,20 @@ class Bot {
         resolve();
       });
       this.ws.addEventListener("message", (ev) => {
-        if (typeof ev.data !== "string") return;
         let m;
-        try {
-          m = JSON.parse(ev.data);
-        } catch {
+        if (ev.data instanceof ArrayBuffer) {
+          try {
+            m = decodeSnap(ev.data);
+          } catch {
+            return;
+          }
+        } else if (typeof ev.data === "string") {
+          try {
+            m = JSON.parse(ev.data);
+          } catch {
+            return;
+          }
+        } else {
           return;
         }
         if (m.t === "sFull" || m.t === "sAdd" || m.t === "sState" || m.t === "cont") {
