@@ -11,6 +11,7 @@ import { useMemo, useRef } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { MAX_PLAYERS } from "@worldspring/shared/constants";
 import { clientWorld } from "@/client/runtime";
 import {
   createCharacterRig,
@@ -20,10 +21,12 @@ import {
 } from "./CharacterRig";
 
 // Pool caps. Corpse counts are TTL-bounded (PLAYER_CORPSE_TTL_S = 300s,
-// ZOMBIE_CORPSE_TTL_S = 120s) and interest-filtered server-side, so two
-// dozen of each kind is generous headroom; overflow corpses simply skip
-// rendering (their loot prompt still works) — never crash.
-const PLAYER_POOL_SIZE = 24;
+// ZOMBIE_CORPSE_TTL_S = 120s) and interest-filtered server-side, so this much
+// headroom is generous; overflow corpses simply skip rendering (their loot
+// prompt still works) — never crash. The pools are lazy (grown on demand), so a
+// larger ceiling costs nothing until that many corpses are actually in view.
+// Player corpses scale with room size so a full-lobby massacre still renders.
+const PLAYER_POOL_SIZE = MAX_PLAYERS;
 const ZOMBIE_POOL_SIZE = 24;
 
 const GROUND_OFFSET = 0.02; // lift over the terrain to dodge z-fighting
