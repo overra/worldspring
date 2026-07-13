@@ -8,6 +8,7 @@
     "./browse": "./src/browse.ts",
     "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
+    "./constants/survival": "./src/constants/survival.ts",
     "./directory": "./src/directory.ts",
     "./fog": "./src/fog.ts",
     "./items": "./src/items.ts",
