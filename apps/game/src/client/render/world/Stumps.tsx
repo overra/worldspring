@@ -11,10 +11,11 @@
 // stump-stage records so this is their sole renderer. Cleared stumps leave via
 // the normal remove delta.
 //
-// One InstancedMesh (tapered cylinder, bark side + cut top materials) rebuilt
-// whenever EITHER source changes (felledVersion / plantedVersion bump) — both
-// are chop-rate integers, and the instance count is bounded by felled naturals
-// + PLANTED_TREE_CAP, so rebuilds are trivially cheap.
+// One InstancedMesh per world cell (tapered cylinder, bark side + cut top
+// materials — chunkedDressing.ts) rebuilt whenever EITHER source changes
+// (felledVersion / plantedVersion bump) — both are chop-rate integers, and
+// the instance count is bounded by felled naturals + PLANTED_TREE_CAP, so
+// rebuilds are trivially cheap.
 
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
@@ -22,6 +23,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { STUMP_HEIGHT } from "@worldspring/shared/trees";
 import { clientWorld } from "@/client/runtime";
+import { buildChunkedDressing, type ChunkedDressing, type DressingEntry } from "./chunkedDressing";
 
 // Unit tapered cylinder (wider at the root), origin at its base so instance
 // scale maps (r, STUMP_HEIGHT, r) directly. Groups: 0 = side, 1 = top, 2 = bottom.
@@ -57,11 +59,12 @@ function collectStumps(): StumpSpot[] {
 export function Stumps(): ReactElement {
   const rootRef = useRef<THREE.Group | null>(null);
   if (rootRef.current === null) rootRef.current = new THREE.Group();
-  const meshRef = useRef<THREE.InstancedMesh | null>(null);
+  const dressingRef = useRef<ChunkedDressing | null>(null);
   const appliedFelled = useRef(-1);
   const appliedPlanted = useRef(-1);
 
-  useFrame(() => {
+  useFrame((state) => {
+    dressingRef.current?.updateVisibility(state.camera.position.x, state.camera.position.z);
     if (
       appliedFelled.current === clientWorld.felledVersion &&
       appliedPlanted.current === clientWorld.plantedVersion
@@ -72,34 +75,32 @@ export function Stumps(): ReactElement {
     appliedPlanted.current = clientWorld.plantedVersion;
     const root = rootRef.current;
     if (!root) return;
-    if (meshRef.current) {
-      root.remove(meshRef.current);
-      meshRef.current.dispose(); // instance buffers only; geometry/materials are module-shared
-      meshRef.current = null;
-    }
+    // Instance buffers only; geometry/materials are module-shared.
+    dressingRef.current?.dispose();
+    dressingRef.current = null;
+    root.clear();
     const stumps = collectStumps();
     if (stumps.length === 0) return;
-    const mesh = new THREE.InstancedMesh(STUMP_GEOMETRY, STUMP_MATERIALS, stumps.length);
-    mesh.frustumCulled = false;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    stumps.forEach((s, slot) => {
+    const entries: DressingEntry[] = stumps.map((s) => {
       dummy.position.set(s.x, s.groundY, s.z);
       // Deterministic yaw from position so the 9-gon silhouettes vary.
       dummy.rotation.set(0, (s.x * 7.13 + s.z * 3.71) % (Math.PI * 2), 0);
       dummy.scale.set(s.r, STUMP_HEIGHT, s.r);
       dummy.updateMatrix();
-      mesh.setMatrixAt(slot, dummy.matrix);
+      return { bucket: 0, matrix: dummy.matrix.clone() };
     });
-    mesh.instanceMatrix.needsUpdate = true;
-    root.add(mesh);
-    meshRef.current = mesh;
+    const dressing = buildChunkedDressing(
+      [{ geometry: STUMP_GEOMETRY, material: STUMP_MATERIALS, castShadow: true, receiveShadow: true }],
+      entries,
+    );
+    root.add(dressing.group);
+    dressingRef.current = dressing;
   });
 
   useEffect(
     () => () => {
-      meshRef.current?.dispose();
-      meshRef.current = null;
+      dressingRef.current?.dispose();
+      dressingRef.current = null;
       // Reset the applied versions too: a Strict-Mode remount preserves refs,
       // and matching versions would skip the rebuild — stumps gone until the
       // next chop bumps a version.

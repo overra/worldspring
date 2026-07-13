@@ -24,6 +24,12 @@ import * as THREE from "three";
 import type { PlantedTree } from "@worldspring/shared/trees";
 import { clientWorld } from "@/client/runtime";
 import { extractVariant, TREES_MODEL_URL, VARIANT_NODES, type VariantAssets } from "./Trees";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingBucket,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 type VariantTable = Record<"conifer" | "oak", Array<VariantAssets | null>>;
 
@@ -36,15 +42,33 @@ function variantOf(seed: number, count: number): number {
   return (seed & 0xff) % count;
 }
 
-/** Build one InstancedMesh per (kind × variant × GLB primitive) for the current
- * planted set. Mirrors Trees.buildBucketMeshes, but keyed on appearanceSeed
- * (not a world.trees index) and with no felled bookkeeping — a felled planted
- * tree is simply absent from the next rebuild. */
-function buildPlanted(variants: VariantTable, trees: Iterable<PlantedTree>): THREE.InstancedMesh[] {
-  const buckets: Record<"conifer" | "oak", PlantedTree[][]> = {
-    conifer: variants.conifer.map(() => []),
-    oak: variants.oak.map(() => []),
+/** Build the chunked dressing for the current planted set — one InstancedMesh
+ * per (world cell × kind × variant × GLB primitive), per-chunk bounding
+ * spheres (chunkedDressing.ts). Keyed on appearanceSeed (not a world.trees
+ * index) and with no felled bookkeeping — a felled planted tree is simply
+ * absent from the next rebuild. */
+function buildPlanted(variants: VariantTable, trees: Iterable<PlantedTree>): ChunkedDressing {
+  const buckets: DressingBucket[] = [];
+  const partBuckets: Record<"conifer" | "oak", Array<number[] | null>> = {
+    conifer: variants.conifer.map(() => null),
+    oak: variants.oak.map(() => null),
   };
+  for (const kind of ["conifer", "oak"] as const) {
+    variants[kind].forEach((assets, v) => {
+      if (!assets) return;
+      partBuckets[kind][v] = assets.parts.map((part) => {
+        buckets.push({
+          geometry: part.geometry,
+          material: part.material,
+          castShadow: true,
+          receiveShadow: part.role === "branches",
+        });
+        return buckets.length - 1;
+      });
+    });
+  }
+
+  const entries: DressingEntry[] = [];
   for (const tree of trees) {
     // Stumps are drawn by Stumps.tsx (shared with natural felled stumps) — a
     // stump-stage record must NOT render as a miniature full tree here.
@@ -52,50 +76,32 @@ function buildPlanted(variants: VariantTable, trees: Iterable<PlantedTree>): THR
     const pool = variants[tree.kind];
     let v = variantOf(tree.appearanceSeed, pool.length);
     for (let step = 0; step < pool.length && !pool[v]; step++) v = (v + 1) % pool.length;
-    if (!pool[v]) continue; // every node missing — kind unrenderable
-    buckets[tree.kind][v].push(tree);
+    const assets = pool[v];
+    const ids = partBuckets[tree.kind][v];
+    if (!assets || !ids) continue; // every node missing — kind unrenderable
+    // Stage-scaled height already baked into tree.height by
+    // plantedTreeGeometry; a growth transition just changes this scale.
+    const s = tree.height / assets.nativeHeight;
+    const seed = tree.appearanceSeed;
+    const yaw = (((seed >>> 3) & 0x3ff) / 0x3ff) * Math.PI * 2;
+    // Deterministic lean (oaks only), origin at the trunk base so the
+    // lean never unroots the tree — matches the natural forest.
+    const tilt = tree.kind === "oak" ? Math.sin(seed * 1.7) * 0.08 : 0;
+    dummy.position.set(tree.x, tree.groundY, tree.z);
+    dummy.rotation.set(tilt, yaw, -tilt);
+    dummy.scale.setScalar(s);
+    dummy.updateMatrix();
+    const matrix = dummy.matrix.clone();
+    for (const bucket of ids) entries.push({ bucket, matrix });
   }
-
-  const meshes: THREE.InstancedMesh[] = [];
-  for (const kind of ["conifer", "oak"] as const) {
-    const tiltable = kind === "oak";
-    for (let v = 0; v < variants[kind].length; v++) {
-      const assets = variants[kind][v];
-      const instances = buckets[kind][v];
-      if (!assets || instances.length === 0) continue;
-      assets.parts.forEach((part) => {
-        const mesh = new THREE.InstancedMesh(part.geometry, part.material, instances.length);
-        mesh.frustumCulled = false;
-        mesh.castShadow = true;
-        mesh.receiveShadow = part.role === "branches";
-        instances.forEach((tree, slot) => {
-          // Stage-scaled height already baked into tree.height by
-          // plantedTreeGeometry; a growth transition just changes this scale.
-          const s = tree.height / assets.nativeHeight;
-          const seed = tree.appearanceSeed;
-          const yaw = (((seed >>> 3) & 0x3ff) / 0x3ff) * Math.PI * 2;
-          // Deterministic lean (oaks only), origin at the trunk base so the
-          // lean never unroots the tree — matches the natural forest.
-          const tilt = tiltable ? Math.sin(seed * 1.7) * 0.08 : 0;
-          dummy.position.set(tree.x, tree.groundY, tree.z);
-          dummy.rotation.set(tilt, yaw, -tilt);
-          dummy.scale.setScalar(s);
-          dummy.updateMatrix();
-          mesh.setMatrixAt(slot, dummy.matrix);
-        });
-        mesh.instanceMatrix.needsUpdate = true;
-        meshes.push(mesh);
-      });
-    }
-  }
-  return meshes;
+  return buildChunkedDressing(buckets, entries);
 }
 
 export function PlantedTrees(): ReactElement {
   const gltf = useGLTF(TREES_MODEL_URL);
   const rootRef = useRef<THREE.Group | null>(null);
   if (rootRef.current === null) rootRef.current = new THREE.Group();
-  const meshesRef = useRef<THREE.InstancedMesh[]>([]);
+  const dressingRef = useRef<ChunkedDressing | null>(null);
   // -1 forces a rebuild on the first frame after mount (and after any GLB/world
   // swap resets it), stamping the welcome's full planted set.
   const appliedVersion = useRef(-1);
@@ -113,31 +119,30 @@ export function PlantedTrees(): ReactElement {
     appliedVersion.current = -1;
   }, [variants]);
 
-  useFrame(() => {
+  useFrame((state) => {
+    dressingRef.current?.updateVisibility(state.camera.position.x, state.camera.position.z);
     if (appliedVersion.current === clientWorld.plantedVersion) return;
     appliedVersion.current = clientWorld.plantedVersion;
     const root = rootRef.current;
     if (!root) return;
-    for (const mesh of meshesRef.current) {
-      root.remove(mesh);
-      // Frees instance buffers only — geometry/materials belong to the shared
-      // GLTF cache and must outlive this component (the Trees.tsx contract).
-      mesh.dispose();
-    }
-    meshesRef.current = [];
+    // Frees instance buffers only — geometry/materials belong to the shared
+    // GLTF cache and must outlive this component (the Trees.tsx contract).
+    dressingRef.current?.dispose();
+    dressingRef.current = null;
+    root.clear();
     // Read the world FRESH: a rejoin swaps clientWorld.world without necessarily
     // re-rendering this component, and the welcome bump lands us here.
     const world = clientWorld.world;
     if (!world) return;
-    const meshes = buildPlanted(variants, world.plantedTrees.trees.values());
-    for (const mesh of meshes) root.add(mesh);
-    meshesRef.current = meshes;
+    const dressing = buildPlanted(variants, world.plantedTrees.trees.values());
+    root.add(dressing.group);
+    dressingRef.current = dressing;
   });
 
   useEffect(
     () => () => {
-      for (const mesh of meshesRef.current) mesh.dispose();
-      meshesRef.current = [];
+      dressingRef.current?.dispose();
+      dressingRef.current = null;
       // Same Strict-Mode-remount hardening as Stumps.tsx: preserved refs with a
       // matching version would skip the rebuild and leave the forest empty.
       appliedVersion.current = -1;

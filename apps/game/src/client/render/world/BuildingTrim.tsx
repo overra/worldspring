@@ -10,11 +10,18 @@
 
 import { useEffect, useMemo } from "react";
 import type { ReactElement } from "react";
+import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { Building, World } from "@worldspring/shared/world";
 import { createRng, hashString } from "@worldspring/shared/rng";
 import { clientWorld } from "@/client/runtime";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingBucket,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 const KIT_MODEL_URL = "/models/building_kit.glb";
 useGLTF.preload(KIT_MODEL_URL);
@@ -217,17 +224,12 @@ function collectBuilding(
 
 const dummy = new THREE.Object3D();
 
-interface TrimBuild {
-  root: THREE.Group;
-  meshes: THREE.InstancedMesh[];
-}
-
-function buildTrim(scene: THREE.Group, world: World): TrimBuild {
+function buildTrim(scene: THREE.Group, world: World): ChunkedDressing {
   const instances = new Map<PieceKind, TrimInstance[]>();
   for (const building of world.buildings) collectBuilding(building, world.seed, instances);
 
-  const root = new THREE.Group();
-  const meshes: THREE.InstancedMesh[] = [];
+  const buckets: DressingBucket[] = [];
+  const entries: DressingEntry[] = [];
   for (const kind of PIECE_KINDS) {
     const list = instances.get(kind);
     if (!list || list.length === 0) continue;
@@ -236,24 +238,25 @@ function buildTrim(scene: THREE.Group, world: World): TrimBuild {
       console.warn(`BuildingTrim: node "${kind}" missing from ${KIT_MODEL_URL} — skipping piece`);
       continue;
     }
-    for (const part of parts) {
-      const mesh = new THREE.InstancedMesh(part.geometry, part.material, list.length);
-      mesh.frustumCulled = false;
-      mesh.castShadow = true;
-      mesh.receiveShadow = false; // thin trim — receiving shadows just shimmers
-      list.forEach((inst, slot) => {
-        dummy.position.set(inst.x, inst.y, inst.z);
-        dummy.rotation.set(0, inst.yaw, 0);
-        dummy.scale.set(inst.sx, inst.sy, inst.sz);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(slot, dummy.matrix);
+    const ids = parts.map((part) => {
+      buckets.push({
+        geometry: part.geometry,
+        material: part.material,
+        castShadow: true,
+        receiveShadow: false, // thin trim — receiving shadows just shimmers
       });
-      mesh.instanceMatrix.needsUpdate = true;
-      root.add(mesh);
-      meshes.push(mesh);
+      return buckets.length - 1;
+    });
+    for (const inst of list) {
+      dummy.position.set(inst.x, inst.y, inst.z);
+      dummy.rotation.set(0, inst.yaw, 0);
+      dummy.scale.set(inst.sx, inst.sy, inst.sz);
+      dummy.updateMatrix();
+      const matrix = dummy.matrix.clone();
+      for (const bucket of ids) entries.push({ bucket, matrix });
     }
   }
-  return { root, meshes };
+  return buildChunkedDressing(buckets, entries);
 }
 
 export function BuildingTrim(): ReactElement | null {
@@ -267,13 +270,15 @@ export function BuildingTrim(): ReactElement | null {
 
   useEffect(() => {
     if (!trim) return;
-    return () => {
-      // Frees instance buffers only — geometry/materials belong to the
-      // shared GLTF cache and must outlive this component.
-      for (const mesh of trim.meshes) mesh.dispose();
-    };
+    // Frees instance buffers only — geometry/materials belong to the
+    // shared GLTF cache and must outlive this component.
+    return () => trim.dispose();
   }, [trim]);
 
+  useFrame((state) => {
+    trim?.updateVisibility(state.camera.position.x, state.camera.position.z);
+  });
+
   if (!trim) return null;
-  return <primitive object={trim.root} />;
+  return <primitive object={trim.group} />;
 }

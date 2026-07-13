@@ -1,8 +1,10 @@
 // doc 06 — player-built structures. Renders every piece's collision AABBs as
-// instanced boxes: one InstancedMesh per (tier × door/structure) bucket, so
-// a full 3000-piece world stays at ≤4 draw calls. Rebuilt wholesale when
-// clientWorld.structuresVersion bumps — placements happen at human rate, and
-// a rebuild is O(pieces) matrix writes (the Trees felledVersion pattern).
+// instanced boxes: one InstancedMesh per (world cell × tier × door/structure)
+// bucket via chunkedDressing.ts, so a full 3000-piece world frustum-culls per
+// chunk instead of vertex-processing every base on the island each frame.
+// Rebuilt wholesale when clientWorld.structuresVersion bumps — placements
+// happen at human rate, and a rebuild is O(pieces) matrix writes (the Trees
+// felledVersion pattern).
 //
 // The rendered boxes ARE the collision boxes (pieceAabbs — the one shared
 // geometry source), so what you see is exactly what blocks you. Open doors/
@@ -14,9 +16,14 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { BUILD_CELL, BUILD_WALL_THICKNESS } from "@worldspring/shared/constants";
-import { PIECE_DEFS, crateAabb, pieceAabbs, pieceCenter, type StructurePiece } from "@worldspring/shared/structures";
+import { PIECE_DEFS, crateAabb, pieceAabbs, type StructurePiece } from "@worldspring/shared/structures";
 import type { Aabb } from "@worldspring/shared/math";
 import { clientWorld } from "@/client/runtime";
+import {
+  buildChunkedDressing,
+  type ChunkedDressing,
+  type DressingEntry,
+} from "./chunkedDressing";
 
 type BucketKey = "wood" | "scrap" | "woodDoor" | "scrapDoor";
 
@@ -71,70 +78,61 @@ function bucketOf(piece: StructurePiece): BucketKey {
 }
 
 const dummy = new THREE.Object3D();
-const tintColor = new THREE.Color();
 
-/** One instanced box + its damage tint (1 = pristine). */
-interface RenderBox {
-  box: Aabb;
-  tint: number;
-}
+const BUCKET_KEYS: readonly BucketKey[] = ["wood", "scrap", "woodDoor", "scrapDoor"];
 
-function buildMeshes(
+function buildDressing(
   geometry: THREE.BoxGeometry,
   materials: Record<BucketKey, THREE.Material>,
-): { group: THREE.Group; meshes: THREE.InstancedMesh[] } {
+): ChunkedDressing | null {
   const world = clientWorld.world;
-  const group = new THREE.Group();
-  const meshes: THREE.InstancedMesh[] = [];
-  if (!world) return { group, meshes };
+  if (!world) return null;
 
-  const buckets: Record<BucketKey, RenderBox[]> = { wood: [], scrap: [], woodDoor: [], scrapDoor: [] };
+  const entries: DressingEntry[] = [];
+  const pushBox = (bucket: number, box: Aabb, tint: number): void => {
+    dummy.position.set(
+      (box.minX + box.maxX) / 2,
+      (box.y0 + box.y1) / 2,
+      (box.minZ + box.maxZ) / 2,
+    );
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(box.maxX - box.minX, box.y1 - box.y0, box.maxZ - box.minZ);
+    dummy.updateMatrix();
+    // Damage tiers (doc 06 M7): per-instance darkening multiplies the
+    // bucket material color (white = untouched).
+    entries.push({
+      bucket,
+      matrix: dummy.matrix.clone(),
+      color: new THREE.Color().setScalar(tint),
+    });
+  };
   for (const piece of world.structures.pieces.values()) {
-    const key = bucketOf(piece);
+    const bucket = BUCKET_KEYS.indexOf(bucketOf(piece));
     const tint = damageTint(piece);
-    for (const box of pieceAabbs(piece)) buckets[key].push({ box, tint });
+    for (const box of pieceAabbs(piece)) pushBox(bucket, box, tint);
     // Crates derive zero collision boxes; render the shared crateAabb — the
     // raycast-only attribution box, so what you see is what an axe hits.
-    if (piece.kind === "crate") buckets[key].push({ box: crateAabb(piece), tint });
+    if (piece.kind === "crate") pushBox(bucket, crateAabb(piece), tint);
     if ((piece.kind === "door" || piece.kind === "gate") && piece.open === true) {
       const panel = openPanelBox(piece);
-      if (panel) buckets[key].push({ box: panel, tint });
+      if (panel) pushBox(bucket, panel, tint);
     }
   }
-
-  for (const key of Object.keys(buckets) as BucketKey[]) {
-    const boxes = buckets[key];
-    if (boxes.length === 0) continue;
-    const mesh = new THREE.InstancedMesh(geometry, materials[key], boxes.length);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.frustumCulled = false;
-    boxes.forEach(({ box, tint }, slot) => {
-      dummy.position.set(
-        (box.minX + box.maxX) / 2,
-        (box.y0 + box.y1) / 2,
-        (box.minZ + box.maxZ) / 2,
-      );
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(box.maxX - box.minX, box.y1 - box.y0, box.maxZ - box.minZ);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(slot, dummy.matrix);
-      // Damage tiers (doc 06 M7): per-instance darkening multiplies the
-      // bucket material color (white = untouched).
-      mesh.setColorAt(slot, tintColor.setScalar(tint));
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    group.add(mesh);
-    meshes.push(mesh);
-  }
-  return { group, meshes };
+  return buildChunkedDressing(
+    BUCKET_KEYS.map((key) => ({
+      geometry,
+      material: materials[key],
+      castShadow: true,
+      receiveShadow: true,
+    })),
+    entries,
+  );
 }
 
 export function Structures(): ReactElement {
   const rootRef = useRef<THREE.Group>(null);
   const builtVersion = useRef(-1);
-  const liveMeshes = useRef<THREE.InstancedMesh[]>([]);
+  const dressingRef = useRef<ChunkedDressing | null>(null);
 
   const shared = useMemo(() => {
     const geometry = new THREE.BoxGeometry(1, 1, 1);
@@ -151,22 +149,30 @@ export function Structures(): ReactElement {
 
   useEffect(() => {
     return () => {
-      for (const mesh of liveMeshes.current) mesh.dispose();
-      liveMeshes.current = [];
+      dressingRef.current?.dispose();
+      dressingRef.current = null;
+      // Same remount hardening as Stumps/PlantedTrees: Fast Refresh re-runs
+      // effects but preserves refs — a matching version would skip the
+      // rebuild and leave every base invisible until the next placement.
+      builtVersion.current = -1;
       shared.geometry.dispose();
       for (const m of Object.values(shared.materials)) m.dispose();
     };
   }, [shared]);
 
-  useFrame(() => {
+  useFrame((state) => {
     const root = rootRef.current;
-    if (!root || builtVersion.current === clientWorld.structuresVersion) return;
+    if (!root) return;
+    dressingRef.current?.updateVisibility(state.camera.position.x, state.camera.position.z);
+    if (builtVersion.current === clientWorld.structuresVersion) return;
     builtVersion.current = clientWorld.structuresVersion;
-    for (const mesh of liveMeshes.current) mesh.dispose();
+    dressingRef.current?.dispose();
+    dressingRef.current = null;
     root.clear();
-    const { group, meshes } = buildMeshes(shared.geometry, shared.materials);
-    liveMeshes.current = meshes;
-    root.add(group);
+    const dressing = buildDressing(shared.geometry, shared.materials);
+    if (!dressing) return;
+    dressingRef.current = dressing;
+    root.add(dressing.group);
   });
 
   return <group ref={rootRef} />;
