@@ -9,7 +9,7 @@ import {
 } from "@worldspring/shared/constants";
 import { clampConfig, effectiveGameHour, worldParamsOf } from "@worldspring/shared/config";
 import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
-import { decodeSnap } from "@worldspring/shared/snapCodec";
+import { decodeServerFrame } from "@worldspring/shared/snapCodec";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, WearSlot, WirePiece, YouState } from "@worldspring/shared/protocol";
@@ -418,25 +418,15 @@ function scheduleReconnect(): void {
 }
 
 function handleMessage(data: unknown): void {
-  let msg: ServerMsg;
-  if (data instanceof ArrayBuffer) {
-    // Binary frames are snapshots only (snapCodec); everything else is text.
-    try {
-      msg = decodeSnap(data);
-    } catch (err) {
-      console.error("net: malformed binary snapshot", err);
-      return;
-    }
-  } else if (typeof data === "string") {
-    try {
-      msg = JSON.parse(data) as ServerMsg;
-    } catch (err) {
-      console.error("net: malformed server message", err);
-      return;
-    }
-  } else {
-    return; // unexpected frame type (binaryType is arraybuffer, so no Blob)
+  // Wire framing (binary = snapshot, text = JSON) lives in decodeServerFrame.
+  let msg: ServerMsg | null;
+  try {
+    msg = decodeServerFrame(data);
+  } catch (err) {
+    console.error("net: malformed server frame", err);
+    return;
   }
+  if (msg === null) return; // neither text nor ArrayBuffer (binaryType guards Blob)
 
   const ui = useUIStore.getState();
   switch (msg.t) {

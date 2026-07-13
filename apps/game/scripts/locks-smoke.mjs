@@ -26,7 +26,7 @@ import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import { decodeSnap } from "@worldspring/shared/snapCodec";
+import { decodeServerFrame } from "@worldspring/shared/snapCodec";
 import {
   BUILD_CELL,
   BUILD_RANGE,
@@ -132,21 +132,12 @@ class Bot {
       });
       this.ws.addEventListener("message", (ev) => {
         let m;
-        if (ev.data instanceof ArrayBuffer) {
-          try {
-            m = decodeSnap(ev.data);
-          } catch {
-            return;
-          }
-        } else if (typeof ev.data === "string") {
-          try {
-            m = JSON.parse(ev.data);
-          } catch {
-            return;
-          }
-        } else {
+        try {
+          m = decodeServerFrame(ev.data);
+        } catch {
           return;
         }
+        if (m === null) return;
         if (m.t === "sFull" || m.t === "sAdd" || m.t === "sState" || m.t === "cont") {
           scannedFrames++;
           scanKeys(m, m.t);

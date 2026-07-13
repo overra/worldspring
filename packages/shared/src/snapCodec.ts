@@ -502,3 +502,19 @@ export function decodeSnap(buf: ArrayBuffer): SnapMsg {
   if (tail.planted !== undefined) snap.planted = tail.planted;
   return snap;
 }
+
+/**
+ * Decode one inbound server WebSocket frame into a ServerMsg. This is THE wire
+ * contract: a binary (ArrayBuffer) frame is a snapshot (snapCodec), a text frame
+ * is JSON. Centralizing it keeps the client and the offline harnesses in
+ * lock-step — a second binary message type would change only here.
+ *
+ * Throws on a malformed/unrecognized frame (bad magic, bad JSON) so the caller
+ * can log + drop it. Returns null for a payload that is neither string nor
+ * ArrayBuffer (e.g. a Blob when binaryType wasn't set to "arraybuffer").
+ */
+export function decodeServerFrame(data: unknown): ServerMsg | null {
+  if (data instanceof ArrayBuffer) return decodeSnap(data);
+  if (typeof data === "string") return JSON.parse(data) as ServerMsg;
+  return null;
+}

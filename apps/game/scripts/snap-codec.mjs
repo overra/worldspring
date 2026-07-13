@@ -9,7 +9,7 @@
 // closed-enum value, the additive ItemType/BodyKind strings, angle wrapping past
 // +-PI, and that absent optional deltas decode back to `undefined`.
 
-import { encodeSnap, decodeSnap } from "@worldspring/shared/snapCodec";
+import { encodeSnap, decodeSnap, decodeServerFrame } from "@worldspring/shared/snapCodec";
 
 let failures = 0;
 const ok = (cond, msg) => {
@@ -240,6 +240,22 @@ try {
   threw = true;
 }
 ok(threw, "decodeSnap throws on a zeroed/bad-magic buffer");
+
+// --- decodeServerFrame: the shared binary/text dispatch used by the client +
+//     the live smoke harnesses ---
+console.log("snap-codec: decodeServerFrame dispatch");
+const framedSnap = decodeServerFrame(encodeSnap(full));
+ok(framedSnap !== null && framedSnap.t === "snap" && framedSnap.tick === full.tick, "binary frame -> decoded snap");
+const framedText = decodeServerFrame(JSON.stringify({ t: "welcome", id: "x" }));
+ok(framedText !== null && framedText.t === "welcome", "text frame -> JSON.parse'd message");
+ok(decodeServerFrame(12345) === null, "non-string/non-ArrayBuffer frame -> null (e.g. a Blob)");
+let threwFrame = false;
+try {
+  decodeServerFrame("{not json");
+} catch {
+  threwFrame = true;
+}
+ok(threwFrame, "malformed text frame throws (caller logs + drops)");
 
 // --- Size win sanity: binary is much smaller than JSON ---
 const jsonBytes = new TextEncoder().encode(JSON.stringify(full)).byteLength;

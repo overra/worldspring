@@ -45,7 +45,7 @@ import { randomBytes } from "node:crypto";
 // silently invalidate the load test — every join would be rejected at the
 // proto check and the run would measure nothing.
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import { decodeSnap } from "@worldspring/shared/snapCodec";
+import { decodeServerFrame } from "@worldspring/shared/snapCodec";
 
 // --- Mirrored constants (packages/shared/src/constants.ts) ---
 const MAX_INPUT_DT = 0.05; // clamp for a single cmd dt (seconds)
@@ -289,24 +289,13 @@ function botLoop(bot) {
 function onBotMessage(bot, data) {
   // Snapshots arrive as binary frames (snapCodec); everything else is text.
   let msg;
-  let bytes;
-  if (data instanceof ArrayBuffer) {
-    bytes = data.byteLength;
-    try {
-      msg = decodeSnap(data);
-    } catch {
-      return;
-    }
-  } else if (typeof data === "string") {
-    bytes = Buffer.byteLength(data);
-    try {
-      msg = JSON.parse(data);
-    } catch {
-      return;
-    }
-  } else {
+  try {
+    msg = decodeServerFrame(data);
+  } catch {
     return;
   }
+  if (msg === null) return;
+  const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
   switch (msg.t) {
     case "welcome": {
       bot.joined = true;

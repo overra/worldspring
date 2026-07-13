@@ -30,7 +30,7 @@ import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
-import { decodeSnap } from "@worldspring/shared/snapCodec";
+import { decodeServerFrame } from "@worldspring/shared/snapCodec";
 import {
   BARREL_HITS_TO_BREAK,
   BARREL_HALF_XZ,
@@ -146,11 +146,8 @@ ws.addEventListener("error", () => fail(`cannot connect to ${WS_URL} — is the 
 
 ws.addEventListener("message", (ev) => {
   let m;
-  if (ev.data instanceof ArrayBuffer) {
-    try { m = decodeSnap(ev.data); } catch { return; }
-  } else if (typeof ev.data === "string") {
-    try { m = JSON.parse(ev.data); } catch { return; }
-  } else return;
+  try { m = decodeServerFrame(ev.data); } catch { return; }
+  if (m === null) return;
 
   if (m.t === "welcome") {
     axeSlot = m.inv.findIndex((s) => s && s.type === "axe");
