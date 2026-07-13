@@ -30,7 +30,6 @@ import {
   CHAT_COOLDOWN_S,
   CHAT_MAX_LENGTH,
   CHAT_RADIUS,
-  DECAY_SWEEP_INTERVAL_S,
   INPUT_BUDGET_CAP_S,
   INTEREST_RADIUS,
   LOOT_INTEREST_RADIUS,
@@ -86,7 +85,6 @@ import {
 import type { SaveWorldStats, SchemaBootContext } from "./persistence";
 import type { GameMode } from "./mode/GameMode";
 import { survivalMode } from "./mode/survivalMode";
-import { stockInitialLoot } from "./systems/loot";
 import {
   applyQueuedInputs,
   craftItem,
@@ -121,28 +119,23 @@ import {
   handleSetCode,
   handleTryCode,
   structuresFullMsgs,
-  sweepDecay,
 } from "./systems/structures";
 import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
 import { isTestbedEnabled, provisionTestbed } from "./systems/testbed";
 import { loadRapier } from "./physics/loader";
-import { spawnInitialProps } from "./systems/props";
 import {
   driveInput,
   enterVehicle,
   exitVehicle,
   refuelVehicle,
   seatPlayerIds,
-  spawnInitialVehicles,
   stepVehicles,
   tickVehicles,
   vacateSeat,
 } from "./systems/vehicles";
 import { killPlayer, setDeathSink } from "./systems/survival";
 import { toPlantedRecord } from "@worldspring/shared/trees";
-import { spawnInitialDeer } from "./systems/wildlife";
-import { spawnInitialZombies } from "./systems/zombies";
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
@@ -778,29 +771,15 @@ export class GameRoom extends DurableObject<Env> {
       if (match) this.config.world.sizeTier = match;
     }
     const game = createGameState(world, this.config);
-    // loadWorld hydrates loot/corpses/fires/respawn timers and restores
-    // game.time/tick from meta; a fresh database stocks the world instead.
-    if (!loadWorld(this.ctx.storage.sql, game)) {
-      stockInitialLoot(game);
-      // doc 13 M3 — fresh world only: spawn the deterministic barrels (buffer
-      // in PhysicsSystem until the async engine attach materializes them). A
-      // RESTORED world rebuilds barrels from the persisted `bodies` snapshot
-      // instead, so this never double-spawns (the stockInitialLoot precedent).
-      spawnInitialProps(game);
-      // doc 13 M4 — fresh world only: spawn the deterministic vehicles (buffer
-      // in PhysicsSystem until attach). A restored world rebuilds them from the
-      // `bodies` + `vehicles` snapshots instead, so this never double-spawns.
-      spawnInitialVehicles(game);
-    }
-    // Zombies and deer are never persisted — they always spawn fresh.
-    spawnInitialZombies(game);
-    spawnInitialDeer(game);
-    // doc 06 M7 — boot decay sweep: an abandoned base disappears the first
-    // time anyone wakes the room past the window (idle-server gaps). Runs
-    // AFTER loadWorld restored the pieces; the tick's tickStructures owns the
-    // 5-game-minute cadence from here.
-    sweepDecay(game, (hash) => lastSeenMs(this.ctx.storage.sql, hash));
-    game.decayNextAt = game.time + DECAY_SWEEP_INTERVAL_S;
+    // loadWorld hydrates loot/corpses/fires/respawn timers (and rebuilds
+    // vehicles/barrels from the persisted `bodies` snapshot) and restores
+    // game.time/tick from meta; the active mode seeds the rest — fresh-only
+    // stock/props/vehicles, always-fresh zombies/deer, and the boot decay sweep
+    // (docs/plans/00, engine⟷game seam).
+    const restored = loadWorld(this.ctx.storage.sql, game);
+    this.mode.onWorldReady(game, !restored, {
+      lastSeenMs: (hash) => lastSeenMs(this.ctx.storage.sql, hash),
+    });
     this.game = game;
     this.lastSaveTime = game.time;
     // doc 13 — attach the physics engine asynchronously (wasm init). Ticks

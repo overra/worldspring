@@ -36,4 +36,11 @@ export interface GameMode {
   simBeforePhysics(game: GameState, dt: number, phase: PhaseTimer, ctx: ModeTickCtx): void;
   /** Gameplay after the engine's physics step, before lag-comp history. */
   simAfterPhysics(game: GameState, dt: number, phase: PhaseTimer): void;
+  /**
+   * Seed the world when the room boots, after the engine has created the world +
+   * GameState and attempted to restore a persisted one. `fresh` is false when a
+   * saved world was loaded (so fresh-only spawns are skipped and rebuilt from the
+   * persisted snapshot instead). Owns any always-fresh entities and boot upkeep.
+   */
+  onWorldReady(game: GameState, fresh: boolean, ctx: ModeTickCtx): void;
 }
