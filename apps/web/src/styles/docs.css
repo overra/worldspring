@@ -1,0 +1,157 @@
+/*
+ * Worldspring docs skin — "field manual" design system.
+ *
+ * Reskins default Starlight to match the marketing/directory site: near-black
+ * ground, olive accent, bone ink, Barlow Semi Condensed display + Barlow body +
+ * JetBrains Mono for all data/code, hairline borders over flat fills, sharp
+ * corners, no heavy shadows.
+ *
+ * Light-touch by design: this is almost entirely Starlight custom-property
+ * overrides (--sl-color-*, --sl-font*, --sl-shadow-*) plus a small handful of
+ * aesthetic rules for headings, sharp corners, and hairline code fills. No
+ * component overrides. Loaded via `customCss` in astro.config.mjs; because it is
+ * unlayered it wins over Starlight's @layer rules regardless of specificity.
+ *
+ * @import MUST stay first (CSS requires @import before all other rules).
+ */
+@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap");
+
+:root {
+	/* Design-system tokens (mirrors apps/web field-manual palette). */
+	--ws-ground: #070806; /* near-black */
+	--ws-accent: #7da06b; /* olive */
+	--ws-accent-bright: #a9c79a; /* lighter olive — link text on near-black */
+	--ws-accent-dim: #1e2a19; /* dark olive — subtle accent fills */
+	--ws-ink: #eef0e6; /* bone (brightest) */
+	--ws-ink-2: #d8dcd4; /* bone (body) */
+	--ws-secondary: #8a9286;
+	--ws-dim: #5f6659;
+	--ws-hairline: #22261f;
+	--ws-hairline-light: #2a2e28;
+	--ws-code-fill: #12160f; /* subtle raised fill for code */
+
+	--ws-font-body: "Barlow", var(--sl-font-system);
+	--ws-font-display: "Barlow Semi Condensed", var(--sl-font-system);
+	--ws-font-mono: "JetBrains Mono", var(--sl-font-system-mono);
+
+	/* Feed Starlight's font hooks. Headings get --ws-font-display via rules below. */
+	--sl-font: var(--ws-font-body);
+	--sl-font-mono: var(--ws-font-mono);
+
+	--sl-line-height: 1.7;
+}
+
+/* ---- Dark theme (primary field-manual look) --------------------------- */
+:root,
+::backdrop {
+	--sl-color-white: var(--ws-ink);
+	--sl-color-gray-1: #e2e5da;
+	--sl-color-gray-2: var(--ws-ink-2);
+	--sl-color-gray-3: var(--ws-secondary);
+	--sl-color-gray-4: var(--ws-dim);
+	--sl-color-gray-5: var(--ws-hairline-light);
+	--sl-color-gray-6: var(--ws-hairline);
+	--sl-color-black: var(--ws-ground);
+
+	--sl-color-accent-low: var(--ws-accent-dim);
+	--sl-color-accent: var(--ws-accent);
+	--sl-color-accent-high: var(--ws-accent-bright);
+
+	--sl-color-text: var(--ws-ink-2);
+	--sl-color-text-accent: var(--ws-accent-bright);
+	/* Derived tokens reference --sl-color-black / gray-scale so the light-theme
+	   block below only has to flip those and everything follows. Starlight's own
+	   `--sl-color-bg: var(--sl-color-black)` rides correctly — no override needed. */
+	/* Flat ground for nav + sidebar; separation comes from hairline borders. */
+	--sl-color-bg-nav: var(--sl-color-black);
+	--sl-color-bg-sidebar: var(--sl-color-black);
+	--sl-color-bg-inline-code: var(--ws-code-fill);
+	--sl-color-hairline-light: var(--sl-color-gray-5);
+	--sl-color-hairline: var(--sl-color-gray-6);
+	--sl-color-hairline-shade: var(--sl-color-gray-6);
+
+	/* No heavy shadows — crisp hairline rings so dropdowns keep a visible edge. */
+	--sl-shadow-sm: 0 0 0 1px var(--sl-color-hairline-light);
+	--sl-shadow-md: 0 0 0 1px var(--sl-color-hairline-light);
+	--sl-shadow-lg: 0 0 0 1px var(--sl-color-hairline-light);
+}
+
+/* ---- Light theme ("paper" field-manual inversion) --------------------- */
+:root[data-theme="light"],
+[data-theme="light"] ::backdrop {
+	--sl-color-white: #14180f; /* darkest ink — headings */
+	--sl-color-gray-1: #1e2318;
+	--sl-color-gray-2: #2c3226; /* body text */
+	--sl-color-gray-3: #565c4d;
+	--sl-color-gray-4: #767c6c;
+	--sl-color-gray-5: #c9cdbf;
+	--sl-color-gray-6: #dfe2d6;
+	--sl-color-gray-7: #e9ebe0;
+	--sl-color-black: var(--ws-ink); /* bone paper ground */
+
+	--sl-color-accent-low: #d7dece;
+	--sl-color-accent: #4f6b42; /* darker olive for contrast on bone */
+	--sl-color-accent-high: #34492a;
+
+	--sl-color-text: #2c3226;
+	--sl-color-text-accent: #4f6b42;
+	--sl-color-bg-inline-code: #e3e6da;
+	/* Hairlines, shadows, nav/sidebar fills derive from the gray scale + black
+	   above (see the dark block) — no light-specific overrides needed. */
+}
+
+/* ---- Headings: condensed, uppercase, letterspaced (the signature) ----- */
+:is(h1, h2, h3, h4, h5, h6),
+.site-title {
+	font-family: var(--ws-font-display);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	font-weight: 600;
+}
+
+.site-title {
+	letter-spacing: 0.12em;
+	font-weight: 700;
+}
+
+/* Sidebar group labels + "On this page" heading read as a mono index. */
+.sidebar-content h2,
+.right-sidebar h2,
+starlight-toc h2 {
+	font-family: var(--ws-font-mono);
+	text-transform: uppercase;
+	letter-spacing: 0.14em;
+	font-size: var(--sl-text-2xs);
+	color: var(--sl-color-gray-3);
+}
+
+/* ---- Sharp corners + hairline fills ----------------------------------- */
+.sl-markdown-content :is(pre, code, img, table, kbd, blockquote),
+.sl-markdown-content .expressive-code :is(pre, figure, .frame),
+.expressive-code :is(pre, figure, .frame, .copy button),
+.card,
+.sl-badge,
+dialog,
+select,
+input,
+button,
+site-search dialog,
+site-search button {
+	border-radius: 0 !important;
+}
+
+/* Inline code: hairline box over a flat fill, mono. */
+.sl-markdown-content code:not(:where(.expressive-code *)) {
+	border: 1px solid var(--sl-color-hairline-light);
+	padding: 0.05em 0.35em;
+	font-family: var(--ws-font-mono);
+}
+
+/* Code blocks: kill the frame shadow, keep a clean hairline. */
+.expressive-code .frame {
+	--ec-frm-frameBoxShdCssVal: none;
+	box-shadow: none;
+}
+.expressive-code .frame pre {
+	border: 1px solid var(--sl-color-hairline-light);
+}
