@@ -84,14 +84,9 @@ import {
   topLeaderboard,
 } from "./persistence";
 import type { SaveWorldStats, SchemaBootContext } from "./persistence";
-import { tickAirdrops } from "./systems/airdrops";
-import { performAttack } from "./systems/combat";
-import {
-  stockInitialLoot,
-  tickCorpses,
-  tickDroppedLoot,
-  tickLootRespawns,
-} from "./systems/loot";
+import type { GameMode } from "./mode/GameMode";
+import { survivalMode } from "./mode/survivalMode";
+import { stockInitialLoot } from "./systems/loot";
 import {
   applyQueuedInputs,
   craftItem,
@@ -105,9 +100,7 @@ import {
   restorePlayer,
   sanitizeName,
   startUse,
-  stepPortals,
   STRIP_TEXT_RE,
-  tickActiveActions,
   unwearItem,
   wearItem,
   wornWire,
@@ -129,7 +122,6 @@ import {
   handleTryCode,
   structuresFullMsgs,
   sweepDecay,
-  tickStructures,
 } from "./systems/structures";
 import { DirectoryHeartbeat, directoryChallengeFor, warmDirectoryChallenge } from "./heartbeat";
 import { resolveScenario } from "./systems/scenarios";
@@ -147,12 +139,10 @@ import {
   tickVehicles,
   vacateSeat,
 } from "./systems/vehicles";
-import { killPlayer, setDeathSink, tickFires, tickSurvival } from "./systems/survival";
+import { killPlayer, setDeathSink } from "./systems/survival";
 import { toPlantedRecord } from "@worldspring/shared/trees";
-import { tickAmbientSeeds, tickTreeGrowth, tickTrunks } from "./systems/trees";
-import { tickWeather } from "./systems/weather";
-import { spawnInitialDeer, tickDeerRespawns, tickWildlife } from "./systems/wildlife";
-import { spawnInitialZombies, tickZombieRespawns, tickZombies } from "./systems/zombies";
+import { spawnInitialDeer } from "./systems/wildlife";
+import { spawnInitialZombies } from "./systems/zombies";
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
@@ -216,6 +206,10 @@ export class GameRoom extends DurableObject<Env> {
   /** Resolved deploy-time config. Seeds worldgen, the welcome message, server-
    * info badges, and (in M3+) every system's tuning. */
   private config: ServerConfig;
+  /** The active game mode (docs/plans/00, engine⟷game seam) — owns the per-tick
+   * gameplay composition. Survival is the flagship; the engine holds it as a
+   * swappable GameMode rather than hardcoding the survival phase list in tick(). */
+  private mode: GameMode = survivalMode;
   /** Connection state lives in memory, keyed by WebSocket (see header note). */
   private playerBySocket = new Map<WebSocket, string>();
   private socketByPlayer = new Map<string, WebSocket>();
@@ -1395,61 +1389,24 @@ export class GameRoom extends DurableObject<Env> {
     // Fog-of-war: reveal cells around each player's just-updated position
     // (no-op unless map.reveal === "explored").
     markExploration(game);
-    // doc 06 M7 — stamp owner presence (the offline-shield grace window reads
-    // it) BEFORE attacks resolve, and run the decay sweep on its cadence.
-    tickStructures(game, (hash) => lastSeenMs(this.ctx.storage.sql, hash));
-    phase("structures");
-    // Channeled actions (doc 11) advance HERE — load-bearing ordering: this MUST
-    // run AFTER applyQueuedInputs (so it reads THIS tick's freshly-computed
-    // movedThisTick for the move-cancel rule, which applyQueuedInputs resets to
-    // false then recomputes) and BEFORE attack resolution. Moving it ahead of
-    // applyQueuedInputs would silently break move-cancel; do not reorder.
-    tickActiveActions(game, dt);
-    // Attacks resolve after this tick's movement so aim is current; the
-    // client-reported aim time rides along for target rewind (lag comp).
-    for (const player of game.players.values()) {
-      if (player.wantsAttack) {
-        player.wantsAttack = false;
-        const aimTime = player.wantsAttackAt ?? undefined;
-        player.wantsAttackAt = null;
-        if (player.alive) performAttack(game, player, aimTime);
-      }
-    }
-    // Portal crossings resolve against this tick's post-movement positions.
-    stepPortals(game);
-    phase("actions");
+    // Gameplay before the physics step — the active GameMode owns this order
+    // (docs/plans/00, engine⟷game seam). Survival: structure presence, channels,
+    // attack resolution, portal crossings. The load-bearing ordering (channels
+    // after applyQueuedInputs, before attacks) lives in the mode.
+    this.mode.simBeforePhysics(game, dt, phase, {
+      lastSeenMs: (hash) => lastSeenMs(this.ctx.storage.sql, hash),
+    });
     // doc 13 M4 — apply each driven vehicle's control to its hull BEFORE the
-    // physics step, so the impulses ride this tick's substeps.
+    // physics step (impulses ride this tick's substeps); the server-auth physics
+    // step; then POST-step crash/ram/wreck + seated-rider follow. Vehicles ride
+    // the engine physics phase (physics-adjacent) for now.
     stepVehicles(game, dt);
-    // doc 13 — server-auth physics step (no-op until the engine attaches).
     game.physics.step(dt, game.time);
-    // doc 13 M4 — POST-step: crash + ram damage, wreck handling, and seated
-    // riders follow the hull (kinematic — their walking was short-circuited).
     tickVehicles(game, dt);
     phase("physics");
-    // Tree lifecycle — cap-evicted trunks pay their wood out where they rested
-    // (trunks otherwise persist until axed).
-    tickTrunks(game);
-    // Tree lifecycle — budgeted ambient seed rain (per-player, game-time
-    // cadence) + the wall-clock growth-stage scan (coarse, planted-cap bounded).
-    tickAmbientSeeds(game);
-    tickTreeGrowth(game);
-    phase("trees");
-    tickZombies(game, dt);
-    tickZombieRespawns(game, dt);
-    phase("zombies");
-    tickSurvival(game, dt);
-    tickWeather(game, dt);
-    tickAirdrops(game, dt);
-    phase("survival");
-    tickWildlife(game, dt);
-    tickDeerRespawns(game, dt);
-    phase("wildlife");
-    tickFires(game, dt);
-    tickLootRespawns(game, dt);
-    tickCorpses(game, dt);
-    tickDroppedLoot(game, dt);
-    phase("world");
+    // Gameplay after the physics step — the mode's post-step ticks (trees,
+    // zombies, survival + weather + airdrops, wildlife, fires/loot/corpses).
+    this.mode.simAfterPhysics(game, dt, phase);
     game.time += dt;
     game.tick++;
 
