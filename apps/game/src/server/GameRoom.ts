@@ -41,6 +41,7 @@ import {
   WORLD_SAVE_INTERVAL_S,
 } from "@worldspring/shared/constants";
 import { encodeExplored } from "@worldspring/shared/fog";
+import { encodeSnap } from "@worldspring/shared/snapCodec";
 import { distSq2D } from "@worldspring/shared/math";
 import {
   SERVER_INFO_SCHEMA_VERSION,
@@ -1726,10 +1727,12 @@ export class GameRoom extends DurableObject<Env> {
 
   // --- Sending ---
 
-  /** Send, swallowing errors from sockets that are mid-close. */
+  /** Send, swallowing errors from sockets that are mid-close. The per-tick
+   * `snap` — the one hot-path message, built + sent per client every tick —
+   * ships as a quantized binary frame (snapCodec); everything else stays JSON. */
   private send(ws: WebSocket, msg: ServerMsg): void {
     try {
-      ws.send(JSON.stringify(msg));
+      ws.send(msg.t === "snap" ? encodeSnap(msg) : JSON.stringify(msg));
     } catch {
       // Socket is closing/closed; webSocketClose will clean it up.
     }

@@ -22,6 +22,7 @@
     "./scenario": "./src/scenario.ts",
     "./serverInfo": "./src/serverInfo.ts",
     "./signedCookie": "./src/signedCookie.ts",
+    "./snapCodec": "./src/snapCodec.ts",
     "./structures": "./src/structures.ts",
     "./text": "./src/text.ts",
     "./trees": "./src/trees.ts",

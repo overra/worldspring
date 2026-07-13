@@ -30,6 +30,7 @@ import { createRequire } from "node:module";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
+import { decodeServerFrame } from "@worldspring/shared/snapCodec";
 import {
   BARREL_HITS_TO_BREAK,
   BARREL_HALF_XZ,
@@ -100,6 +101,7 @@ const LOOT_TYPES = new Set(BARREL_LOOT_TABLE.map((e) => e.type));
 
 // --- state -------------------------------------------------------------------
 const ws = new WebSocket(WS_URL);
+ws.binaryType = "arraybuffer"; // snapshots ship as binary frames (snapCodec)
 let world = null;
 let you = { x: 0, z: 0, y: 0 };
 let axeSlot = -1;
@@ -143,9 +145,9 @@ ws.addEventListener("open", () => {
 ws.addEventListener("error", () => fail(`cannot connect to ${WS_URL} — is the dev server running?`));
 
 ws.addEventListener("message", (ev) => {
-  if (typeof ev.data !== "string") return;
   let m;
-  try { m = JSON.parse(ev.data); } catch { return; }
+  try { m = decodeServerFrame(ev.data); } catch { return; }
+  if (m === null) return;
 
   if (m.t === "welcome") {
     axeSlot = m.inv.findIndex((s) => s && s.type === "axe");

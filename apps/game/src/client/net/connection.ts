@@ -9,6 +9,7 @@ import {
 } from "@worldspring/shared/constants";
 import { clampConfig, effectiveGameHour, worldParamsOf } from "@worldspring/shared/config";
 import { decodeExplored, setExploredIndices } from "@worldspring/shared/fog";
+import { decodeServerFrame } from "@worldspring/shared/snapCodec";
 import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
 import type { ClientMsg, ServerMsg, Vitals, WearSlot, WirePiece, YouState } from "@worldspring/shared/protocol";
@@ -102,6 +103,9 @@ export function connect(name: string, scenario?: string): void {
 function openSocket(): void {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  // Snapshots arrive as binary frames (snapCodec); take them as ArrayBuffers
+  // (default "blob" would force an async decode). Every other message is text.
+  ws.binaryType = "arraybuffer";
   socket = ws;
 
   ws.onopen = () => {
@@ -414,14 +418,15 @@ function scheduleReconnect(): void {
 }
 
 function handleMessage(data: unknown): void {
-  if (typeof data !== "string") return;
-  let msg: ServerMsg;
+  // Wire framing (binary = snapshot, text = JSON) lives in decodeServerFrame.
+  let msg: ServerMsg | null;
   try {
-    msg = JSON.parse(data) as ServerMsg;
+    msg = decodeServerFrame(data);
   } catch (err) {
-    console.error("net: malformed server message", err);
+    console.error("net: malformed server frame", err);
     return;
   }
+  if (msg === null) return; // neither text nor ArrayBuffer (binaryType guards Blob)
 
   const ui = useUIStore.getState();
   switch (msg.t) {

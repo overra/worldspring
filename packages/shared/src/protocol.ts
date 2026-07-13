@@ -104,7 +104,12 @@ const PLACE_KIND_WHITELIST: readonly PieceKind[] = [
 // it) must be shared by prediction. The additive `break` kind "trunk" and the
 // first-emitted treeCut events would NOT bump on their own (BodyKind/event
 // posture); the stage semantics do. So 12 -> 13.
-export const PROTOCOL_VERSION: number = 13;
+// Binary snapshot wire: the per-tick `snap` message now ships as a quantized
+// binary frame (packages/shared/src/snapCodec.ts) instead of JSON — the framing
+// itself changes, so old clients cannot parse a new server's snapshots (and
+// vice-versa). Every OTHER message stays JSON; the entity SHAPES are unchanged
+// (decodeSnap reconstructs the identical SnapMsg). So 13 -> 14.
+export const PROTOCOL_VERSION: number = 14;
 
 /**
  * The kinds of server-authoritative channeled (timed) action (doc 11). A
