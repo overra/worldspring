@@ -1,0 +1,199 @@
+---
+// Shared chrome + design system for the marketing/directory site (redesign, doc 00
+// note "the website becomes the platform storefront"). Ports the Claude Design
+// "field manual" language: near-black ground, olive accent, Barlow Semi Condensed
+// display + Barlow body + JetBrains Mono data, sharp corners, hairline borders,
+// heavy uppercase letterspacing. Dark is the native theme.
+export interface Props {
+  title: string;
+  description?: string;
+  /** Optional live count shown in the header (e.g. "3 live · 212 on"). */
+  live?: string | null;
+  /** Auth state for the header link (OAuth gated — hidden until configured). */
+  auth?: { configured: boolean; signedIn: boolean };
+  /** Which top-nav item is the current page, for the active underline. */
+  active?: "play" | "servers" | "host" | "docs" | "about" | null;
+}
+const { title, description, live = null, auth, active = null } = Astro.props;
+const nav = [
+  { key: "play", label: "Play", href: "https://play.worldspring.games" },
+  { key: "servers", label: "Servers", href: "/servers" },
+  { key: "host", label: "Host", href: "/host" },
+  { key: "docs", label: "Docs", href: "/getting-started" },
+  { key: "about", label: "About", href: "/about" },
+] as const;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style is:global>
+      :root {
+        --bg: #070806;
+        --surface: #0d0f0b;
+        --hairline: #22261f;
+        --hairline-2: #2a2e28;
+        --ink: #eef0e6; /* headings */
+        --ink-body: #d8dcd4; /* body */
+        --ink-2: #8a9286; /* secondary */
+        --ink-3: #5f6659; /* dim / mono labels */
+        --accent: #7da06b; /* olive */
+        --accent-bright: #c1d6a6;
+        --accent-wash: rgba(125, 160, 107, 0.1);
+        --danger: #c0392b;
+        --gold: #c9a227; /* "Official" marker */
+        --font-display: "Barlow Semi Condensed", "Barlow", system-ui, sans-serif;
+        --font-body: "Barlow", system-ui, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        --wrap: 1120px;
+      }
+      * { box-sizing: border-box; }
+      html { -webkit-text-size-adjust: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink-body);
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+      }
+      a { color: var(--accent-bright); text-decoration: none; }
+      a:hover { color: #d7e6c4; }
+      h1, h2, h3 { font-family: var(--font-display); text-transform: uppercase; color: var(--ink); margin: 0; letter-spacing: 0.01em; }
+      ::selection { background: rgba(125, 160, 107, 0.3); }
+      .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 28px; }
+      .eyebrow { font-family: var(--font-display); font-weight: 600; font-size: 12px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--accent); }
+      .mono { font-family: var(--font-mono); }
+      .muted { color: var(--ink-2); }
+      .dim { color: var(--ink-3); }
+
+      /* ---- Buttons ---- */
+      .btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        font-family: var(--font-display); font-weight: 600; font-size: 13px;
+        letter-spacing: 0.16em; text-transform: uppercase;
+        padding: 11px 18px; border: 1px solid var(--hairline-2); color: var(--ink-body);
+        background: transparent; cursor: pointer;
+      }
+      .btn:hover { border-color: var(--accent); color: var(--ink); }
+      .btn.primary { border-color: rgba(125, 160, 107, 0.5); background: var(--accent-wash); color: var(--accent-bright); }
+      .btn.primary:hover { background: rgba(125, 160, 107, 0.22); color: var(--ink); }
+
+      /* ---- Site chrome ---- */
+      .site-head {
+        position: sticky; top: 0; z-index: 20;
+        border-bottom: 1px solid var(--hairline);
+        background: rgba(7, 8, 6, 0.86); backdrop-filter: blur(8px);
+      }
+      .site-head .bar { display: flex; align-items: center; gap: 28px; height: 60px; }
+      .brand { display: flex; align-items: center; gap: 11px; }
+      .brand .mark { flex: none; }
+      .brand .word { font-family: var(--font-display); font-weight: 600; font-size: 17px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--ink); }
+      .site-nav { display: flex; align-items: center; gap: 22px; }
+      .site-nav a { font-family: var(--font-display); font-weight: 500; font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-2); padding: 4px 0; border-bottom: 1px solid transparent; }
+      .site-nav a:hover { color: var(--ink); }
+      .site-nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+      .head-right { margin-left: auto; display: flex; align-items: center; gap: 18px; }
+      .head-right .live { font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
+
+      /* ---- Footer ---- */
+      .site-foot { border-top: 1px solid var(--hairline); margin-top: 96px; }
+      .site-foot .cols { display: flex; flex-wrap: wrap; gap: 40px 72px; padding: 44px 0 22px; }
+      .site-foot .brandcol { flex: 1 1 240px; min-width: 200px; }
+      .site-foot h4 { font-family: var(--font-display); font-weight: 600; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 12px; }
+      .site-foot ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      .site-foot a { font-size: 14px; color: var(--ink-2); }
+      .site-foot a:hover { color: var(--ink); }
+      .site-foot .meta { padding: 16px 0 40px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); display: flex; gap: 20px; flex-wrap: wrap; border-top: 1px solid var(--hairline); }
+
+      @media (max-width: 720px) {
+        .site-nav { display: none; }
+        .site-foot .cols { gap: 28px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-head">
+      <div class="wrap bar">
+        <a class="brand" href="/" aria-label="Worldspring home">
+          <svg class="mark" viewBox="0 0 64 64" width="24" height="24" fill="none" stroke="var(--accent)" stroke-width="2.8" stroke-linejoin="round" aria-hidden="true">
+            <path d="M32 18c9 0 15 6 15 14s-6 14-15 14-15-6-15-14 6-14 15-14z" opacity=".5" />
+            <path d="M32 27c4 0 6 2 6 5s-2 5-6 5-6-2-6-5 2-5 6-5z" />
+          </svg>
+          <span class="word">Worldspring</span>
+        </a>
+        <nav class="site-nav">
+          {nav.map((n) => (
+            <a href={n.href} aria-current={active === n.key ? "page" : undefined}>{n.label}</a>
+          ))}
+        </nav>
+        <div class="head-right">
+          {live && <span class="live">{live}</span>}
+          {auth?.configured && (auth.signedIn
+            ? <a class="site-nav-a" href="/account" style="font-family:var(--font-display);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)">Account</a>
+            : <a href="/login" style="font-family:var(--font-display);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2)">Sign in</a>)}
+          <a class="btn primary" href="https://play.worldspring.games">Play</a>
+        </div>
+      </div>
+    </header>
+
+    <slot />
+
+    <footer class="site-foot">
+      <div class="wrap">
+        <div class="cols">
+          <div class="brandcol">
+            <div class="brand">
+              <svg class="mark" viewBox="0 0 64 64" width="20" height="20" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round" aria-hidden="true">
+                <path d="M32 18c9 0 15 6 15 14s-6 14-15 14-15-6-15-14 6-14 15-14z" opacity=".5" />
+                <path d="M32 27c4 0 6 2 6 5s-2 5-6 5-6-2-6-5 2-5 6-5z" />
+              </svg>
+              <span class="word" style="font-size:15px;letter-spacing:.22em">Worldspring</span>
+            </div>
+            <p class="dim" style="margin:12px 0 0;font-size:13px;letter-spacing:.04em">a web survival experiment. wash up, survive, host your own.</p>
+          </div>
+          <div>
+            <h4>Play</h4>
+            <ul>
+              <li><a href="https://play.worldspring.games">Official server</a></li>
+              <li><a href="/servers">Server directory</a></li>
+              <li><a href="/getting-started">How to play</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Host</h4>
+            <ul>
+              <li><a href="/host">Host your own</a></li>
+              <li><a href="/getting-started">Getting started</a></li>
+              <li><a href="/policy">Listing policy</a></li>
+            </ul>
+          </div>
+          <div>
+            <h4>Project</h4>
+            <ul>
+              <li><a href="/about">About</a></li>
+              <li><a href="/getting-started">Docs</a></li>
+              <li><a href="https://github.com/overra/worldspring">GitHub</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="meta">
+          <span>© 2026 Worldspring</span>
+          <span>seed 1337 · 800m</span>
+          <span>browser-native survival</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

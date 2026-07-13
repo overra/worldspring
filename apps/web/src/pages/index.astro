@@ -2,10 +2,11 @@
 // Marketing landing + directory preview (doc 02 §4/§8, M5). SSR: the nav shows
 // "Sign in"/"Account" ONLY when the OAuth secrets are set (doc 01), and the page
 // also previews the directory — the official server as a pinned card plus the top
-// 10 community servers — so `/` is a real entry point into the browse experience,
-// not just nav links. Before issue #66 configures OAuth the auth links stay hidden
-// (byte-identical intent), so deploying this is a visual no-op on that axis.
-// An explicit file route at / still wins over Starlight's generated root.
+// 10 community servers — so `/` is a real entry point into the browse experience.
+// Redesign (doc 00): rebuilt on the shared Layout / "field manual" design system.
+// Copy is intentionally the CURRENT survival framing; the platform ("fork it, make
+// your own game") messaging pass is a separate follow-up.
+import Layout from "../layouts/Layout.astro";
 import { authEnv, oauthConfigured, readSession, SESSION_COOKIE } from "../lib/auth";
 import { env } from "cloudflare:workers";
 import { PROTOCOL_VERSION } from "@worldspring/shared/protocol";
@@ -13,7 +14,6 @@ import { loadRankedList } from "../lib/listing";
 
 export const prerender = false;
 
-const title = "Worldspring";
 const e = authEnv();
 const configured = oauthConfigured(e);
 const session =
@@ -21,12 +21,8 @@ const session =
     ? await readSession(e.SESSION_HMAC_KEY, Astro.cookies.get(SESSION_COOKIE)?.value)
     : null;
 
-// Directory preview (doc 02 §4). Direct D1 read, same pattern as /servers; it
-// degrades to an empty preview on failure (local dev without a migrated D1, or a
-// prod outage) rather than 500-ing the landing page. NOT publicly cached here
-// because the nav is per-visitor once OAuth lands.
-// TODO(doc 02 §11): share the caches.default list payload via an internal helper
-// instead of a per-request D1 read once that helper exists.
+// Directory preview (doc 02 §4). Direct D1 read; degrades to an empty preview on
+// failure (local dev without a migrated D1, or a prod outage) rather than 500-ing.
 const db = (env as unknown as { DB: D1Database }).DB;
 const now = Date.now();
 let list: Awaited<ReturnType<typeof loadRankedList>> = [];
@@ -35,119 +31,166 @@ try {
 } catch (err) {
   console.error("[index] directory preview load failed — hiding preview:", err);
 }
-// loadRankedList already pins official first; render it as a standalone card and
-// keep the table to community rows so the official server never shows twice.
 const official = list.find((s) => s.official) ?? null;
 const top = list.filter((s) => !s.official).slice(0, 10);
+
+const serversLive = list.length;
+const survivorsOnline = list.reduce((sum, s) => sum + s.players, 0);
+const live = serversLive > 0 ? `${serversLive} live · ${survivorsOnline} on` : null;
+const pct = (r: number) => `${Math.round(r * 100)}%`;
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title} — host your own survival world</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
-      h2 { margin-top: 2.25rem; }
-      a.name { font-weight: 600; text-decoration: none; }
-      a.name:hover { text-decoration: underline; }
-      .dot { display: inline-block; width: 0.55em; height: 0.55em; border-radius: 50%; margin-right: 0.4em; }
-      .dot.active { background: #3c3; }
-      .dot.idle { background: #999; }
-      .badge { font-size: 0.75em; border: 1px solid #8886; border-radius: 4px; padding: 0 0.35em; margin-left: 0.4em; white-space: nowrap; }
-      .badge.gold { border-color: #c9a227; color: #c9a227; }
-      .official-card { border-left: 4px solid #c9a227; padding: 0.5rem 0 0.5rem 0.9rem; margin: 1.75rem 0; }
-      .official-card .head { display: flex; align-items: center; flex-wrap: wrap; }
-      .motd { color: #888; font-size: 0.9em; margin: 0.35rem 0; }
-      .meta { font-size: 0.9em; margin: 0.35rem 0; }
-      .host { font-weight: 600; word-break: break-all; }
-      .join { display: inline-block; margin-top: 0.5rem; font-weight: 600; text-decoration: none; }
-      .table-wrap { overflow-x: auto; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ccc4; vertical-align: top; }
-      .region { color: #666; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>{title}</h1>
-      <p>A browser-native multiplayer survival sandbox — worlds you host and shape.</p>
-      <p>
-        {/* The official server (game worker on the play. custom domain — see
-            apps/game/wrangler.jsonc for why the domain lives account-side). */}
-        <a href="https://play.worldspring.games">Play now</a> ·
-        <a href="/servers">Browse servers</a> · <a href="/getting-started">Docs</a>
-        {configured && session && <> · <a href="/account">Account</a></>}
-        {configured && !session && <> · <a href="/login">Sign in</a></>}
+<Layout
+  title="Worldspring — host your own survival world"
+  description="A browser-native multiplayer survival island. No install — click, name yourself, you're on the beach. Or run your own world for pennies."
+  live={live}
+  auth={{ configured, signedIn: !!session }}
+>
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <p class="eyebrow">Browser-native · DayZ-inspired survival</p>
+      <h1>Wash up.<br />Survive. Or host<br />the island yourself.</h1>
+      <p class="lede">
+        A hostile procedural island, up to 40 survivors, one authoritative world. No install —
+        click a link, name yourself, you're on the beach. Or run your own world for pennies.
       </p>
+      <div class="cta">
+        <a class="btn primary" href="https://play.worldspring.games">Play now</a>
+        <a class="btn" href="/servers">Browse servers</a>
+        <span class="mono note">no install · click, name, beach</span>
+      </div>
+      <div class="stats">
+        <div class="stat"><b class="mono">{serversLive}</b><span>servers live</span></div>
+        <div class="stat"><b class="mono">{survivorsOnline}</b><span>survivors online</span></div>
+        <div class="stat"><b class="mono">40</b><span>max per world</span></div>
+      </div>
+    </div>
+    <div class="topo" aria-hidden="true"></div>
+  </section>
 
-      {
-        official && (
-          <section class="official-card">
-            <div class="head">
-              <span
-                class={`dot ${official.activeNow ? "active" : "idle"}`}
-                title={official.activeNow ? "active now" : "idle — wakes on join"}
-              />
-              <a class="name" href={`/servers/${official.id}`}>{official.name}</a>
-              <span class="badge gold">Official</span>
-            </div>
-            {official.motd && <p class="motd">{official.motd}</p>}
-            <p class="meta">
-              <span class="host">{official.host}</span> · {official.players}/{official.maxPlayers} players
-              {official.hasUptime && <> · {Math.round(official.uptimeRatio20d * 100)}% uptime (20d)</>}
-            </p>
-            {/* First-party → straight out with ?ref, new tab (doc 02 §9); no interstitial. */}
-            <a
-              class="join"
-              href={`${official.joinUrl}/?ref=worldspring-directory`}
-              target="_blank"
-              rel="noopener noreferrer"
-            >Join {official.host} &rarr;</a>
-          </section>
-        )
-      }
+  <div class="wrap">
+    {official && (
+      <section class="official">
+        <div class="o-head">
+          <span class={`dot ${official.activeNow ? "on" : "idle"}`} title={official.activeNow ? "active now" : "idle — wakes on join"}></span>
+          <a class="o-name" href={`/servers/${official.id}`}>{official.name}</a>
+          <span class="tag gold">Official</span>
+        </div>
+        {official.motd && <p class="o-motd">{official.motd}</p>}
+        <p class="o-meta mono">
+          <span class="host">{official.host}</span> · {official.players}/{official.maxPlayers} players
+          {official.hasUptime && <> · {pct(official.uptimeRatio20d)} uptime (20d)</>}
+        </p>
+        <a class="btn primary" href={`${official.joinUrl}/?ref=worldspring-directory`} target="_blank" rel="noopener noreferrer">
+          Join {official.host} →
+        </a>
+      </section>
+    )}
 
-      {
-        top.length > 0 && (
-          <section>
-            <h2>Top community servers</h2>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Players</th>
-                    <th>Region</th>
-                    <th>Uptime (20d)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {top.map((s) => (
-                    <tr>
-                      <td>
-                        <span
-                          class={`dot ${s.activeNow ? "active" : "idle"}`}
-                          title={s.activeNow ? "active now" : "idle — wakes on join"}
-                        />
-                        <a class="name" href={`/servers/${s.id}`}>{s.name}</a>
-                        {s.outdated && (
-                          <span class="badge" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>
-                        )}
-                      </td>
-                      <td>{s.players}/{s.maxPlayers}</td>
-                      <td class="region">{s.region ?? "—"}</td>
-                      <td>{s.hasUptime ? `${Math.round(s.uptimeRatio20d * 100)}%` : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p><a href="/servers">Browse all servers &rarr;</a></p>
-          </section>
-        )
-      }
-    </main>
-  </body>
-</html>
+    {top.length > 0 && (
+      <section class="community">
+        <div class="c-head">
+          <h2>Top community servers</h2>
+          <a class="mono browse" href="/servers">browse all →</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th class="num">Players</th>
+                <th>Region</th>
+                <th class="num">Uptime</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {top.map((s) => (
+                <tr>
+                  <td>
+                    <span class={`dot ${s.activeNow ? "on" : "idle"}`} title={s.activeNow ? "active now" : "idle — wakes on join"}></span>
+                    <a class="c-name" href={`/servers/${s.id}`}>{s.name}</a>
+                    {s.outdated && <span class="tag" title="runs an older version of Worldspring — content and fixes may be missing">outdated</span>}
+                  </td>
+                  <td class="num mono">{s.players}/{s.maxPlayers}</td>
+                  <td class="region">{s.region ?? "—"}</td>
+                  <td class="num mono">{s.hasUptime ? pct(s.uptimeRatio20d) : "—"}</td>
+                  <td class="num"><a class="join-link" href={`/servers/${s.id}`}>join</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    )}
+
+    {!official && top.length === 0 && (
+      <section class="empty mono">
+        <p>The directory is warming up — no worlds are heartbeating yet.</p>
+        <p><a href="/host">Host the first one →</a></p>
+      </section>
+    )}
+  </div>
+</Layout>
+
+<style>
+  .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--hairline); }
+  .hero-inner { position: relative; z-index: 1; padding: 96px 28px 84px; }
+  .hero h1 {
+    font-weight: 700; font-size: clamp(40px, 7vw, 64px); line-height: 1.02;
+    margin: 16px 0 0; text-wrap: balance;
+  }
+  .lede { max-width: 540px; margin: 22px 0 0; color: var(--ink-2); font-size: 17px; }
+  .cta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 34px 0 0; }
+  .cta .note { color: var(--ink-3); font-size: 12px; letter-spacing: 0.02em; }
+  .stats { display: flex; gap: 0; margin: 48px 0 0; border: 1px solid var(--hairline); width: fit-content; max-width: 100%; flex-wrap: wrap; }
+  .stat { padding: 16px 26px; border-right: 1px solid var(--hairline); }
+  .stat:last-child { border-right: none; }
+  .stat b { display: block; font-size: 26px; font-weight: 700; color: var(--ink); }
+  .stat span { display: block; margin-top: 4px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* faint procedural-contour motif, right side of the hero */
+  .topo {
+    position: absolute; inset: 0 -10% 0 40%; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(120% 100% at 100% 0%, rgba(125, 160, 107, 0.08), transparent 60%),
+      repeating-radial-gradient(circle at 92% 30%, transparent 0 38px, rgba(125, 160, 107, 0.05) 38px 39px);
+    mask-image: linear-gradient(90deg, transparent, #000 55%);
+  }
+
+  .official { border: 1px solid var(--hairline); border-left: 2px solid var(--gold); padding: 20px 22px; margin: 48px 0 0; }
+  .o-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .o-name { font-family: var(--font-display); font-weight: 600; font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink); }
+  .o-motd { color: var(--ink-2); margin: 10px 0 0; }
+  .o-meta { color: var(--ink-3); font-size: 13px; margin: 8px 0 16px; }
+  .o-meta .host { color: var(--ink-2); word-break: break-all; }
+
+  .community { margin: 44px 0 0; }
+  .c-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+  .c-head h2 { font-size: 22px; font-weight: 700; letter-spacing: 0.06em; }
+  .browse { font-size: 12px; color: var(--ink-3); }
+  .table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid var(--hairline); }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-family: var(--font-display); font-weight: 600; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); padding: 12px 16px; border-bottom: 1px solid var(--hairline); }
+  td { padding: 13px 16px; border-bottom: 1px solid var(--hairline); vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(125, 160, 107, 0.04); }
+  th.num, td.num { text-align: right; }
+  .c-name { font-family: var(--font-display); font-weight: 600; font-size: 15px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-body); }
+  .c-name:hover { color: var(--ink); }
+  .region { color: var(--ink-2); font-size: 14px; }
+  .join-link { font-family: var(--font-display); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .dot.on { background: var(--accent); box-shadow: 0 0 6px rgba(125, 160, 107, 0.6); }
+  .dot.idle { background: var(--ink-3); }
+  .tag { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--hairline-2); color: var(--ink-3); padding: 1px 6px; }
+  .tag.gold { border-color: var(--gold); color: var(--gold); }
+
+  .empty { margin: 56px 0; color: var(--ink-3); font-size: 14px; }
+
+  @media (max-width: 720px) {
+    .hero-inner { padding: 64px 28px 56px; }
+    .stat { padding: 14px 18px; }
+  }
+</style>

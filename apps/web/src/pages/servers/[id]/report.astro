@@ -6,6 +6,7 @@
 // checkOrigin covers CSRF); the intake logic is the exact fileReport() the
 // JSON API route uses.
 export const prerender = false;
+import Layout from "../../../layouts/Layout.astro";
 import { parseReportBody, REPORT_REASONS } from "@worldspring/shared/directory";
 import { directoryEnv, hashIp, readFormBody } from "../../../lib/db";
 import { fileReport, type ReportOutcome } from "../../../lib/reports";
@@ -62,64 +63,209 @@ if (Astro.request.method === "POST") {
 }
 
 const host = new URL(server.url).hostname;
+
+// Keep this page out of the index (was <meta name="robots" content="noindex">).
+// The shared Layout owns <head> and has no head slot to modify, so the noindex
+// signal ships as an HTTP header instead — honoured even without JS rendering.
+Astro.response.headers.set("X-Robots-Tag", "noindex");
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex" />
-    <title>Report {server.name} — Worldspring</title>
-    <style>
-      body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 44rem; padding: 0 1rem; }
-      label { display: block; margin: 0.5rem 0; }
-      textarea { width: 100%; min-height: 6rem; font: inherit; padding: 0.5rem; }
-      button { padding: 0.5rem 1rem; font-size: 1rem; margin-top: 0.75rem; }
-      .ok { color: #2a7; }
-      .error { color: #c33; }
-      .muted { color: #888; font-size: 0.9em; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Report {server.name}</h1>
-      <p class="muted">{host}</p>
+<Layout
+  title={`Report ${server.name} — Worldspring`}
+  description="Flag a listing on the Worldspring server directory for human review."
+  active="servers"
+>
+  <section class="report">
+    <div class="wrap">
+      <div class="report-inner">
+        <p class="eyebrow">Directory · Report a listing</p>
+        <h1>Report {server.name}</h1>
+        <p class="host mono">{host}</p>
 
-      {
-        outcome === "accepted" ? (
-          <p class="ok">
-            Thanks — your report is in. Reports are reviewed by a human;
-            they never remove a server automatically.
-          </p>
-        ) : (
-          <>
-            {outcome === "rate-limited" && (
-              <p class="error">You've hit the daily report limit — try again tomorrow.</p>
-            )}
-            {outcome === "bad-body" && <p class="error">Pick a reason and try again.</p>}
-            <form method="post">
-              <fieldset>
-                <legend>What's wrong?</legend>
-                {REPORT_REASONS.map((r) => (
-                  <label>
-                    <input type="radio" name="reason" value={r} required /> {REASON_LABELS[r]}
+        {
+          outcome === "accepted" ? (
+            <div class="panel ok">
+              <p class="panel-label">Report filed</p>
+              <p class="panel-body">
+                Thanks — your report is in. Reports are reviewed by a human; they never
+                remove a server automatically.
+              </p>
+            </div>
+          ) : (
+            <>
+              {outcome === "rate-limited" && (
+                <div class="panel err">
+                  <p class="panel-label">Daily limit reached</p>
+                  <p class="panel-body">
+                    You've hit the daily report limit — try again tomorrow.
+                  </p>
+                </div>
+              )}
+              {outcome === "bad-body" && (
+                <div class="panel err">
+                  <p class="panel-label">Missing reason</p>
+                  <p class="panel-body">Pick a reason and try again.</p>
+                </div>
+              )}
+
+              <form method="post" class="report-form">
+                <fieldset class="reasons">
+                  <legend>What's wrong?</legend>
+                  <div class="reason-grid">
+                    {REPORT_REASONS.map((r) => (
+                      <label class="reason">
+                        <input type="radio" name="reason" value={r} required />
+                        <span class="reason-name">{REASON_LABELS[r]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+
+                <div class="detail">
+                  <label class="field-label" for="detail">
+                    Details <span class="field-opt mono">optional · 500 char max</span>
                   </label>
-                ))}
-              </fieldset>
-              <label for="detail">Details (optional, 500 characters max)</label>
-              <textarea id="detail" name="detail" maxlength="500"></textarea>
-              <button type="submit">Send report</button>
-            </form>
-            <p class="muted">
-              Reports flag a server for human review — they never take one down
-              automatically, and duplicate reports from the same place collapse
-              into one. See the <a href="/policy/">listing policy</a>.
-            </p>
-          </>
-        )
-      }
-      <p><a href="/servers">&larr; Back to servers</a></p>
-    </main>
-  </body>
-</html>
+                  <textarea id="detail" name="detail" maxlength="500" placeholder="Anything a reviewer should know…" />
+                </div>
+
+                <button type="submit" class="btn primary">Send report</button>
+              </form>
+
+              <p class="fine muted">
+                Reports flag a server for human review — they never take one down
+                automatically, and duplicate reports from the same place collapse into one.
+                See the <a href="/policy/">listing policy</a>.
+              </p>
+            </>
+          )
+        }
+
+        <p class="back mono"><a href="/servers">&larr; Back to servers</a></p>
+      </div>
+    </div>
+  </section>
+</Layout>
+
+<style>
+  .report { border-bottom: 1px solid var(--hairline); }
+  .report-inner { max-width: 660px; padding: 72px 0 88px; }
+
+  .report h1 {
+    font-weight: 700;
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.05;
+    letter-spacing: 0.02em;
+    margin: 14px 0 0;
+    word-break: break-word;
+  }
+  .host { color: var(--ink-3); font-size: 13px; margin: 10px 0 0; word-break: break-all; }
+
+  /* ---- Result / error panels ---- */
+  .panel {
+    margin: 32px 0 0;
+    border: 1px solid var(--hairline);
+    border-left: 2px solid var(--accent);
+    background: var(--accent-wash);
+    padding: 18px 20px;
+  }
+  .panel.err { border-left-color: var(--danger); background: rgba(192, 57, 43, 0.08); }
+  .panel-label {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-bright);
+    margin: 0;
+  }
+  .panel.err .panel-label { color: var(--danger); }
+  .panel-body { margin: 8px 0 0; color: var(--ink-body); }
+
+  /* ---- Form ---- */
+  .report-form { margin: 32px 0 0; }
+  .reasons { border: 0; margin: 0; padding: 0; }
+  .reasons legend {
+    padding: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .reason-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .reason {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 13px 15px;
+    border: 1px solid var(--hairline);
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+  .reason:hover { border-color: var(--hairline-2); background: rgba(125, 160, 107, 0.04); }
+  .reason:has(input:checked) { border-color: var(--accent); background: var(--accent-wash); }
+  .reason:has(input:focus-visible) { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .reason input {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--accent);
+  }
+  .reason-name {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-body);
+  }
+  .reason:has(input:checked) .reason-name { color: var(--ink); }
+
+  .detail { margin: 26px 0 0; }
+  .field-label {
+    display: block;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin-bottom: 10px;
+  }
+  .field-opt { letter-spacing: 0.04em; text-transform: none; color: var(--ink-3); font-size: 11px; }
+  textarea {
+    width: 100%;
+    min-height: 7rem;
+    resize: vertical;
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink-body);
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 0;
+    padding: 12px 14px;
+  }
+  textarea::placeholder { color: var(--ink-3); }
+  textarea:focus { outline: none; border-color: var(--accent); }
+
+  .report-form .btn { margin-top: 22px; }
+
+  .fine { margin: 26px 0 0; font-size: 13px; color: var(--ink-2); max-width: 60ch; }
+
+  .back { margin: 40px 0 0; font-size: 12px; }
+  .back a { color: var(--ink-3); letter-spacing: 0.06em; }
+  .back a:hover { color: var(--ink-2); }
+
+  @media (max-width: 560px) {
+    .report-inner { padding: 52px 0 64px; }
+    .reason-grid { grid-template-columns: 1fr; }
+  }
+</style>
