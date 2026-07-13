@@ -1,9 +1,13 @@
 name: Preview
 
-# Per-PR game preview. Each PR gets its OWN throwaway Worker `worldspring-pr-<N>`
-# with its OWN Durable Object namespace (a fresh world) — so a preview never
-# touches the production GameRoom/world, and a schema-changing PR can't trip the
-# doc 04 M2 fail-closed wipe against real data. Torn down when the PR closes.
+# Per-PR previews. Each PR gets throwaway workers for BOTH the game
+# (worldspring-pr-<N>, with its OWN fresh Durable Object world — so a preview
+# never touches the production GameRoom/world, and a schema-changing PR can't
+# trip the doc 04 M2 fail-closed wipe against real data) and the site
+# (worldspring-web-pr-<N> on *.workers.dev — the prod worldspring.games
+# custom_domain route is stripped from the built config so a preview can never
+# claim the apex). ONE combined comment links both; both are torn down when the
+# PR closes.
 #
 # Requires repo secrets CLOUDFLARE_API_TOKEN ("Edit Cloudflare Workers" scope)
 # and CLOUDFLARE_ACCOUNT_ID. Fork PRs are skipped (no secrets).
@@ -20,12 +24,15 @@ permissions:
   pull-requests: write
 
 jobs:
-  deploy:
+  deploy-game:
     if: >-
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      url: ${{ steps.deploy.outputs.deployment-url }}
+      ok: ${{ steps.gate.outputs.ok }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -41,7 +48,7 @@ jobs:
           if [ -n "$TOKEN" ]; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping preview deploy (see .github/workflows/README.md)."
+            echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping game preview deploy (see .github/workflows/README.md)."
             echo "ok=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -79,30 +86,113 @@ jobs:
             --name worldspring-pr-${{ github.event.pull_request.number }}
             --var TESTBED:1
 
-      - name: Comment preview URL
+  deploy-web:
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      url: ${{ steps.deploy.outputs.deployment-url }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Check for Cloudflare secret
+        id: gate
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::CLOUDFLARE_API_TOKEN not set — skipping web preview deploy."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.ok == 'true'
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - if: steps.gate.outputs.ok == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install
         if: steps.gate.outputs.ok == 'true'
+        run: pnpm install --frozen-lockfile
+
+      # Emits apps/web/dist/server/{entry.mjs,wrangler.json} + dist/client.
+      - name: Build web
+        if: steps.gate.outputs.ok == 'true'
+        run: pnpm --filter @worldspring/web build
+
+      # Strip the prod custom_domain route from the generated (JSON) config and
+      # enable workers_dev, so the per-PR deploy lands on *.workers.dev and can
+      # NEVER claim worldspring.games. Bindings (D1/KV) are left intact.
+      - name: Neutralize prod route for the preview
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          cfg=apps/web/dist/server/wrangler.json
+          jq 'del(.routes) | .workers_dev = true' "$cfg" > "$cfg.tmp"
+          mv "$cfg.tmp" "$cfg"
+          echo "routes after strip: $(jq -c '.routes // "none"' "$cfg")"
+
+      - name: Deploy preview worker
+        id: deploy
+        if: steps.gate.outputs.ok == 'true'
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.99.0"
+          workingDirectory: apps/web
+          command: >-
+            deploy -c dist/server/wrangler.json
+            --name worldspring-web-pr-${{ github.event.pull_request.number }}
+
+  comment:
+    needs: [deploy-game, deploy-web]
+    if: >-
+      always() &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment preview URLs
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PREVIEW_URL: ${{ steps.deploy.outputs.deployment-url }}
+          GAME_URL: ${{ needs.deploy-game.outputs.url }}
+          WEB_URL: ${{ needs.deploy-web.outputs.url }}
+          GATE_OK: ${{ needs.deploy-game.outputs.ok }}
         with:
           script: |
             const marker = "<!-- worldspring-preview -->";
             const n = context.issue.number;
-            const url = process.env.PREVIEW_URL;
+            const game = process.env.GAME_URL;
+            const web = process.env.WEB_URL;
+            const skipped = process.env.GATE_OK !== "true";
+            const row = (emoji, label, url, worker, note) =>
+              url
+                ? `${emoji} **${label}** — ${url}  ·  \`${worker}\` ${note}`
+                : `${emoji} **${label}** — _not deployed_  ·  \`${worker}\` ${note}`;
             const body = [
               marker,
-              "### 🎮 Game preview deployed",
+              "### 🚀 Preview deploys",
               "",
-              url ? `**Play it:** ${url}` : "_Deployed — the URL is in the Deploy step logs._",
+              row("🎮", "Game", game, `worldspring-pr-${n}`, "(fresh isolated world)"),
+              row("🌐", "Web", web, `worldspring-web-pr-${n}`, "(workers.dev — no custom domain)"),
+              ...(skipped
+                ? ["", "_`CLOUDFLARE_API_TOKEN` not set — previews skipped (see .github/workflows/README.md)._"]
+                : []),
               "",
-              `Throwaway worker \`worldspring-pr-${n}\` with its own fresh world (isolated Durable Object). Updates on every push; deleted when this PR closes.`,
+              "Updates on every push; both deleted when this PR closes.",
             ].join("\n");
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: n,
             });
-            // Only ever touch OUR own comment: the github-actions bot author
-            // AND our hidden marker. Never overwrites CodeRabbit, other bots,
-            // or humans (even if one quotes the marker).
+            // Only ever touch OUR own comment (github-actions bot + this marker) —
+            // never CodeRabbit, other bots, or humans (even if one quotes it).
             const prev = comments.find(
               (c) => c.user.login === "github-actions[bot]" && c.body.startsWith(marker),
             );
@@ -123,25 +213,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # Delete by worker NAME in an isolated dir. Do NOT use cloudflare/
-      # wrangler-action here: with no prior `pnpm install` it falls back to
-      # `npm i wrangler` in apps/game, which dies on the repo's `workspace:*`
-      # deps (EUNSUPPORTEDPROTOCOL) — so the delete silently never ran and every
-      # preview worker leaked. `npx wrangler` in runner.temp (an empty dir)
-      # installs cleanly from the registry. `delete <name> --force` needs only
-      # the name + token/account (no config or build); --force is required to
-      # delete a Worker that owns a Durable Object namespace.
-      - name: Delete preview worker
+      # Delete BOTH preview workers by name in an empty dir with npx (NOT
+      # wrangler-action — with no prior install it npm-installs into the app and
+      # dies on workspace:* deps). --force is required for the game worker (owns
+      # a Durable Object namespace) and harmless for the web worker. Run both
+      # regardless of individual failure; exit nonzero if either failed so the
+      # teardown comment reflects reality.
+      - name: Delete preview workers
         id: delete
         continue-on-error: true
         working-directory: ${{ runner.temp }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4.99.0 delete worldspring-pr-${{ github.event.pull_request.number }} --force
+        run: |
+          rc=0
+          npx --yes wrangler@4.99.0 delete worldspring-pr-${{ github.event.pull_request.number }} --force || rc=1
+          npx --yes wrangler@4.99.0 delete worldspring-web-pr-${{ github.event.pull_request.number }} --force || rc=1
+          exit $rc
 
       # Reflect the ACTUAL delete outcome — never claim a teardown that didn't
-      # happen. Only touches our own bot+marker comment (never CodeRabbit/humans).
+      # happen. Only touches our own bot+marker comment.
       - name: Comment teardown
         if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -153,8 +245,8 @@ jobs:
             const n = context.issue.number;
             const ok = process.env.DELETE_OUTCOME === "success";
             const body = ok
-              ? `${marker}\n### 🎮 Game preview\n\nTorn down — \`worldspring-pr-${n}\` deleted now that this PR is closed.`
-              : `${marker}\n### 🎮 Game preview\n\n⚠️ Couldn't confirm teardown of \`worldspring-pr-${n}\` — it may already be gone, or may need a manual \`wrangler delete worldspring-pr-${n} --force\`. See the cleanup job logs.`;
+              ? `${marker}\n### 🚀 Preview deploys\n\nTorn down — \`worldspring-pr-${n}\` + \`worldspring-web-pr-${n}\` deleted now that this PR is closed.`
+              : `${marker}\n### 🚀 Preview deploys\n\n⚠️ Couldn't confirm teardown — a preview worker may already be gone, or may need a manual \`wrangler delete worldspring-pr-${n} --force\` / \`wrangler delete worldspring-web-pr-${n} --force\`. See the cleanup job logs.`;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: n,
             });
