@@ -41,8 +41,10 @@ const near = (a, b, tol) => Math.abs(a - b) <= tol;
 const posClose = (e, o, ref) =>
   near(e.x, o.x, POS_TOL) && near(e.y, o.y, POS_TOL) && near(e.z, o.z, POS_TOL);
 
-// A representative reference position (the receiving player). Every entity below
-// sits within interest range (<=220 m) of it, exactly as the server filters.
+// A representative reference position (the receiving player). Binary entities
+// are encoded as i16 offsets from it; most sit inside the real 220 m interest
+// filter, but players[2] is pushed to ~200 m on each of x/z on purpose — near
+// the +-256 m per-axis codec window — to prove offsets that large don't clamp.
 const YOU = {
   x: 123.45,
   y: 6.78,
@@ -80,7 +82,7 @@ const full = {
     { id: 4, ...off(YOU, -10, 0, 10), yaw: -2.2, state: "attack", mil: true },
   ],
   loot: [
-    { id: 10, type: "wood", count: 250, ...off(YOU, 3, 0, 3) },
+    { id: 10, type: "wood", count: 300, ...off(YOU, 3, 0, 3) },
     { id: 11, type: "pistol_ammo", count: 1, ...off(YOU, -3, 0, -3) },
   ],
   corpses: [
@@ -176,7 +178,7 @@ for (let i = 0; i < 4; i++) {
 
 // --- Loot ---
 ok(d.loot.length === 2, "loot length");
-ok(d.loot[0].type === "wood" && d.loot[0].count === 250, "loot type + count exact (count>255)");
+ok(d.loot[0].type === "wood" && d.loot[0].count === 300, "loot type + count exact (count>255 exercises u16)");
 ok(posClose(d.loot[0], full.loot[0]), "loot position within tol");
 
 // --- Corpses (player w/ name, zombie w/ null name) ---
