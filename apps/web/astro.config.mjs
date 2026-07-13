@@ -34,6 +34,11 @@ export default defineConfig({
     sitemap({ filter: (page) => !SITEMAP_EXCLUDE.has(page) }),
     starlight({
       title: "Worldspring Docs",
+      // Field-manual skin (matches apps/web design system): near-black ground,
+      // olive accent, bone ink, Barlow / Barlow Semi Condensed / JetBrains Mono,
+      // hairline borders, sharp corners. All CSS-variable overrides — no
+      // component overrides. See src/styles/docs.css.
+      customCss: ["./src/styles/docs.css"],
       // Scaffold sidebar — grows as hosting/reference docs land (doc 02/03).
       sidebar: [{ label: "Start", items: [{ slug: "getting-started" }] }],
     }),
