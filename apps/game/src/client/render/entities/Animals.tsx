@@ -12,7 +12,6 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import { effectiveDeerMax } from "@worldspring/shared/config";
 import { clientWorld } from "@/client/runtime";
 const MAX_FRAME_DT = 0.1;
 
@@ -152,24 +151,11 @@ function createPool(scene: THREE.Group): DeerPool {
   deerSource?.traverse((obj) => {
     if (obj instanceof THREE.Mesh) obj.castShadow = true;
   });
-  const root = new THREE.Group();
-  const slots: DeerSlot[] = [];
-  const free: number[] = [];
-  // +4 respawn margin over the wire max — same as the old DEER_COUNT + 4 constant,
-  // but now scaled to the welcome config. The pool grows lazily on exhaustion so a
-  // live density raise (M5) is always visible without a rejoin.
-  const initialSize = effectiveDeerMax(clientWorld.config) + 4;
-  for (let i = 0; i < initialSize; i++) {
-    const rig = createRig(deerSource);
-    // Pooled rigs start DETACHED (the RemotePlayers pattern) — attached-but-
-    // hidden objects still pay updateMatrixWorld every frame in three r184.
-    // Deer are plain mesh clones, not skinned rigs, so the win is small; the
-    // pattern is applied for consistency with the other entity pools.
-    // Stagger phases so a herd never moves in lockstep.
-    slots.push({ rig, phase: i * 1.3, amp: 0, gallop: 0 });
-    free.push(initialSize - 1 - i);
-  }
-  return { root, slots, byId: new Map(), free, deerSource };
+  // Empty pool: deer rigs are cloned lazily on first sighting via growPool, so
+  // a join pays only for deer actually in interest range — growth stays bounded
+  // by real wire entities. Deer are plain mesh clones (cheap), but the lazy
+  // pattern matches the skinned pools for consistency and trims mount work.
+  return { root: new THREE.Group(), slots: [], byId: new Map(), free: [], deerSource };
 }
 
 export function Animals(): ReactElement {

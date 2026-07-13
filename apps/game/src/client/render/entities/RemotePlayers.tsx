@@ -121,26 +121,32 @@ interface PlayerPool {
   flashlights: THREE.SpotLight[];
 }
 
+/** Allocate one remote-player slot into the pool (lazy growth up to
+ * MAX_PLAYERS). The rig + its name-label sprite start DETACHED + hidden like
+ * the old eager createPool; the caller acquires (and attaches) it in the same
+ * frame. No-op at MAX_PLAYERS (the server never exceeds it). */
+function growPool(pool: PlayerPool): void {
+  if (pool.slots.length >= MAX_PLAYERS) return;
+  const idx = pool.slots.length;
+  const rig = createCharacterRig("survivor");
+  rig.root.visible = false;
+  const label = new THREE.Sprite(emptyLabelMaterial);
+  label.position.y = LABEL_Y;
+  label.scale.set(1.6, 0.4, 1);
+  rig.root.add(label);
+  pool.slots.push({ rig, label, appliedName: "", lastAttacking: false, accumDt: 0 });
+  pool.free.push(idx);
+}
+
 function createPool(): PlayerPool {
   const root = new THREE.Group();
-  const slots: PlayerSlot[] = [];
-  const free: number[] = [];
-  for (let i = 0; i < MAX_PLAYERS; i++) {
-    const rig = createCharacterRig("survivor");
-    rig.root.visible = false;
-    const label = new THREE.Sprite(emptyLabelMaterial);
-    label.position.y = LABEL_Y;
-    label.scale.set(1.6, 0.4, 1);
-    rig.root.add(label);
-    // Pooled rigs start DETACHED from the scene graph (visible=false alone is
-    // belt-and-suspenders): three r184's Object3D.updateMatrixWorld recurses
-    // into ALL children unconditionally, so an attached-but-hidden rig still
-    // pays updateMatrix + matrixWorld multiplies for its dozens of bones every
-    // frame (~0.29ms for a full idle pool, measured). Acquire attaches;
-    // release detaches.
-    slots.push({ rig, label, appliedName: "", lastAttacking: false, accumDt: 0 });
-    free.push(MAX_PLAYERS - 1 - i); // pop() hands out slot 0 first
-  }
+  // Empty rig pool: survivor rigs (skinned — the join-hitch cost) are cloned
+  // lazily on first sighting via growPool, so a join pays only for remote
+  // players actually present, not the full MAX_PLAYERS capacity. Pooled rigs
+  // start DETACHED + hidden until acquire (three r184's updateMatrixWorld
+  // recurses into ALL children, so an attached-but-hidden rig still pays
+  // per-bone matrix work every frame — ~0.29ms for a full idle pool, measured).
+  // The flashlight pool stays eager: 4 SpotLights, negligible.
   const flashlights: THREE.SpotLight[] = [];
   for (let i = 0; i < FLASHLIGHT_POOL_SIZE; i++) {
     const light = new THREE.SpotLight(
@@ -159,7 +165,7 @@ function createPool(): PlayerPool {
     root.add(light.target);
     flashlights.push(light);
   }
-  return { root, slots, byId: new Map(), free, frame: 0, flashlights };
+  return { root, slots: [], byId: new Map(), free: [], frame: 0, flashlights };
 }
 
 // Reused per-frame scratch for flashlight assignment (cleared each frame).
@@ -194,8 +200,9 @@ export function RemotePlayers(): ReactElement {
       if (seated.has(view.id)) continue; // doc 13 M4 — riders render on the hull
       let idx = pool.byId.get(view.id);
       if (idx === undefined) {
+        if (pool.free.length === 0) growPool(pool); // lazy grow up to MAX_PLAYERS
         idx = pool.free.pop();
-        if (idx === undefined) continue; // pool exhausted (shouldn't happen)
+        if (idx === undefined) continue; // at MAX_PLAYERS (shouldn't happen)
         pool.byId.set(view.id, idx);
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
