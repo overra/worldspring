@@ -47,6 +47,16 @@ export const INTERP_DELAY_MS = 120; // remote entity render delay (interpolation
 export const INTEREST_RADIUS = 220; // entities beyond this are not sent to a client
 export const LOOT_INTEREST_RADIUS = 120;
 export const MAX_INPUT_DT = 0.05; // clamp for a single input cmd dt (seconds)
+// Client emits input cmds at (at most) this fixed cadence instead of once per
+// rendered frame, so cmd count tracks simulated time, not display refresh: a
+// 240Hz monitor sends ~60 cmds/s, not 240. Fewer cmds = a smaller client
+// reconcile replay set AND fewer per-cmd stepPlayer/resolveStatics calls
+// server-side, for identical movement. Displays at/below this rate are
+// unaffected (they still emit every frame). Kept <= MAX_INPUT_DT so an emitted
+// dt is never clamped by the server. Purely client-side pacing — the InputCmd
+// wire shape is unchanged, so no PROTOCOL_VERSION bump.
+export const INPUT_TICK_HZ = 60;
+export const FIXED_INPUT_DT = 1 / INPUT_TICK_HZ;
 // Server-side anti-speedhack: each player's input time accrues at wall-clock
 // rate with a small burst allowance for network/frame hiccups. Sustained
 // movement rate is therefore capped at exactly 1x real time.

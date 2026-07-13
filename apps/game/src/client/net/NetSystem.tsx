@@ -5,6 +5,7 @@
 import { useFrame } from "@react-three/fiber";
 import {
   BUILD_CELL,
+  FIXED_INPUT_DT,
   INPUT_SEND_MS,
   MAX_CMDS_PER_FRAME,
   MAX_INPUT_DT,
@@ -24,6 +25,10 @@ import { applyLocalCmd, drainOutbox, nextSeq } from "./prediction";
 import { updateInterpolation } from "./interpolation";
 
 let lastSendMs = 0;
+// Real frame time banked toward the next fixed-cadence input cmd, plus a jump
+// edge latched across frames that bank no whole step (see the build block).
+let inputAccumulator = 0;
+let jumpLatched = false;
 
 export function NetSystem(): null {
   useFrame((_, delta) => {
@@ -32,15 +37,25 @@ export function NetSystem(): null {
 
     const ui = useUIStore.getState();
     const phase = ui.phase;
-    if (phase !== "playing" && phase !== "dead") return;
+    if (phase !== "playing" && phase !== "dead") {
+      // Not in a controllable phase (connecting/reconnecting/menu): drop any
+      // banked step + latched jump so a reconnect never flushes stale input
+      // (the dead/seated branches reset symmetrically).
+      inputAccumulator = 0;
+      jumpLatched = false;
+      return;
+    }
 
     const now = performance.now();
     updateInterpolation(now);
 
     if (phase === "dead") {
       // Death cam: remotes keep interpolating, but no input cmds and no
-      // pickup prompt. Consume the jump edge so it can't fire on respawn.
+      // pickup prompt. Consume the jump edge so it can't fire on respawn, and
+      // drop any banked step so respawn starts from a clean accumulator.
       inputState.jump = false;
+      inputAccumulator = 0;
+      jumpLatched = false;
       clientWorld.promptLootId = null;
       clientWorld.promptDoorId = null;
       clientWorld.promptCrateId = null;
@@ -59,12 +74,17 @@ export function NetSystem(): null {
     const seat = ui.vehicleSeat;
     if (seat !== null) {
       inputState.jump = false;
+      inputAccumulator = 0;
+      jumpLatched = false;
       driveSeated(seat, ui, now);
       return;
     }
 
     // --- Build this frame's input cmds ---
-    const jumpEdge = inputState.jump;
+    // Latch the jump edge: at a fixed emit cadence some frames bank no whole
+    // step, and a jump pressed inside one of those windows must survive to the
+    // next emitted cmd instead of being eaten.
+    if (inputState.jump) jumpLatched = true;
     inputState.jump = false;
     // chatOpen must be here explicitly: on desktop the pointer unlock already
     // blocks, but in touchMode there is no pointer lock to lose. codePad is a
@@ -78,8 +98,12 @@ export function NetSystem(): null {
       (!inputState.pointerLocked && !inputState.touchMode);
     let mx = 0;
     let mz = 0;
-    let jump = false;
-    if (!blocked) {
+    if (blocked) {
+      // Drop any latched jump so it can't fire when the menu closes; the emit
+      // loop below still drains banked time as zero-move cmds, keeping
+      // simulated time continuous with the server (the player just holds).
+      jumpLatched = false;
+    } else {
       // Keyboard direction + virtual joystick, clamped; stepPlayer normalizes
       // anything above unit length but preserves analog magnitudes below it.
       mx = clamp(
@@ -92,28 +116,38 @@ export function NetSystem(): null {
         -1,
         1,
       );
-      jump = jumpEdge;
     }
-    // A long frame becomes several sub-cmds of at most MAX_INPUT_DT each, so
-    // low-FPS clients keep full authoritative movement speed. Beyond the cap
-    // the remainder is dropped (matches the server's input-budget burst).
-    let remaining = clamp(delta, 0.001, MAX_INPUT_DT * MAX_CMDS_PER_FRAME);
-    let first = true;
-    while (remaining > 0) {
-      const dt = Math.min(remaining, MAX_INPUT_DT);
-      remaining -= dt;
-      const cmd: InputCmd = {
-        seq: nextSeq(),
-        dt,
-        mx,
-        mz,
-        yaw: inputState.yaw,
-        pitch: inputState.pitch,
-        sprint: inputState.sprint,
-        jump: jump && first,
-      };
-      applyLocalCmd(cmd, world);
-      first = false;
+    // Emit cmds at a fixed cadence instead of one per rendered frame: bank real
+    // frame time and only flush once a whole FIXED_INPUT_DT step has
+    // accumulated. Displays at/below 60Hz bank one step every frame and still
+    // emit every frame with the true frame dt (identical to before); a 240Hz
+    // client banks ~4 frames per flush — ~60 cmds/s, not 240. Flushing the full
+    // banked amount (variable dt, not a quantized fixed step) keeps total
+    // simulated time == real elapsed time, so client prediction and the server
+    // integrate the same movement — no reconcile drift. The cap + MAX_INPUT_DT
+    // sub-split match the old per-frame path exactly (post-hitch burst bound).
+    inputAccumulator = Math.min(inputAccumulator + delta, MAX_INPUT_DT * MAX_CMDS_PER_FRAME);
+    if (inputAccumulator >= FIXED_INPUT_DT) {
+      let remaining = inputAccumulator;
+      inputAccumulator = 0;
+      let first = true;
+      while (remaining > 0) {
+        const dt = Math.min(remaining, MAX_INPUT_DT);
+        remaining -= dt;
+        const cmd: InputCmd = {
+          seq: nextSeq(),
+          dt,
+          mx,
+          mz,
+          yaw: inputState.yaw,
+          pitch: inputState.pitch,
+          sprint: inputState.sprint,
+          jump: jumpLatched && first,
+        };
+        applyLocalCmd(cmd, world);
+        first = false;
+      }
+      jumpLatched = false;
     }
 
     // --- Batched send ---
