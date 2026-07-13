@@ -6,7 +6,6 @@ import { useMemo } from "react";
 import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { effectiveZombieMax } from "@worldspring/shared/config";
 import type { ZombieState } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 import {
@@ -67,24 +66,14 @@ function growPool(pool: ZombiePool): number {
 }
 
 function createPool(): ZombiePool {
-  const root = new THREE.Group();
-  const slots: ZombieSlot[] = [];
-  const free: number[] = [];
-  // Initial size is an allocation hint from the welcome config — never a render
-  // cap. The pool grows lazily on exhaustion so M5's live density raise (and any
-  // snapshot with more entities than the hint) is always visible.
-  const initialSize = effectiveZombieMax(clientWorld.config);
-  for (let i = 0; i < initialSize; i++) {
-    const rig = createCharacterRig("zombie");
-    rig.root.visible = false;
-    // Pooled rigs start DETACHED from the scene graph (the RemotePlayers
-    // pattern): three r184's updateMatrixWorld recurses into ALL children
-    // unconditionally, so an attached-but-hidden skinned rig still pays
-    // per-bone matrix work every frame. Acquire attaches; release detaches.
-    slots.push({ rig, lastState: null, nextSwingIn: 0, accumDt: 0 });
-    free.push(initialSize - 1 - i);
-  }
-  return { root, slots, byId: new Map(), free, frame: 0 };
+  // Empty pool: zombie rigs are cloned lazily on first sighting via growPool,
+  // so a join pays only for zombies actually in the initial interest set — not
+  // the full config capacity. Cloning skinned rigs is the join hitch, and
+  // pre-cloning effectiveZombieMax of them up front is exactly what this avoids;
+  // growth stays bounded by real wire entities (see growPool). Pooled rigs are
+  // DETACHED + hidden until acquire (three r184's updateMatrixWorld recurses
+  // into ALL children, so an attached-but-hidden rig still pays per-bone work).
+  return { root: new THREE.Group(), slots: [], byId: new Map(), free: [], frame: 0 };
 }
 
 export function Zombies(): ReactElement {

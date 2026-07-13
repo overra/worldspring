@@ -67,24 +67,35 @@ interface CorpsePool {
   slots: CorpseSlot[];
   byId: Map<number, number>;
   free: number[];
+  /** Max rigs to allocate. Rigs grow lazily up to this cap; overflow corpses
+   * past it skip rendering (their loot prompt still works) — the exact old
+   * fixed-pool behavior, just allocated on demand instead of all at mount. */
+  cap: number;
+}
+
+/** Allocate one corpse rig into the pool (lazy growth up to cap). The rig
+ * starts DETACHED + pre-tinted like the old eager createPool; the caller
+ * acquires (and attaches) it in the same frame. No-op at cap so overflow
+ * corpses skip. */
+function growPool(pool: CorpsePool): void {
+  if (pool.slots.length >= pool.cap) return;
+  const idx = pool.slots.length;
+  const rig = createCharacterRig(pool.kind);
+  rig.root.visible = false;
+  // Pre-tint on allocation — assignSlot relies on the tint already being set
+  // and never re-tints (createPool did this too).
+  rig.setTint(CORPSE_TINT[pool.kind]);
+  pool.slots.push({ rig, animRemaining: 0 });
+  pool.free.push(idx);
 }
 
 function createPool(kind: CharacterKind, size: number): CorpsePool {
-  const slots: CorpseSlot[] = [];
-  const free: number[] = [];
-  for (let i = 0; i < size; i++) {
-    const rig = createCharacterRig(kind);
-    rig.root.visible = false;
-    rig.setTint(CORPSE_TINT[kind]);
-    // Pooled rigs start DETACHED from the scene graph (the RemotePlayers
-    // pattern): three r184's updateMatrixWorld recurses into ALL children
-    // unconditionally, so 48 attached-but-hidden skinned rigs would pay
-    // per-bone matrix work every frame while live corpses are usually few.
-    // Acquire attaches; releaseMissing detaches.
-    slots.push({ rig, animRemaining: 0 });
-    free.push(size - 1 - i); // pop() hands out slot 0 first
-  }
-  return { kind, slots, byId: new Map(), free };
+  // Empty pool: corpse rigs (skinned — the join-hitch cost) are cloned lazily
+  // on first sighting via growPool up to `size`. Pre-cloning 24+24 rigs at
+  // mount is exactly what this avoids; overflow behavior past the cap is
+  // unchanged. Pooled rigs are DETACHED + hidden until acquire (three r184's
+  // updateMatrixWorld recurses into ALL children).
+  return { kind, slots: [], byId: new Map(), free: [], cap: size };
 }
 
 function releaseMissing(pool: CorpsePool, presentIds: Set<number>): void {
@@ -162,8 +173,9 @@ export function Corpses(): ReactElement {
       const pool = corpse.kind === "zombie" ? pools.zombie : pools.player;
       let idx = pool.byId.get(corpse.id);
       if (idx === undefined) {
+        if (pool.free.length === 0) growPool(pool); // lazy grow up to pool.cap
         idx = pool.free.pop();
-        if (idx === undefined) continue; // pool exhausted: skip the excess
+        if (idx === undefined) continue; // at cap: skip the excess (loot prompt still works)
         pool.byId.set(corpse.id, idx);
         // Re-attach before the pose/position writes (see createPool); this
         // priority-0 useFrame runs before the priority-2 composer render.
