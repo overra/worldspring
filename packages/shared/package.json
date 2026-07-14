@@ -9,6 +9,7 @@
     "./config": "./src/config.ts",
     "./constants": "./src/constants.ts",
     "./constants/survival": "./src/constants/survival.ts",
+    "./constants/arena": "./src/constants/arena.ts",
     "./directory": "./src/directory.ts",
     "./fog": "./src/fog.ts",
     "./items": "./src/items.ts",

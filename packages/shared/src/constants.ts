@@ -5,6 +5,7 @@
 // re-exported below, so `@worldspring/shared/constants` still exposes everything
 // — a pure reorg, values byte-identical.
 export * from "./constants/survival.ts";
+export * from "./constants/arena.ts";
 
 export const WORLD_SEED = 1337;
 

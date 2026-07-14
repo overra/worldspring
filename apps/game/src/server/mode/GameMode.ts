@@ -85,4 +85,16 @@ export interface GameMode {
    * `config.session.respawnDelayS`; a round-based mode can gate on match state.
    */
   respawnDelayS(game: GameState): number;
+
+  /**
+   * One player killed another in PvP combat. Called from the two combat kill
+   * sites (melee + ranged) at the living→dead transition — `killer` and
+   * `victim` are the real ServerPlayers, so a mode scores frags directly with
+   * no fragile name-matching. `victim` is already dead (a respawn is the mode's
+   * to schedule). Survival: no-op (its scoring is the persisted longest-life
+   * leaderboard, written by the engine's death sink). Arena: award the frag and
+   * check the round win condition. NOT called for non-PvP deaths (starvation,
+   * zombies, the give-up respawn) — those have no killer.
+   */
+  onKill(game: GameState, killer: ServerPlayer, victim: ServerPlayer): void;
 }

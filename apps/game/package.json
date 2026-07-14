@@ -18,7 +18,7 @@
     "models:trees": "node scripts/generate-trees.mjs",
     "loadtest": "node --experimental-strip-types scripts/loadtest.mjs",
     "build-loadtest": "node --experimental-strip-types scripts/build-loadtest.mjs",
-    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:tree-assets && pnpm test:destruction && pnpm test:trees && pnpm test:testbed && pnpm test:physics && pnpm test:vehicles && pnpm test:heartbeat && pnpm test:reload && pnpm test:wear && pnpm test:structures && pnpm test:terrain && pnpm test:dressing && pnpm test:snapcodec",
+    "test": "pnpm test:persist && pnpm test:wipe && pnpm test:loot && pnpm test:tree-assets && pnpm test:destruction && pnpm test:trees && pnpm test:testbed && pnpm test:physics && pnpm test:vehicles && pnpm test:heartbeat && pnpm test:reload && pnpm test:wear && pnpm test:structures && pnpm test:terrain && pnpm test:dressing && pnpm test:snapcodec && pnpm test:arena",
     "test:persist": "node --experimental-strip-types scripts/persist-roundtrip.mjs",
     "test:wipe": "node --experimental-strip-types scripts/persist-wipe.mjs",
     "test:loot": "node --experimental-strip-types scripts/loot-invariant.mjs",
@@ -34,7 +34,8 @@
     "test:structures": "node --experimental-strip-types scripts/structures.mjs",
     "test:terrain": "node --experimental-strip-types scripts/terrain-chunks.mjs",
     "test:dressing": "node --experimental-strip-types scripts/chunked-dressing.mjs",
-    "test:snapcodec": "node --experimental-strip-types scripts/snap-codec.mjs"
+    "test:snapcodec": "node --experimental-strip-types scripts/snap-codec.mjs",
+    "test:arena": "node --experimental-strip-types scripts/arena-probe.mjs"
   },
   "dependencies": {
     "@dgreenheck/three-pinata": "2.0.1",
