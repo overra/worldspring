@@ -35,11 +35,11 @@ The worker routes every request to a single Durable Object named `"main"`, confi
 
 ## First moves (build order)
 
-1. **Carve the internal engine/game seam** — `@worldspring/engine` + `@worldspring/mode-survival` as a workspace-package split (internal, unpublished). Forces the seam, defines the future API surface, dogfoods the host boundary.
-2. **Define the `GameMode` boundary;** re-express survival as a mode on it.
-3. **Build one example mode** (build/creative *or* arena — either is fine) as a second consumer: proof + agent template + reveals remaining entanglement.
+1. ✅ **Carve the internal engine/game seam** — done as an *internal* seam (a `GameMode` object owning per-tick composition, seeding, and the player lifecycle; survival tunables split into `constants/survival.ts`), not yet a workspace-package split. The package split (`@worldspring/engine` + `@worldspring/mode-survival`) stays deferred until a real need for clean shared updates emerges.
+2. ✅ **Define the `GameMode` boundary;** survival re-expressed as a mode on it (`server/mode/`).
+3. ✅ **Build one example mode** — **arena** (round-based frag deathmatch) shipped as the second consumer: proof the seam is real + an agent template. Its `arena-probe.mjs` doubles as executable documentation.
 4. **Harden + version the directory contract** (`03`) — the one canonical surface.
-5. **`mod:check`** — wire the existing guardrails (Linux-canonical worldgen fingerprint, snap-codec round-trip, sim smoke, loadtest) into one command.
+5. ✅ **`mod:check`** — shipped as `pnpm mod:check` (`scripts/mod-check.mjs`): types → worldgen determinism (self-consistency: generate twice + assert identical, so it's platform-independent; the byte-exact Linux reference stays CI's gate) → protocol round-trip + sim smoke (`pnpm test`, incl. every GameMode probe) → build, with a modder-facing pass/fail summary.
 6. **Fork/deploy loop** — GitHub connect → fork template → CI guardrails → deploy to their Cloudflare (extends `01`).
 
 ## Deferred / not now
