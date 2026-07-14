@@ -13,7 +13,7 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import type { Building, World } from "@worldspring/shared/world";
+import { FOUNDATION_DEPTH, type Building, type World } from "@worldspring/shared/world";
 import { createRng, hashString } from "@worldspring/shared/rng";
 import { clientWorld } from "@/client/runtime";
 import {
@@ -52,8 +52,12 @@ const WINDOW_CENTER_Y = 1.3;
 const WINDOW_DOOR_CLEARANCE = 1.2;
 /** Keep windows clear of corners: frame half-width 0.55 + post + breathing room. */
 const WINDOW_EDGE_MARGIN = 1.0;
-/** Posts start below the floor and reach the roofline (foundation-skirt overlap). */
-const POST_SKIRT = 0.3;
+// Corner posts span the SAME vertical extent as the walls they trim: from the
+// wall foundation (floorY - FOUNDATION_DEPTH, imported from shared/world.ts so
+// it can never drift) up to the roofline. A shallower skirt left the post
+// hanging in mid-air on the downhill side of a slope while the wall beside it
+// carried on down into the terrain. The buried portion is hidden by the ground
+// on flat land, exactly as the wall's own foundation is.
 /** Chimney center distance in from the roof corner. */
 const CHIMNEY_INSET = 0.9;
 
@@ -198,16 +202,16 @@ function collectBuilding(
     });
   }
 
-  // --- Corner posts: unit-height base origin, stretched skirt-to-roofline ---
+  // --- Corner posts: unit-height base origin, stretched foundation-to-roofline ---
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       push("corner_post", {
         x: b.cx + sx * b.halfW,
-        y: b.floorY - POST_SKIRT,
+        y: b.floorY - FOUNDATION_DEPTH,
         z: b.cz + sz * b.halfD,
         yaw: 0,
         sx: 1,
-        sy: b.wallHeight + POST_SKIRT,
+        sy: b.wallHeight + FOUNDATION_DEPTH,
         sz: 1,
       });
     }

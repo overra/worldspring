@@ -179,8 +179,14 @@ const GRID_CELL = 16;
  * founded in the terrain instead of floating. Collision is y-aware
  * (movement.ts), so the below-floor portion never blocks anyone standing
  * above it, and the door sill reads as a normal step.
+ *
+ * EXPORTED because the client's trim kit must skirt to exactly the same depth:
+ * a corner post that stops at the floor hangs in the air on the downhill side
+ * of a slope while the wall beside it carries on into the ground. (Value
+ * unchanged — a pure export, so worldgen output and its fingerprint are
+ * untouched.)
  */
-const FOUNDATION_DEPTH = 3.6;
+export const FOUNDATION_DEPTH = 3.6;
 
 const TOWN_NAMES = ["Staroye", "Kamensk", "Vybor", "Polana", "Gorka", "Zeleno"];
 
