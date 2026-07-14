@@ -487,7 +487,20 @@ export function SkyAndLighting(): ReactElement | null {
     // NOT castShadow — flipping castShadow recompiles every receiving
     // material's shader (a visible hitch). Flipping autoUpdate back on at dawn
     // re-renders the map that same frame.
-    if (sun) sun.shadow.autoUpdate = sun.intensity > 0;
+    //
+    // `|| shadow.map === null` is load-bearing: WebGLShadowMap skips a light
+    // whose shadow.autoUpdate is false BEFORE it ever allocates shadow.map
+    // (three r184 three.module.js: the `continue` at the autoUpdate check
+    // precedes the `shadow.map === null` allocation). On a COLD START at night
+    // the sun is already at intensity 0 on frame one, so the map was never
+    // created — yet castShadow stays true, so every shadow-RECEIVING material
+    // (terrain, trees, buildings) samples a null shadow map and drops out,
+    // while the sky dome (a basic material, no USE_SHADOWMAP) still draws:
+    // "all I see is night sky". Joining in daylight allocated the map first,
+    // which is why falling into night mid-session was always fine. Holding
+    // autoUpdate on until the map exists costs exactly one shadow render on a
+    // night join, then the freeze behaves as designed.
+    if (sun) sun.shadow.autoUpdate = sun.intensity > 0 || sun.shadow.map === null;
   });
 
   return (
