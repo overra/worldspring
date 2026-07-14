@@ -1,13 +1,379 @@
 /* Worldspring UI — spare, survival-minimal.
-   Base tokens (--ui-bg, --ui-border, --ui-text, --ui-dim, --ui-accent,
-   --ui-danger) come from styles.css (frozen). Local tokens below. */
+   Design tokens live in tokens.css (imported below); the base tokens it builds
+   on (--ui-bg, --ui-border, --ui-text, --ui-dim, --ui-accent, --ui-danger) come
+   from styles.css (frozen).
 
-:root {
-  --ui-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
-  --ui-hp: #b33a2e;
-  --ui-food: #c8862e;
-  --ui-water: #3e7fa8;
-  --ui-cold: #7fd4e4;
+   Three rules decide every judgment call here:
+     1. radius 0 — only circles (minimap, joystick, touch buttons, crosshair dot)
+        keep 50%;
+     2. no drop shadows — the only elevation is the olive glow on the selected
+        element (plus the HUD's existing text-shadow);
+     3. mono for every number, condensed caps for every label. */
+
+@import "./tokens.css";
+
+/* ============================== Primitives ==============================
+   Shared, reusable classes. Prefer composing these over re-declaring the
+   panel/button/label/bar recipes in a component slice. */
+
+/* --- surfaces --- */
+
+.ui-panel {
+  background: var(--ui-bg);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
+  backdrop-filter: var(--ui-blur);
+}
+
+/* Modal over modal (item detail card, code pad) — reads above .ui-panel. */
+.ui-panel--deep {
+  background: var(--ui-bg-deep);
+}
+
+/* Panel header strip: eyebrow left, meta/close right. */
+.ui-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-sp-5);
+  height: 48px;
+  padding: 0 18px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: var(--ui-hairline);
+}
+
+.ui-divider {
+  height: 1px;
+  border: none;
+  margin: 0;
+  background: var(--ui-rule);
+}
+
+/* Full-screen catcher behind a panel: tap/click outside closes it (the panel's
+   own clicks land on its children, not the backdrop). */
+.ui-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
+
+/* --- type --- */
+
+.ui-eyebrow {
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+.ui-title {
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-title);
+  font-weight: 700;
+  letter-spacing: var(--ui-track-title);
+  text-transform: uppercase;
+  color: var(--ui-text);
+}
+
+.ui-label {
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+.ui-body {
+  font-size: var(--ui-fs-body);
+  line-height: 1.45;
+  color: var(--ui-text);
+}
+
+.ui-hint {
+  font-size: var(--ui-fs-micro);
+  letter-spacing: var(--ui-track-micro);
+  color: var(--ui-dim);
+}
+
+/* Numbers, always. */
+.ui-num {
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-num--lg {
+  font-size: var(--ui-fs-data-lg);
+}
+
+.ui-num--sm {
+  font-size: var(--ui-fs-data-sm);
+  font-weight: 400;
+  color: var(--ui-dim);
+}
+
+/* Boxed key cap (TAB, F3, E). For a key inline in a sentence use
+   .hud-prompt-key instead — it stays un-boxed. */
+.ui-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: var(--ui-hairline);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-title);
+  color: var(--ui-text);
+}
+
+/* Hairline chip. Set `color` (e.g. a --ui-kind-* token) and the border follows. */
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px var(--ui-sp-3);
+  border: 1px solid currentColor;
+  background: transparent;
+  font-family: var(--ui-font-cond);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+/* --- buttons ---
+   One primary style everywhere: translucent olive tint + olive hairline. */
+
+.ui-btn {
+  padding: var(--ui-sp-4) var(--ui-sp-6);
+  background: var(--ui-accent-fill);
+  border: var(--ui-hairline-accent);
+  border-radius: var(--ui-radius);
+  color: var(--ui-text);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-btn);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-btn);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ui-btn:hover:not(:disabled) {
+  background: var(--ui-accent-fill-hover);
+}
+
+.ui-btn--secondary {
+  background: transparent;
+  border-color: var(--ui-border);
+  color: var(--ui-dim);
+}
+
+.ui-btn--secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--ui-dim);
+  color: var(--ui-text);
+}
+
+.ui-btn--warn {
+  background: transparent;
+  border-color: var(--ui-warn);
+  color: var(--ui-warn);
+}
+
+.ui-btn--warn:hover:not(:disabled) {
+  background: rgba(200, 134, 46, 0.12);
+  color: var(--ui-text);
+}
+
+.ui-btn--danger {
+  background: transparent;
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
+.ui-btn--danger:hover:not(:disabled) {
+  background: var(--ui-danger-fill);
+  color: var(--ui-text);
+}
+
+.ui-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- item cells (hotbar, inventory grid, crate grid) --- */
+
+.ui-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: var(--ui-cell-size);
+  gap: var(--ui-sp-2);
+}
+
+.ui-cell {
+  position: relative;
+  padding: 0;
+  background: var(--ui-cell);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
+  color: var(--ui-text);
+}
+
+.ui-cell--filled {
+  background: var(--ui-cell-filled);
+}
+
+.ui-cell:hover {
+  border-color: var(--ui-dim);
+}
+
+/* Held/equipped: the soft glow. Selected for inspection: the strong one — the
+   only "elevation" in the UI. */
+.ui-cell--equipped,
+.ui-cell--equipped:hover {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  box-shadow: var(--ui-glow);
+}
+
+.ui-cell--selected,
+.ui-cell--selected:hover {
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-glow-strong);
+}
+
+.ui-cell-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 56%;
+  height: 56%;
+  object-fit: contain;
+  background: transparent; /* the onError swatch fallback sets an inline color */
+}
+
+.ui-cell-index {
+  position: absolute;
+  top: var(--ui-sp-1);
+  left: var(--ui-sp-1);
+  font-family: var(--ui-mono);
+  font-size: 10px;
+  color: var(--ui-dim);
+}
+
+.ui-cell--equipped .ui-cell-index {
+  color: var(--ui-accent);
+}
+
+.ui-cell-count {
+  position: absolute;
+  right: var(--ui-sp-1);
+  bottom: var(--ui-sp-1);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  color: var(--ui-text);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* ItemKind stripe — the one thing that makes a grid of icons readable.
+   Color it with a --ui-kind-* token. */
+.ui-cell-stripe {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 14px;
+  height: 3px;
+  background: currentColor;
+  color: var(--ui-dim);
+}
+
+/* --- bars / meters ---
+   The .bar family is the shared primitive: vitals, cast bar and vehicle meters
+   all compose it. Row anatomy: [icon] [label] [track] [value]. */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-3);
+}
+
+.bar-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: block;
+}
+
+.bar-label {
+  width: 74px;
+  flex: none;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+.bar-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: var(--ui-bar-h);
+  background: rgba(255, 255, 255, 0.09);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
+  overflow: hidden;
+}
+
+.bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  transition: var(--ui-bar-transition);
+}
+
+.bar-fill--hp { background: var(--ui-hp); }
+.bar-fill--food { background: var(--ui-food); }
+.bar-fill--water { background: var(--ui-water); }
+.bar-fill--cold { background: var(--ui-cold); }
+.bar-fill--warn { background: var(--ui-warn); }
+.bar-fill--danger { background: var(--ui-danger); }
+.bar-fill--channel,
+.bar-fill--accent { background: var(--ui-accent); }
+
+/* Segment ticks: a cosmetic overlay above the fill, inside the track. */
+.bar-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 13px,
+    rgba(10, 12, 7, 0.6) 13px 15px
+  );
+}
+
+.bar-value {
+  width: 30px;
+  flex: none;
+  text-align: right;
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ============================== Main menu ============================== */
@@ -39,7 +405,7 @@
      clamp()-sized title below) fits 360px-wide screens. */
   padding: 44px clamp(20px, 6vw, 44px) 36px;
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
   text-align: center;
 }
 
@@ -47,33 +413,35 @@
   margin: 0;
   /* 9 letterspaced caps ≈ 9.7em — clamp keeps the wordmark inside the panel
      from 360px phones up (a fixed 42px overflowed even the 440px panel). */
+  font-family: var(--ui-font-cond);
   font-size: clamp(20px, calc(10vw - 12px), 34px);
   font-weight: 600;
   letter-spacing: 0.34em;
   text-indent: 0.34em; /* balance trailing letterspace */
+  text-transform: uppercase;
   color: var(--ui-text);
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
 }
 
 .menu-subtitle {
-  margin: 10px 0 0;
-  font-size: 13px;
+  margin: var(--ui-sp-4) 0 0;
+  font-size: var(--ui-fs-body);
   letter-spacing: 0.12em;
   color: var(--ui-dim);
 }
 
 .menu-form {
   display: flex;
-  gap: 8px;
-  margin-top: 30px;
+  gap: var(--ui-sp-3);
+  margin-top: var(--ui-sp-9);
 }
 
 .menu-input {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
+  padding: var(--ui-sp-4) var(--ui-sp-5);
   background: rgba(0, 0, 0, 0.45);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
   letter-spacing: 0.05em;
   outline: none;
@@ -89,17 +457,21 @@
 }
 
 .menu-join {
-  padding: 10px 18px;
-  background: rgba(125, 160, 107, 0.14);
-  border: 1px solid var(--ui-accent);
+  padding: var(--ui-sp-4) 18px;
+  background: var(--ui-accent-fill);
+  border: var(--ui-hairline-accent);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
-  font-size: 13px;
-  letter-spacing: 0.16em;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-btn);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-btn);
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
 .menu-join:hover:not(:disabled) {
-  background: rgba(125, 160, 107, 0.28);
+  background: var(--ui-accent-fill-hover);
 }
 
 .menu-join:disabled {
@@ -109,19 +481,22 @@
 
 .menu-error {
   margin: 14px 0 0;
-  font-size: 13px;
+  font-size: var(--ui-fs-body);
   color: var(--ui-danger);
 }
 
 .menu-controls {
   position: absolute;
-  bottom: 24px;
+  bottom: var(--ui-sp-8);
   left: 0;
   right: 0;
-  padding: 0 16px;
+  padding: 0 var(--ui-edge);
   text-align: center;
-  font-size: 12px;
-  letter-spacing: 0.06em;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--ui-dim);
 }
 
@@ -133,7 +508,8 @@
   z-index: 5;
   pointer-events: none;
   user-select: none;
-  font-size: 13px;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
@@ -159,76 +535,51 @@
 
 .hud-vitals {
   position: absolute;
-  left: calc(16px + env(safe-area-inset-left, 0px));
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  width: 230px;
+  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
+  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
+  width: 240px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.bar-label {
-  width: 46px;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  color: var(--ui-dim);
-}
-
-.bar-track {
-  position: relative;
-  flex: 1;
-  height: 13px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  overflow: hidden;
-}
-
-.bar-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  transition: width 0.35s ease;
-}
-
-.bar-fill--hp { background: var(--ui-hp); }
-.bar-fill--food { background: var(--ui-food); }
-.bar-fill--water { background: var(--ui-water); }
-
-.bar-value {
-  width: 32px;
-  text-align: right;
-  font-family: var(--ui-mono);
-  font-size: 11px;
-  color: var(--ui-text);
+  gap: var(--ui-sp-3);
 }
 
 .hud-temp {
   margin-top: 2px;
+  padding-top: var(--ui-sp-4);
+  border-top: var(--ui-hairline-rule);
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: var(--ui-sp-3);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
   color: var(--ui-dim);
 }
 
 .hud-temp-value {
   font-family: var(--ui-mono);
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-data);
+  text-transform: none;
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
 }
 
-.hud-temp--cold {
+.hud-temp--cold,
+.hud-temp--cold .hud-temp-value {
   color: var(--ui-cold);
 }
 
+/* Hairline chip, not a pill. */
 .hud-shiver {
-  font-size: 11px;
-  letter-spacing: 0.22em;
+  margin-left: auto;
+  padding: 3px var(--ui-sp-3);
+  border: 1px solid var(--ui-cold);
+  font-size: 10px;
+  letter-spacing: var(--ui-track-label);
   color: var(--ui-cold);
   animation: hud-shiver-pulse 1s ease-in-out infinite;
 }
@@ -242,70 +593,113 @@
 
 .hud-hotbar {
   position: absolute;
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 6px;
+  gap: var(--ui-sp-2);
   pointer-events: auto;
 }
 
 .hotbar-slot {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: var(--ui-slot);
+  height: var(--ui-slot);
   padding: 0;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  background: var(--ui-cell);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
+}
+
+/* A slot that holds an item is opaque whether or not the component sets
+   .hotbar-slot--filled — over the world an item must never float on a 3% wash. */
+.hotbar-slot--filled,
+.hotbar-slot:has(> .hotbar-swatch) {
+  background: var(--ui-cell-filled);
 }
 
 .hotbar-slot:hover {
   border-color: var(--ui-dim);
 }
 
-.hotbar-slot--selected,
-.hotbar-slot--selected:hover {
+/* Doubled class: must out-specify the :has() fill rule above. */
+.hotbar-slot.hotbar-slot--selected,
+.hotbar-slot.hotbar-slot--selected:hover {
   border-color: var(--ui-accent);
-  box-shadow: 0 0 7px rgba(125, 160, 107, 0.35);
+  background: var(--ui-accent-soft);
+  box-shadow: var(--ui-glow);
 }
 
 .hotbar-index {
   position: absolute;
-  top: 2px;
-  left: 4px;
-  font-size: 9px;
+  top: var(--ui-sp-1);
+  left: var(--ui-sp-1);
+  font-family: var(--ui-mono);
+  font-size: 10px;
   color: var(--ui-dim);
+}
+
+.hotbar-slot--selected .hotbar-index {
+  color: var(--ui-accent);
 }
 
 .hotbar-swatch {
   position: absolute;
-  inset: 12px;
+  inset: 14px;
   opacity: 0.92;
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 
 .hotbar-count {
   position: absolute;
-  right: 3px;
-  bottom: 1px;
+  right: var(--ui-sp-1);
+  bottom: var(--ui-sp-1);
   font-family: var(--ui-mono);
-  font-size: 11px;
+  font-size: var(--ui-fs-data-sm);
   color: var(--ui-text);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }
 
 /* --- crosshair + pickup prompt (center) --- */
 
+/* Four ticks + a centre dot, drawn entirely from the empty .hud-crosshair div —
+   no child nodes. */
 .hud-crosshair {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 4px;
-  height: 4px;
-  margin: -2px 0 0 -2px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.75);
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+}
+
+.hud-crosshair::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
+    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
+    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
+    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82));
+  background-size: 8px 2px, 8px 2px, 2px 8px, 2px 8px;
+  background-position: left center, right center, center top, center bottom;
+  background-repeat: no-repeat;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.75));
+}
+
+.hud-crosshair::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: var(--ui-round);
+  background: #fff;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.75);
 }
 
 .hud-prompt {
@@ -313,10 +707,14 @@
   left: 50%;
   top: calc(50% + 26px);
   transform: translateX(-50%);
-  padding: 4px 10px;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
+  padding: var(--ui-sp-2) var(--ui-sp-4);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  letter-spacing: 0.04em;
+  border: var(--ui-hairline);
+  font-size: var(--ui-fs-body);
+  color: var(--ui-text);
   white-space: nowrap;
 }
 
@@ -327,24 +725,26 @@
   /* Rendered INSIDE .hud-hotbar and anchored to its top edge, so it follows
    * every media-query relocation/rescale of the bar (980px lift, coarse-pointer
    * portrait/landscape moves, 40px slots) for free — no offsets to mirror. */
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + var(--ui-sp-3));
   left: 50%;
   transform: translateX(-50%);
   /* The hotbar opts into pointer-events; the readout is cosmetic. */
   pointer-events: none;
   display: flex;
   align-items: baseline;
-  gap: 4px;
-  padding: 2px 10px;
+  gap: var(--ui-sp-1);
+  padding: 3px var(--ui-sp-4);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
   font-family: var(--ui-mono);
-  letter-spacing: 0.04em;
+  letter-spacing: var(--ui-track-data);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .hud-ammo-mag {
   font-size: 15px;
+  color: var(--ui-text);
 }
 
 .hud-ammo--empty .hud-ammo-mag {
@@ -353,13 +753,15 @@
 
 .hud-ammo-sep,
 .hud-ammo-reserve {
-  opacity: 0.75;
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
+  color: var(--ui-dim);
 }
 
 .hud-ammo-hint {
-  margin-left: 6px;
-  font-size: 12px;
+  margin-left: var(--ui-sp-2);
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-data);
+  color: var(--ui-dim);
 }
 
 /* --- build mode panel (doc 06) --- */
@@ -369,35 +771,44 @@
   left: 50%;
   top: calc(50% + 92px);
   transform: translateX(-50%);
-  padding: 5px 12px;
+  padding: var(--ui-sp-2) var(--ui-sp-5);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  letter-spacing: 0.04em;
+  border: var(--ui-hairline);
   white-space: nowrap;
   text-align: center;
 }
 
 .hud-build-row {
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--ui-sp-4);
 }
 
 .hud-build-piece {
   font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data);
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-text);
 }
 
 .hud-build-status {
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
   color: var(--ui-danger);
 }
 
 .hud-build-hints {
-  margin-top: 3px;
-  font-size: 12px;
-  opacity: 0.85;
+  margin-top: var(--ui-sp-1);
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ui-sp-2);
+  font-size: var(--ui-fs-micro);
+  color: var(--ui-dim);
 }
 
 /* --- cast bar for the channeled (timed) action (doc 11 M2) --- */
@@ -408,23 +819,39 @@
   top: calc(50% + 60px);
   transform: translateX(-50%);
   width: 280px;
-  padding: 5px 10px;
+  padding: var(--ui-sp-2) var(--ui-sp-4);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
 }
 
+.hud-channel .bar {
+  flex-wrap: wrap;
+}
+
+/* The cast bar's label is a full-width caption above its track, not a column. */
 .hud-channel .bar-label {
   width: auto;
+  flex: 1;
+  font-size: var(--ui-fs-data);
+  letter-spacing: 0.2em;
+  color: var(--ui-text);
   white-space: nowrap;
 }
 
-.bar-fill--channel {
-  background: var(--ui-accent);
+.hud-channel .bar-track {
+  flex: 1 0 100%;
+  order: 3;
+  margin-top: var(--ui-sp-1);
 }
 
+/* Inline key in a sentence ([R] reload, [hold X] demolish) — un-boxed by
+   design; the boxed cap is .ui-key. */
 .hud-prompt-key {
-  color: var(--ui-accent);
   font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-title);
+  color: var(--ui-accent);
 }
 
 /* --- status (top-right) --- */
@@ -432,18 +859,22 @@
 .hud-status {
   position: absolute;
   top: 14px;
-  right: calc(16px + env(safe-area-inset-right, 0px));
+  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 2px;
   text-align: right;
   font-family: var(--ui-mono);
-  font-size: 12px;
+  font-size: var(--ui-fs-data-sm);
+  letter-spacing: var(--ui-track-data);
   color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .hud-clock {
-  font-size: 18px;
+  font-size: var(--ui-fs-data-lg);
+  font-weight: 500;
   color: var(--ui-text);
 }
 
@@ -452,18 +883,18 @@
 .hud-notices {
   position: absolute;
   top: 14px;
-  left: calc(16px + env(safe-area-inset-left, 0px));
+  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ui-sp-1);
   max-width: 320px;
 }
 
 .hud-notice {
-  padding: 4px 9px;
+  padding: var(--ui-sp-1) var(--ui-sp-4);
   background: var(--ui-bg);
   border-left: 2px solid var(--ui-accent);
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
   color: var(--ui-text);
   animation: hud-notice-fade 0.6s ease 6s forwards;
 }
@@ -479,26 +910,38 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: min(460px, calc(100vw - 32px));
-  padding: 16px 18px 12px;
+  width: min(880px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 48px));
+  overflow-y: auto;
+  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  backdrop-filter: var(--ui-blur);
   pointer-events: auto;
 }
 
+/* Opt out of the panel's own padding when a .ui-panel-head strip runs edge to
+   edge; the sections below it then own their padding (.inv-body, inventory.css). */
+.hud-inv--flush {
+  padding: 0;
+}
+
 .inv-title {
-  margin-bottom: 10px;
-  font-size: 13px;
-  letter-spacing: 0.28em;
+  margin-bottom: var(--ui-sp-4);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-eyebrow);
+  text-transform: uppercase;
   color: var(--ui-dim);
 }
 
 .inv-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: var(--ui-sp-4);
+  padding: var(--ui-sp-2) 0;
+  border-bottom: var(--ui-hairline-rule);
   min-height: 34px;
 }
 
@@ -508,8 +951,9 @@
 
 .inv-slot-num {
   width: 14px;
+  flex: none;
   font-family: var(--ui-mono);
-  font-size: 11px;
+  font-size: var(--ui-fs-data-sm);
   color: var(--ui-dim);
 }
 
@@ -522,101 +966,51 @@
 
 .inv-name {
   flex: 1;
+  min-width: 0;
+  font-size: var(--ui-fs-body);
   color: var(--ui-text);
 }
 
 .inv-empty {
   flex: 1;
+  font-size: var(--ui-fs-body);
   color: var(--ui-dim);
-  font-style: italic;
   opacity: 0.6;
 }
 
 .inv-count {
   width: 36px;
+  flex: none;
   font-family: var(--ui-mono);
-  font-size: 12px;
-  color: var(--ui-dim);
-}
-
-.inv-kind {
-  width: 72px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: var(--ui-fs-data);
+  letter-spacing: var(--ui-track-data);
   color: var(--ui-dim);
 }
 
 .inv-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--ui-sp-2);
   width: 112px;
   justify-content: flex-end;
 }
 
 .inv-btn {
-  padding: 3px 10px;
+  padding: var(--ui-sp-1) var(--ui-sp-4);
   background: transparent;
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-}
-
-.inv-btn:hover {
-  border-color: var(--ui-accent);
-  background: rgba(125, 160, 107, 0.12);
-}
-
-.inv-hint {
-  margin-top: 10px;
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  color: var(--ui-dim);
-}
-
-/* ----------------------------- crafting ------------------------------- */
-
-.inv-subtitle {
-  margin-top: 14px;
-}
-
-.craft-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  min-height: 32px;
-}
-
-.craft-row:last-of-type {
-  border-bottom: none;
-}
-
-.craft-out {
-  width: 118px;
-  flex: none;
-  color: var(--ui-text);
-}
-
-.craft-inputs {
-  flex: 1;
-  font-size: 11px;
-  color: var(--ui-dim);
-}
-
-.craft-hint {
-  font-size: 10px;
-  letter-spacing: 0.06em;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--ui-accent);
-  opacity: 0.85;
+  white-space: nowrap;
 }
 
-.craft-row--disabled {
-  opacity: 0.45;
+.inv-btn:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-fill);
 }
 
 .inv-btn:disabled {
@@ -626,9 +1020,17 @@
   background: transparent;
 }
 
-.inv-btn:disabled:hover {
-  border-color: var(--ui-border);
-  background: transparent;
+.inv-hint {
+  margin-top: var(--ui-sp-4);
+  text-align: center;
+  font-size: var(--ui-fs-micro);
+  letter-spacing: var(--ui-track-micro);
+  color: var(--ui-dim);
+}
+
+/* Second .inv-title in the same panel (the crate's YOUR ITEMS heading). */
+.inv-subtitle {
+  margin-top: 14px;
 }
 
 /* ============================ Death screen ============================= */
@@ -642,6 +1044,7 @@
   align-items: center;
   justify-content: center;
   pointer-events: auto;
+  font-family: var(--ui-font);
   background: radial-gradient(
     ellipse at center,
     rgba(42, 5, 2, 0.84) 0%,
@@ -657,29 +1060,34 @@
 
 .death-title {
   margin: 0;
-  font-size: clamp(48px, 10vw, 84px);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-hero);
   font-weight: 700;
-  letter-spacing: 0.3em;
-  text-indent: 0.3em;
+  letter-spacing: var(--ui-track-hero);
+  text-indent: var(--ui-track-hero);
   color: var(--ui-hp);
   text-shadow: 0 0 28px rgba(179, 58, 46, 0.45);
 }
 
 .death-cause {
   margin: 14px 0 40px;
-  font-size: 15px;
+  font-size: 14px;
   letter-spacing: 0.1em;
   color: var(--ui-dim);
 }
 
 .death-respawn {
-  padding: 12px 34px;
+  padding: var(--ui-sp-5) 34px;
   background: rgba(179, 58, 46, 0.14);
   border: 1px solid var(--ui-hp);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
-  font-size: 14px;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-btn);
+  font-weight: 600;
   letter-spacing: 0.26em;
   text-indent: 0.26em;
+  text-transform: uppercase;
 }
 
 .death-respawn:hover {
@@ -704,7 +1112,8 @@
   pointer-events: none; /* interactive children opt back in */
   user-select: none;
   -webkit-user-select: none;
-  font-size: 13px;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-body);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
@@ -727,9 +1136,9 @@
   width: 120px;
   height: 120px;
   transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-round);
+  background: rgba(10, 13, 7, 0.28); /* a lighter wash — it sits over the world */
+  border: 2px solid rgba(255, 255, 255, 0.22);
 }
 
 .tc-stick-nub {
@@ -739,7 +1148,7 @@
   width: 52px;
   height: 52px;
   transform: translate(-50%, -50%);
-  border-radius: 50%;
+  border-radius: var(--ui-round);
   background: rgba(216, 220, 212, 0.16);
   border: 1px solid var(--ui-dim);
   will-change: transform;
@@ -754,30 +1163,33 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: var(--ui-round);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
   color: var(--ui-text);
+  font-family: var(--ui-font-cond);
   font-size: 10px;
-  letter-spacing: 0.14em;
-  text-indent: 0.14em;
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-indent: var(--ui-track-label);
+  text-transform: uppercase;
 }
 
 .tc-btn:active {
   border-color: var(--ui-accent);
-  background: rgba(125, 160, 107, 0.2);
+  background: var(--ui-accent-fill-hover);
 }
 
 .tc-btn--active {
   border-color: var(--ui-accent);
-  box-shadow: 0 0 7px rgba(125, 160, 107, 0.35);
+  box-shadow: var(--ui-glow);
 }
 
 /* Right thumb cluster: all targets >= 56px. */
 .tc-cluster {
   position: absolute;
   right: calc(12px + env(safe-area-inset-right, 0px));
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
   width: 196px;
   height: 200px;
   pointer-events: none;
@@ -814,7 +1226,7 @@
   width: 64px;
   height: 64px;
   border-color: var(--ui-accent);
-  background: rgba(125, 160, 107, 0.16);
+  background: var(--ui-accent-soft);
 }
 
 .tc-btn--bag {
@@ -826,8 +1238,8 @@
 
 .tc-btn--menu {
   position: absolute;
-  top: calc(10px + env(safe-area-inset-top, 0px));
-  right: calc(10px + env(safe-area-inset-right, 0px));
+  top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
+  right: calc(var(--ui-sp-4) + env(safe-area-inset-right, 0px));
   width: 56px;
   height: 56px;
   font-size: 22px;
@@ -842,6 +1254,18 @@
      (declarative twin of the preventDefault in TouchControls). */
   .game-canvas {
     touch-action: none;
+  }
+
+  /* Blur is decoration, not legibility (--ui-bg is already 0.78-opaque) and it
+     costs fill rate on phones — a full-screen panel over the canvas recomposites
+     every frame. Killed at the token, not per selector: a media query adds no
+     specificity, so a selector list here ties with every `.panel { backdrop-filter:
+     var(--ui-blur) }` rule and silently loses to any that is declared later in the
+     file. Redefining the token makes the opt-out immune to rule order, and covers
+     panels in the slice stylesheets too. Must stay below the @import of tokens.css
+     (where --ui-blur is set) — CSS requires @import at the top, so it always is. */
+  :root {
+    --ui-blur: none;
   }
 
   /* Keyboard legend is noise on touch devices. */
@@ -860,8 +1284,9 @@
   }
 
   /* Finger-sized USE/DROP; the Tab hint is meaningless without a keyboard. */
-  .inv-btn {
-    padding: 9px 14px;
+  .inv-btn,
+  .ui-btn {
+    padding: var(--ui-sp-4) 14px;
   }
 
   .inv-hint {
@@ -885,32 +1310,33 @@
 
 @media (max-width: 768px) {
   .hud {
-    font-size: 12px;
+    font-size: var(--ui-fs-data);
   }
 
   /* Vitals: narrower bars, tighter type. */
   .hud-vitals {
-    width: 170px;
-    gap: 5px;
+    width: 180px;
+    gap: var(--ui-sp-2);
   }
 
   .bar-label {
-    width: 38px;
+    width: 56px;
     font-size: 10px;
+    letter-spacing: 0.08em;
   }
 
   .bar-track {
-    height: 11px;
+    height: 7px;
   }
 
   .bar-value {
     width: 26px;
-    font-size: 10px;
+    font-size: var(--ui-fs-data-sm);
   }
 
   /* Hotbar: 40px slots, tighter gap (8 slots = 348px, fits 360px screens). */
   .hud-hotbar {
-    gap: 4px;
+    gap: var(--ui-sp-1);
   }
 
   .hotbar-slot {
@@ -932,29 +1358,33 @@
   }
 
   .hud-notice {
-    font-size: 11px;
-    padding: 3px 7px;
+    font-size: var(--ui-fs-micro);
+    padding: 3px var(--ui-sp-3);
   }
 
   /* Top-right meta stack, smaller. */
   .hud-status {
-    font-size: 11px;
+    font-size: var(--ui-fs-micro);
   }
 
   .hud-clock {
     font-size: 15px;
   }
 
-  /* Inventory: full-width-ish sheet, scrollable. The KIND column is
-     redundant with the swatch and starves the name column at 360px. */
+  /* Inventory: a full-screen sheet. */
   .hud-inv {
-    width: calc(100vw - 24px);
-    max-height: 70vh;
+    inset: 0;
+    left: 0;
+    top: 0;
+    transform: none;
+    width: 100vw;
+    max-height: 100vh;
     overflow-y: auto;
+    border: none;
   }
 
-  .inv-kind {
-    display: none;
+  .ui-grid {
+    grid-auto-rows: 68px;
   }
 
   /* Death screen, scaled down. */
@@ -963,13 +1393,13 @@
   }
 
   .death-cause {
-    font-size: 13px;
+    font-size: var(--ui-fs-body);
     margin: 12px 0 30px;
   }
 
   .death-respawn {
     padding: 11px 26px;
-    font-size: 13px;
+    font-size: var(--ui-fs-body);
   }
 }
 
@@ -992,11 +1422,28 @@
    thumbs. The hotbar hugs whatever free strip the orientation offers. */
 @media (pointer: coarse) {
   .hud-vitals {
-    top: calc(10px + env(safe-area-inset-top, 0px));
+    top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
     bottom: auto;
     left: calc(12px + env(safe-area-inset-left, 0px));
+    /* The chat button starts at left 180px — the stack must end before it. */
     width: 160px;
-    font-size: 11px;
+    gap: 5px;
+  }
+
+  /* HYDRATION at 9px condensed is ~45px; 52px holds it without clipping. */
+  .hud-vitals .bar-label {
+    width: 52px;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+
+  .hud-vitals .bar-icon {
+    width: 12px;
+    height: 12px;
+  }
+
+  .hud-vitals .bar-value {
+    width: 24px;
   }
 
   /* Notices drop below the relocated vitals. */
@@ -1018,7 +1465,7 @@
    8 of them always fit the strip (min 30px, max 44px). */
 @media (pointer: coarse) and (orientation: landscape) {
   .hud-hotbar {
-    bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--ui-sp-4) + env(safe-area-inset-bottom, 0px));
     gap: 3px;
   }
 
@@ -1053,25 +1500,34 @@
   flex-direction: column;
   gap: 5px;
   width: 230px;
+  padding: var(--ui-sp-4) 0;
+  border-top: var(--ui-hairline-rule);
+  border-bottom: var(--ui-hairline-rule);
 }
 
 .recap-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ui-sp-5);
 }
 
 .recap-label {
+  font-family: var(--ui-font-cond);
   font-size: 10px;
+  font-weight: 600;
   letter-spacing: 0.18em;
+  text-transform: uppercase;
   color: var(--ui-dim);
 }
 
 .recap-value {
   font-family: var(--ui-mono);
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-data);
   color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
 }
 
 /* On the death screen the cause line already carries 40px bottom margin;
@@ -1088,9 +1544,9 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(340px, calc(100vw - 24px)); /* 336px at a 360px viewport */
-  padding: 10px 12px 12px;
+  padding: var(--ui-sp-4) var(--ui-sp-5) var(--ui-sp-5);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
   border-top: 2px solid var(--ui-hp);
   pointer-events: auto;
 }
@@ -1103,18 +1559,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ui-sp-3);
 }
 
 .lastlife-title {
-  font-size: 11px;
-  letter-spacing: 0.28em;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-eyebrow);
+  text-transform: uppercase;
   color: var(--ui-hp);
 }
 
 .lastlife-close {
   margin: -6px -8px -6px 0; /* grow the hit area without moving the glyph */
-  padding: 6px 10px;
+  padding: var(--ui-sp-2) var(--ui-sp-4);
   background: transparent;
   border: none;
   color: var(--ui-dim);
@@ -1128,8 +1587,8 @@
 }
 
 .lastlife-msg {
-  margin: 7px 0 9px;
-  font-size: 12px;
+  margin: 7px 0 var(--ui-sp-4);
+  font-size: var(--ui-fs-data);
   color: var(--ui-text);
 }
 
@@ -1141,7 +1600,7 @@
   }
 
   .lastlife-close {
-    padding: 12px 14px;
+    padding: var(--ui-sp-5) 14px;
     font-size: 20px;
   }
 }
@@ -1150,27 +1609,32 @@
 
 .menu-leaderboard {
   margin-top: 26px;
-  padding-top: 16px;
-  border-top: 1px solid var(--ui-border);
+  padding-top: var(--ui-sp-6);
+  border-top: var(--ui-hairline);
 }
 
 .lb-title {
-  margin-bottom: 9px;
-  font-size: 11px;
+  margin-bottom: var(--ui-sp-4);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-eyebrow);
+  font-weight: 600;
   letter-spacing: 0.28em;
   text-indent: 0.28em;
+  text-transform: uppercase;
   color: var(--ui-dim);
 }
 
 .lb-row {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--ui-sp-4);
   padding: 3px 0;
   font-family: var(--ui-mono);
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
+  letter-spacing: var(--ui-track-data);
   color: var(--ui-dim);
   text-align: left;
+  font-variant-numeric: tabular-nums;
 }
 
 .lb-rank {
@@ -1186,7 +1650,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--ui-text);
-  opacity: 0.85;
 }
 
 .lb-days {
@@ -1210,9 +1673,9 @@
      missing-icon swatch fallback, and an !important rule here would override it
      (that left items without a /icons/<type>.png showing a broken image). */
   background: transparent;
-  /* .hotbar-swatch (also applied) sets `inset: 12px`, which over-constrains the
+  /* .hotbar-swatch (also applied) sets an inset, which over-constrains the
      absolutely-positioned img against the 80% size below and pins it top-left.
-     Reset to inset:0 + margin:auto so the 80% box centers in the 48px slot. */
+     Reset to inset:0 + margin:auto so the 80% box centers in the slot. */
   inset: 0;
   margin: auto;
   width: 80%;
@@ -1241,7 +1704,7 @@
 
 .hud-chat {
   position: absolute;
-  left: calc(16px + env(safe-area-inset-left, 0px));
+  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
   bottom: calc(124px + env(safe-area-inset-bottom, 0px)); /* above the vitals */
   width: min(340px, calc(100vw - 200px));
   display: flex;
@@ -1261,7 +1724,7 @@
 }
 
 .chat-line {
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
   line-height: 1.35;
   overflow-wrap: anywhere; /* a 120-char token must wrap, not overflow */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
@@ -1273,6 +1736,8 @@
   opacity: 0;
 }
 
+/* Proximity chat carries a name and a string — there are no channels and no
+   per-speaker colors. */
 .chat-name {
   color: var(--ui-dim);
 }
@@ -1286,6 +1751,7 @@
 }
 
 .chat-input-row {
+  position: relative;
   margin-top: 5px;
   pointer-events: auto;
 }
@@ -1293,12 +1759,13 @@
 .chat-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 6px 9px;
+  padding: var(--ui-sp-2) var(--ui-sp-3);
   background: rgba(0, 0, 0, 0.55);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--ui-fs-body);
   letter-spacing: 0.03em;
   outline: none;
   user-select: text; /* .hud sets user-select: none */
@@ -1312,6 +1779,18 @@
 .chat-input::placeholder {
   color: var(--ui-dim);
   opacity: 0.7;
+}
+
+/* Right-aligned inside the input row, clear of the caret. */
+.chat-send-hint {
+  position: absolute;
+  right: var(--ui-sp-3);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-family: var(--ui-mono);
+  font-size: 10px;
+  color: var(--ui-dim);
 }
 
 /* ≤980px lifts the hotbar to bottom 140px — keep the chat clear of it. */
@@ -1331,7 +1810,7 @@
   }
 
   .chat-line {
-    font-size: 11px;
+    font-size: var(--ui-fs-micro);
   }
 }
 
@@ -1347,7 +1826,7 @@
    vitals (left 12px + 160px wide), under no other control. */
 .tc-btn--chat {
   position: absolute;
-  top: calc(10px + env(safe-area-inset-top, 0px));
+  top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
   left: calc(180px + env(safe-area-inset-left, 0px));
   width: 48px;
   height: 48px;
@@ -1362,10 +1841,9 @@
   transform: translateX(-50%);
   background: rgba(140, 60, 10, 0.85);
   color: #ffe9d0;
-  font-size: 13px;
-  padding: 6px 14px;
+  font-size: var(--ui-fs-body);
+  padding: var(--ui-sp-2) 14px;
   border: 1px solid rgba(255, 180, 90, 0.4);
-  border-radius: 3px;
   pointer-events: none;
   z-index: 40;
 }
@@ -1380,9 +1858,9 @@
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(260px, calc(100vw - 32px));
-  padding: 16px 18px 12px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
+  background: var(--ui-bg-deep);
+  border: var(--ui-hairline);
   pointer-events: auto;
   text-align: center;
 }
@@ -1390,8 +1868,8 @@
 .codepad-display {
   display: flex;
   justify-content: center;
-  gap: 10px;
-  margin: 6px 0 12px;
+  gap: var(--ui-sp-4);
+  margin: var(--ui-sp-2) 0 var(--ui-sp-5);
   font-family: var(--ui-mono);
   font-size: 22px;
 }
@@ -1400,7 +1878,7 @@
   width: 28px;
   height: 34px;
   line-height: 34px;
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
   color: var(--ui-dim);
 }
 
@@ -1412,15 +1890,16 @@
 .codepad-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+  gap: var(--ui-sp-2);
 }
 
 .codepad-btn {
-  padding: 10px 0;
+  padding: var(--ui-sp-4) 0;
   font-family: var(--ui-mono);
   font-size: 16px;
   background: transparent;
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-radius);
   color: var(--ui-text);
   cursor: pointer;
   pointer-events: auto;
@@ -1428,6 +1907,7 @@
 
 .codepad-btn:hover:not(:disabled) {
   border-color: var(--ui-accent);
+  background: var(--ui-accent-fill);
 }
 
 .codepad-btn:disabled {
@@ -1442,8 +1922,8 @@
 .codepad-actions {
   display: flex;
   justify-content: center;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--ui-sp-3);
+  margin-top: var(--ui-sp-4);
 }
 
 /* Crate panel: the inventory-panel skeleton, offset so both can breathe on
@@ -1453,12 +1933,13 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: min(420px, calc(100vw - 32px));
+  width: min(460px, calc(100vw - 32px));
   max-height: min(560px, calc(100vh - 40px));
   overflow-y: auto;
-  padding: 16px 18px 12px;
+  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
   background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  backdrop-filter: var(--ui-blur);
   pointer-events: auto;
 }
 

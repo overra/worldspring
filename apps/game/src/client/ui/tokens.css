@@ -1,0 +1,108 @@
+/* Worldspring design tokens — the single source of truth for the game UI.
+   Imported by ui.css (the first sheet any UI surface pulls in), so menu.css,
+   map.css and debug.css can consume these without importing anything.
+
+   --ui-bg / --ui-border / --ui-text / --ui-dim / --ui-accent / --ui-danger stay
+   in styles.css (frozen) and are NOT redefined here. */
+
+:root {
+  /* --- surfaces --- */
+  --ui-ground: #0a0c0a; /* body/backdrop base — mirrors styles.css */
+  --ui-bg-deep: rgba(8, 10, 7, 0.92); /* modal over modal: detail card, code pad */
+  --ui-cell: rgba(255, 255, 255, 0.03); /* empty slot/cell */
+  --ui-cell-filled: rgba(34, 41, 26, 0.85); /* slot/cell holding an item */
+  --ui-rule: rgba(255, 255, 255, 0.06); /* inner separators, row rules */
+
+  /* --- accent (olive is the ONLY accent hue) --- */
+  --ui-accent-fill: rgba(125, 160, 107, 0.14);
+  --ui-accent-fill-hover: rgba(125, 160, 107, 0.28);
+  --ui-accent-soft: rgba(125, 160, 107, 0.16); /* active segment, selected cell tint */
+
+  /* Glow is the only elevation cue in the whole UI — there are no drop shadows. */
+  --ui-glow: 0 0 7px rgba(125, 160, 107, 0.35);
+  --ui-glow-strong: 0 0 16px rgba(125, 160, 107, 0.35);
+
+  /* --- semantic --- */
+  --ui-danger-fill: rgba(192, 57, 43, 0.12);
+  --ui-warn: #c8862e; /* caution (GIVE UP) — deliberately reuses the food hue */
+  --ui-hp: #b33a2e;
+  --ui-food: #c8862e;
+  --ui-water: #3e7fa8;
+  --ui-cold: #7fd4e4;
+
+  /* --- ItemKind → stripe/chip color --- */
+  --ui-kind-food: var(--ui-food);
+  --ui-kind-drink: var(--ui-water);
+  --ui-kind-heal: #7db894;
+  --ui-kind-melee: var(--ui-hp);
+  --ui-kind-ranged: var(--ui-hp);
+  --ui-kind-ammo: #a8842c;
+  --ui-kind-placeable: var(--ui-accent);
+  --ui-kind-tool: #6f9ac2;
+  --ui-kind-material: #8a8f7e;
+  --ui-kind-wear: #9b8fb0;
+
+  /* --- fonts ---
+     Self-hosted or nothing: a third-party font CDN is an extra RTT on the join
+     path, a CSP surface and an offline failure. Until subset woff2 files ship in
+     public/fonts (+ @font-face here), every stack resolves to its system tail. */
+  --ui-font: "Barlow", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --ui-font-cond: "Barlow Semi Condensed", "Barlow", system-ui, -apple-system, sans-serif;
+  --ui-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* --- type scale (uppercase + tracking is the dominant gesture) --- */
+  --ui-fs-hero: clamp(48px, 10vw, 84px); /* YOU DIED */
+  --ui-fs-title: 16px; /* panel title, item name */
+  --ui-fs-eyebrow: 11px; /* FIELD KIT, SETTINGS, CARRY */
+  --ui-fs-label: 11px; /* row label: MASTER VOLUME, HEALTH */
+  --ui-fs-btn: 13px;
+  --ui-fs-body: 13px;
+  --ui-fs-micro: 11px; /* "Tab to close" */
+  --ui-fs-data-lg: 18px; /* clock */
+  --ui-fs-data: 12px; /* values, seconds, counts */
+  --ui-fs-data-sm: 11px; /* ping, online, slot n° */
+
+  --ui-track-hero: 0.3em;
+  --ui-track-eyebrow: 0.24em;
+  --ui-track-label: 0.14em;
+  --ui-track-btn: 0.16em;
+  --ui-track-title: 0.04em;
+  --ui-track-micro: 0.06em;
+  --ui-track-data: 0.02em;
+
+  /* --- spacing (4 / 6 / 8 / 10 / 12 / 16 / 20 / 24 / 30) --- */
+  --ui-sp-1: 4px;
+  --ui-sp-2: 6px;
+  --ui-sp-3: 8px;
+  --ui-sp-4: 10px;
+  --ui-sp-5: 12px;
+  --ui-sp-6: 16px;
+  --ui-sp-7: 20px;
+  --ui-sp-8: 24px;
+  --ui-sp-9: 30px;
+  --ui-edge: 16px; /* screen-edge inset, always inside an env(safe-area-inset-*) calc */
+
+  /* --- shape ---
+     Radius is 0 everywhere. Only genuinely circular things (minimap, joystick,
+     touch buttons, crosshair dot) opt into --ui-round. */
+  --ui-radius: 0;
+  --ui-round: 50%;
+  --ui-hairline: 1px solid var(--ui-border);
+  --ui-hairline-rule: 1px solid var(--ui-rule);
+  --ui-hairline-accent: 1px solid var(--ui-accent);
+  --ui-blur: blur(8px); /* desktop panels only — off under (pointer: coarse) */
+
+  /* --- fixed control sizes --- */
+  --ui-slot: 56px; /* hotbar slot */
+  --ui-cell-size: 72px; /* inventory grid cell */
+  --ui-bar-h: 8px; /* vitals / cast / vehicle meter track */
+
+  /* --- motion (no new animation; these are the ones that already ship) --- */
+  --ui-bar-transition: width 0.35s ease;
+}
+
+/* The base sheet is frozen on a system stack; the UI font belongs to every DOM
+   node under the app root (the canvas has no text). */
+#root {
+  font-family: var(--ui-font);
+}

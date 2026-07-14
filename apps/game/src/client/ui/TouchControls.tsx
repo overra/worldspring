@@ -24,7 +24,15 @@ import type { WirePiece } from "@worldspring/shared/protocol";
 import { buildState, clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
 import { useSettingsStore } from "@/client/state/settings";
-import { doAttack, doContainerOpen, doDoor, doPickup, doPlace } from "@/client/net/connection";
+import {
+  doAttack,
+  doContainerOpen,
+  doDoor,
+  doEnterVehicle,
+  doExitVehicle,
+  doPickup,
+  doPlace,
+} from "@/client/net/connection";
 import "./ui.css";
 
 const STICK_RADIUS_PX = 60; // base circle is 120px in ui.css
@@ -33,12 +41,55 @@ const STICK_SPRINT_AT = 0.95; // push past 95% of the rim to sprint
 const LOOK_SENSITIVITY = 0.005; // rad per px at sensitivity 1
 const PITCH_LIMIT = 1.45; // rad — same clamp as InputController
 
-/** Same gate as NetSystem/InputController: no gameplay input through UI.
- * The crate panel is deliberately absent — walking away closes it. */
+/** Surfaces a look-drag must never start on. `.ui-panel` is the panel primitive
+ * every modal composes, so a panel that renames its own class stays excluded;
+ * the explicit classes cover the ones that predate it. */
+const LOOK_EXCLUDE =
+  "button, input, [data-tc], .ui-panel, .hud-inv, .hud-codepad, .hud-crate, .map-panel";
+
+/** No gameplay input through UI. `mapOpen` mirrors InputController's canMove
+ * gate: the map overlay covers the whole screen on a phone, so a drag on it
+ * must not steer the camera underneath. The crate panel is deliberately absent
+ * — walking away closes it. */
 function gameplayBlocked(): boolean {
   const ui = useUIStore.getState();
   return (
-    ui.invOpen || ui.menuOpen || ui.chatOpen || ui.codePad !== null || ui.phase !== "playing"
+    ui.invOpen ||
+    ui.menuOpen ||
+    ui.chatOpen ||
+    ui.mapOpen ||
+    ui.codePad !== null ||
+    ui.phase !== "playing"
+  );
+}
+
+/** Verb for the interact button, matching what its tap will actually do (the
+ * E-key priority order in InputController). The prompt ids live on clientWorld,
+ * but `prompt` — which this component subscribes to — changes whenever the
+ * target does, so the read is never a frame stale in practice. */
+function interactVerb(seated: boolean): string {
+  if (seated) return "EXIT";
+  if (clientWorld.promptLootId !== null) return "TAKE";
+  if (clientWorld.promptDoorId !== null || clientWorld.promptCrateId !== null) return "OPEN";
+  return "RIDE";
+}
+
+/** A hamburger, not the ⚙ glyph: U+2699 has an emoji presentation on iOS and
+ * Android, which paints a color icon into a monochrome UI. */
+function MenuIcon(): ReactElement {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13" />
+    </svg>
   );
 }
 
@@ -51,6 +102,8 @@ export function TouchControls(): ReactElement | null {
   const invOpen = useUIStore((s) => s.invOpen);
   // doc 06 M5 — a door in range shows the LOCK button (L-key touch parity).
   const doorPromptId = useUIStore((s) => s.doorPromptId);
+  // doc 13 M4 — seated, the interact button becomes EXIT (E-key parity).
+  const vehicleSeat = useUIStore((s) => s.vehicleSeat);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const zoneRef = useRef<HTMLDivElement | null>(null);
@@ -165,6 +218,12 @@ export function TouchControls(): ReactElement | null {
           return;
         case "interact": {
           if (gameplayBlocked()) return;
+          // doc 13 M4 — seated: the tap leaves the vehicle, exactly as E does
+          // (highest priority, so a rider is never stuck in the seat).
+          if (ui.vehicleSeat !== null) {
+            doExitVehicle();
+            return;
+          }
           const lootId = clientWorld.promptLootId;
           if (lootId !== null) {
             doPickup(lootId);
@@ -185,9 +244,20 @@ export function TouchControls(): ReactElement | null {
             else doDoor(doorId);
             return;
           }
-          // doc 06 M6 — last: open a nearby storage crate (E parity).
+          // doc 06 M6 — open a nearby storage crate (E parity).
           const crateId = clientWorld.promptCrateId;
-          if (crateId !== null) doContainerOpen(crateId);
+          if (crateId !== null) {
+            doContainerOpen(crateId);
+            return;
+          }
+          // doc 13 M4 — last: board a nearby vehicle, driver seat first (the
+          // joystick already steers once seated: NetSystem folds analogX/analogZ
+          // into steer/throttle, so boarding was the only missing touch verb).
+          const vehId = clientWorld.promptVehicleId;
+          if (vehId !== null) {
+            const seats = clientWorld.bodies.get(vehId)?.seats;
+            doEnterVehicle(vehId, seats !== undefined && seats[0] !== null ? 1 : 0);
+          }
           return;
         }
         case "lock": {
@@ -230,7 +300,7 @@ export function TouchControls(): ReactElement | null {
         const target = t.target;
         if (!(target instanceof Element)) continue;
         if (zone.contains(target)) continue; // stick zone never look-drags
-        if (target.closest("button, input, [data-tc], .hud-inv, .hud-codepad, .hud-crate") !== null) continue;
+        if (target.closest(LOOK_EXCLUDE) !== null) continue;
         lookId = t.identifier;
         lookLastX = t.clientX;
         lookLastY = t.clientY;
@@ -305,8 +375,13 @@ export function TouchControls(): ReactElement | null {
 
       <div className="tc-cluster">
         {prompt !== null && (
-          <button type="button" data-tc="interact" className="tc-btn tc-btn--interact">
-            TAKE
+          <button
+            type="button"
+            data-tc="interact"
+            aria-label={prompt}
+            className="tc-btn tc-btn--interact"
+          >
+            {interactVerb(vehicleSeat !== null)}
           </button>
         )}
         {doorPromptId !== null && (
@@ -336,7 +411,7 @@ export function TouchControls(): ReactElement | null {
       </button>
 
       <button type="button" data-tc="menu" aria-label="Menu" className="tc-btn tc-btn--menu">
-        ⚙
+        <MenuIcon />
       </button>
     </div>
   );

@@ -1,0 +1,75 @@
+/* Survival's HUD skin. The panels it styles (.hud-vitals, .hud-temp, .hud-build)
+   live in ui.css; what is here is what only this mode has. */
+
+/* Vitals glyphs take their vital's hue; the thermometer follows the temp row. */
+.bar-icon--hp { color: var(--ui-hp); }
+.bar-icon--food { color: var(--ui-food); }
+.bar-icon--water { color: var(--ui-water); }
+.bar-icon--temp { color: var(--ui-dim); }
+.hud-temp--cold .bar-icon--temp { color: var(--ui-cold); }
+
+/* --- driving HUD (doc 13 M4) --- */
+
+.hud-vehicle {
+  position: absolute;
+  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
+  bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-2);
+  padding: var(--ui-sp-4) var(--ui-sp-5);
+  background: var(--ui-bg);
+  border: var(--ui-hairline);
+}
+
+.hud-vehicle-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+}
+
+.hud-vehicle-role {
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+.hud-vehicle-speed {
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-lg);
+  font-weight: 500;
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-vehicle-unit {
+  font-size: var(--ui-fs-data-sm);
+  color: var(--ui-dim);
+}
+
+/* The meters share the .bar primitive; only the column widths differ. */
+.hud-vehicle .bar-label {
+  width: 44px;
+}
+
+.hud-vehicle .bar-value {
+  width: 38px;
+}
+
+.hud-vehicle-hint {
+  font-size: var(--ui-fs-micro);
+  letter-spacing: var(--ui-track-micro);
+  color: var(--ui-dim);
+}
+
+/* Keyboard hints are meaningless on touch (same rule as .hud-build-hints). */
+@media (pointer: coarse) {
+  .hud-vehicle-hint {
+    display: none;
+  }
+}

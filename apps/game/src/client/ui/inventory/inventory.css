@@ -1,0 +1,476 @@
+/* The Tab panel. Composes the primitives in ui.css (.ui-panel-head, .ui-grid,
+   .ui-cell*, .ui-btn*, .ui-eyebrow/.ui-label/.ui-num/.ui-key/.ui-chip) and adds
+   only what the inventory itself needs. The .hud-inv shell (position, size, the
+   768px full-screen sheet, the coarse-pointer blur opt-out) stays in ui.css.
+
+   Rules that restyle a .ui-* primitive are scoped under an .inv-* ancestor, so
+   they win on specificity rather than on sheet order. */
+
+/* ------------------------------- header -------------------------------- */
+
+.inv-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inv-who .ui-eyebrow {
+  font-size: 10px;
+  color: var(--ui-accent);
+}
+
+.inv-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-5);
+}
+
+.inv-tab-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
+}
+
+.inv-close {
+  display: none;
+  width: 44px;
+  height: 44px;
+  margin-right: -12px;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--ui-dim);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.inv-close:hover {
+  color: var(--ui-text);
+}
+
+/* ---------------------------- body / columns ---------------------------- */
+
+.inv-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--ui-sp-6);
+  padding: var(--ui-sp-6) 18px;
+}
+
+.inv-main,
+.inv-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-6);
+  min-width: 0;
+}
+
+.inv-sec-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+  margin-bottom: var(--ui-sp-3);
+}
+
+/* ------------------------------ carry grid ------------------------------ */
+
+.inv-pack-head {
+  margin: var(--ui-sp-4) 0 var(--ui-sp-3);
+}
+
+/* Pack slots carry no hotbar key — the number is informational, so it reads
+   back. */
+.inv-cell-index--pack {
+  opacity: 0.6;
+}
+
+/* An empty cell is a <div>, not a target — it must not take the .ui-cell hover. */
+.inv-panel div.ui-cell:hover {
+  border-color: var(--ui-border);
+}
+
+/* Double-click is the cell's primary verb; it must not select the slot digit. */
+.inv-panel .ui-cell {
+  user-select: none;
+}
+
+/* ------------------------------ equipment ------------------------------- */
+
+.inv-eq-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-4);
+  min-height: 44px;
+  padding: 0 var(--ui-sp-4);
+  background: var(--ui-cell);
+  border: var(--ui-hairline);
+}
+
+.inv-eq-row + .inv-eq-row {
+  margin-top: var(--ui-sp-2);
+}
+
+.inv-eq-row--worn {
+  background: var(--ui-accent-fill);
+  border: var(--ui-hairline-accent);
+}
+
+/* Read-only mirror of the equipped hotbar slot — no verb of its own. */
+.inv-eq-row--held {
+  background: transparent;
+  border-style: dashed;
+}
+
+.inv-eq-row .inv-eq-slot {
+  width: 48px;
+  flex: none;
+  font-size: 10px;
+  letter-spacing: var(--ui-track-btn);
+}
+
+.inv-eq-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  object-fit: contain;
+}
+
+.inv-eq-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-fs-body);
+  color: var(--ui-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-eq-name--empty {
+  color: var(--ui-dim);
+  opacity: 0.6;
+}
+
+.inv-eq-row .inv-eq-btn {
+  padding: var(--ui-sp-1) var(--ui-sp-4);
+  font-size: var(--ui-fs-micro);
+  letter-spacing: 0.12em;
+}
+
+/* ------------------------------- condition ------------------------------ */
+
+.inv-cond-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-2) 0;
+  border-bottom: var(--ui-hairline-rule);
+}
+
+.inv-cond-row:last-child {
+  border-bottom: none;
+}
+
+.inv-cond-note {
+  margin: 2px 0 0;
+}
+
+.inv-cond-row .inv-num--cold {
+  color: var(--ui-cold);
+}
+
+.inv-cond-row .inv-num--off {
+  color: var(--ui-dim);
+}
+
+/* ----------------------------- detail card ------------------------------ */
+
+.inv-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-5);
+  padding: 14px;
+  background: var(--ui-bg-deep);
+  border: var(--ui-hairline);
+}
+
+.inv-detail--empty {
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+}
+
+.inv-detail-main {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-5);
+  min-width: 0;
+}
+
+.inv-detail-icon {
+  width: 44px;
+  height: 44px;
+  flex: none;
+  object-fit: contain;
+}
+
+.inv-detail-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-2);
+  min-width: 0;
+}
+
+.inv-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-3);
+  min-width: 0;
+}
+
+.inv-detail-head .ui-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-detail-head .ui-chip {
+  flex: none;
+  padding: 2px var(--ui-sp-2);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.inv-detail-facts {
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-dim);
+}
+
+.inv-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-sp-2);
+}
+
+.inv-detail-actions .ui-btn {
+  flex: 1;
+  min-width: 84px;
+  padding: var(--ui-sp-3) var(--ui-sp-5);
+  font-size: var(--ui-fs-micro);
+}
+
+/* ------------------------------- crafting ------------------------------- */
+
+.inv-craft {
+  min-height: 0;
+}
+
+.inv-craft-list {
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.inv-craft-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-3) 0;
+  border-bottom: var(--ui-hairline-rule);
+}
+
+.inv-craft-row:last-child {
+  border-bottom: none;
+}
+
+/* Every gate is real: inputs, tool, campfire station. Crafting is instant. */
+.inv-craft-row--off {
+  opacity: 0.45;
+}
+
+.inv-craft-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.inv-craft-out {
+  font-size: var(--ui-fs-body);
+  color: var(--ui-text);
+}
+
+.inv-craft-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-sp-1);
+}
+
+.inv-craft-chip {
+  padding: 1px var(--ui-sp-2);
+  border: var(--ui-hairline-accent);
+  color: var(--ui-accent);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  letter-spacing: var(--ui-track-data);
+  white-space: nowrap;
+}
+
+.inv-craft-chip--short {
+  border-color: var(--ui-danger);
+  color: var(--ui-danger);
+}
+
+.inv-craft-gate {
+  font-family: var(--ui-font-cond);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ui-warn);
+}
+
+.inv-craft-row .ui-btn {
+  padding: var(--ui-sp-1) var(--ui-sp-4);
+  font-size: var(--ui-fs-micro);
+  letter-spacing: 0.12em;
+}
+
+/* ------------------------- desktop: no tab bar -------------------------- */
+
+.inv-seg {
+  display: none;
+}
+
+/* --------------------------- narrow: one sheet ---------------------------
+   The 768px sheet (inset 0, full width, no border) already lives in ui.css.
+   Here: the CARRY|CRAFT segmented control that replaces the two columns, and
+   the detail card demoted to a bottom action bar. */
+
+@media (max-width: 768px) {
+  .inv-seg {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--ui-bg);
+    border-bottom: var(--ui-hairline);
+  }
+
+  .inv-seg-btn {
+    flex: 1;
+    height: 44px;
+    background: transparent;
+    border: none;
+    border-right: var(--ui-hairline-rule);
+    color: var(--ui-dim);
+    font-family: var(--ui-font-cond);
+    font-size: var(--ui-fs-btn);
+    font-weight: 600;
+    letter-spacing: var(--ui-track-btn);
+    text-transform: uppercase;
+  }
+
+  .inv-seg-btn:last-child {
+    border-right: none;
+  }
+
+  .inv-seg-btn--active {
+    background: var(--ui-accent-soft);
+    color: var(--ui-text);
+  }
+
+  .inv-close {
+    display: flex;
+  }
+
+  .inv-body {
+    display: block;
+    /* Clear of the pinned action bar. */
+    padding: var(--ui-sp-5) var(--ui-sp-5) 108px;
+  }
+
+  .inv-main,
+  .inv-side {
+    display: block;
+  }
+
+  .inv-sec {
+    margin-bottom: var(--ui-sp-7);
+  }
+
+  .inv-panel--carry .inv-craft {
+    display: none;
+  }
+
+  .inv-panel--craft .inv-main,
+  .inv-panel--craft .inv-cond {
+    display: none;
+  }
+
+  .inv-craft-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .inv-craft-row {
+    min-height: 56px;
+  }
+
+  .inv-craft-row .ui-btn {
+    min-height: 44px;
+    padding: var(--ui-sp-3) 14px;
+  }
+
+  /* The sheet fills the viewport (and its backdrop-filter is off under a coarse
+     pointer), so a fixed bar pins to the sheet's own bottom edge. */
+  .inv-detail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--ui-sp-4);
+    padding: var(--ui-sp-4) var(--ui-sp-5) calc(var(--ui-sp-4) + env(safe-area-inset-bottom, 0px));
+    border: none;
+    border-top: var(--ui-hairline);
+  }
+
+  .inv-detail--empty {
+    display: none;
+  }
+
+  .inv-detail-main {
+    flex: 1;
+  }
+
+  .inv-detail-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .inv-detail-actions {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+
+  .inv-detail-actions .ui-btn {
+    min-width: 0;
+    min-height: 44px;
+  }
+}
+
+/* No keyboard, no Tab hint (the × button is the close affordance). */
+@media (pointer: coarse) {
+  .inv-tab-hint {
+    display: none;
+  }
+}

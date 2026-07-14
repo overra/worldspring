@@ -1,0 +1,14 @@
+/* Shared-chrome rules that ui.css does not carry. Everything else the chrome
+   renders (.hud-*, .bar-*, .ui-*) lives in ui.css / tokens.css. */
+
+/* Cast-bar readout under the track: elapsed left, total right. */
+.hud-channel-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--ui-sp-1);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+}
