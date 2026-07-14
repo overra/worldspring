@@ -11,6 +11,7 @@ import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { modeHud } from "./hud/modes/registry";
 import "./ui.css";
+import "./menu.css"; // the .death-* shell lives with the other menus
 
 export function DeathScreen(): ReactElement {
   const deathCause = useUIStore((s) => s.deathCause);

@@ -2,6 +2,11 @@
 // by using the map item (InputController), only while the player holds one.
 // Pure DOM/canvas, redrawn off the rAF frame on a calm timer — never React per
 // frame. The fog-of-war mask is M6; this draws the whole island.
+//
+// The canvas is split out as <MapCanvas> because the tabbed workspace hosts the
+// same map in its MAP tab (inventory/InventoryPanel.tsx). Both sites mount the
+// SAME component — the projection inside mapBake is hard-won and must have
+// exactly one caller.
 
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
@@ -20,20 +25,29 @@ const LEGEND = [
   { mark: "drop", label: "Airdrop" },
 ] as const;
 
-export function MapPanel(): ReactElement | null {
-  const mapOpen = useUIStore((s) => s.mapOpen);
+interface MapCanvasProps {
+  /** The canvas's box class — each host sizes the square itself. */
+  className?: string;
+}
+
+/**
+ * The island canvas and its 10 Hz redraw. Mount it only while the map is
+ * actually on screen: the effect owns a setInterval and a dynamic chunk fetch,
+ * and unmounting is what stops both.
+ */
+export function MapCanvas({ className = "map-canvas" }: MapCanvasProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    if (!mapOpen) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     const R = canvas.width;
 
     // mapBake MUST stay behind a dynamic import (runtime.ts loads it the same
-    // way): App.tsx mounts this component from the menu-shell chunk, so a static
-    // import would pull the baker and its raster deps onto the join path.
+    // way): the panels that mount this component are on the menu-shell/HUD
+    // chunks, so a static import would pull the baker and its raster deps onto
+    // the join path.
     let id = 0;
     let live = true;
     void import("@/client/render/map/mapBake").then(
@@ -72,10 +86,45 @@ export function MapPanel(): ReactElement | null {
       live = false;
       window.clearInterval(id);
     };
-  }, [mapOpen]);
+  }, []);
 
+  return <canvas ref={canvasRef} width={PANEL_PX} height={PANEL_PX} className={className} />;
+}
+
+/** The marker key. Exported so the workspace's MAP tab shows the same one —
+ * a legend that drifts from drawDynamicLayer is worse than none. */
+export function MapLegend(): ReactElement {
+  return (
+    <ul className="map-legend">
+      {LEGEND.map((l) => (
+        <li key={l.label} className="ui-label">
+          <span className={`map-swatch map-swatch--${l.mark}`} />
+          {l.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** True while the map's reveal is fogged — the FOG OF WAR chip's gate. */
+export function mapIsFogged(): boolean {
+  return clientWorld.config.map.reveal === "explored";
+}
+
+/**
+ * The standalone M-key map. The workspace has a MAP tab that shows the same
+ * canvas, but M keeps this panel: InputController owns the M binding and gates
+ * movement/pointer-lock on `mapOpen`, and rerouting it to `invOpen` + a tab
+ * would mean editing that controller.
+ *
+ * `mapOpen` and `invOpen` are NOT mutually exclusive (Tab is live while the map
+ * is up), and this panel outranks the workspace (map.css z-index 8 vs the HUD's
+ * 5) — so the workspace's MAP tab stands its canvas down while `mapOpen` is
+ * true, and only one MapCanvas (one interval, one chunk) is ever mounted.
+ */
+export function MapPanel(): ReactElement | null {
+  const mapOpen = useUIStore((s) => s.mapOpen);
   if (!mapOpen) return null;
-  const fogged = clientWorld.config.map.reveal === "explored";
   return (
     <div
       className="map-backdrop"
@@ -86,20 +135,13 @@ export function MapPanel(): ReactElement | null {
       <div className="map-panel ui-panel">
         <div className="ui-panel-head">
           <span className="ui-eyebrow">Island map</span>
-          {fogged && <span className="ui-chip">Fog of war</span>}
+          {mapIsFogged() && <span className="ui-chip">Fog of war</span>}
         </div>
         <div className="map-body">
-          <canvas ref={canvasRef} width={PANEL_PX} height={PANEL_PX} className="map-canvas" />
+          <MapCanvas />
         </div>
         <div className="map-foot">
-          <ul className="map-legend">
-            {LEGEND.map((l) => (
-              <li key={l.label} className="ui-label">
-                <span className={`map-swatch map-swatch--${l.mark}`} />
-                {l.label}
-              </li>
-            ))}
-          </ul>
+          <MapLegend />
           <div className="map-hint ui-label">
             <span className="ui-key">M</span>
             or click outside to close

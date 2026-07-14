@@ -81,6 +81,61 @@ jobs:
           fi
           echo "no TESTBED in wrangler config ✓"
 
+  e2e:
+    # The browser gate. `verify` runs the sim headlessly and never opens a page —
+    # it cannot see a black screen. This job drives the BUILT worker in a real
+    # Chromium (SwiftShader WebGL, real WebSockets) and asserts what the sim tests
+    # structurally cannot: that a join actually puts triangles on screen, that the
+    # webfonts resolve, that nothing overflows a 390px viewport, and — the reason
+    # this exists — that a cold join AT NIGHT still renders the world.
+    #
+    # Runs alongside `verify` rather than after it: they fail for unrelated reasons
+    # and a reviewer wants both answers at once.
+    #
+    # Not (yet) in deploy-prod's `needs`. The visual baselines are new; until they
+    # have proven stable across a few weeks of PRs, a baseline hiccup must not be
+    # able to block a production deploy. Tighten this once it has earned it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # --with-deps pulls the system libs headless Chromium needs on a bare runner.
+      # Chromium only: the suite asserts on OUR layout, not on cross-browser parity.
+      - name: Install Chromium
+        run: pnpm --filter @worldspring/game exec playwright install --with-deps chromium
+
+      # THE VISUAL BASELINES ARE LINUX-CANONICAL and this container is the machine
+      # that owns them. Font rasterization differs macOS↔Linux, so a baseline
+      # committed from a laptop false-fails here forever — the same trap as the
+      # worldgen fingerprint. To re-baseline, run this suite in CI, not locally.
+      - name: E2E (build + real browser)
+        run: pnpm --filter @worldspring/game test:e2e
+
+      # On failure the diff images are the whole story — expected/actual/diff PNGs,
+      # plus a trace you can scrub. Without these a red visual test is unactionable.
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-failures
+          path: |
+            apps/game/test-results/
+            apps/game/playwright-report/
+          retention-days: 7
+
   deploy-prod:
     # Production deploy of the game Worker. Gated on `verify` and run ONLY on a
     # push to main (a merged PR) — the `if` skips PRs, and forks never produce a

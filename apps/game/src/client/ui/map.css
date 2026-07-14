@@ -104,20 +104,27 @@
 
 .hud-minimap {
   position: fixed;
-  top: 24px; /* the compass letters orbit ~17px outside the ring — this is their room */
-  right: 26px;
+  /* the compass letters orbit ~17px outside the ring — this is their room */
+  top: calc(24px + env(safe-area-inset-top, 0px));
+  right: calc(26px + env(safe-area-inset-right, 0px));
   z-index: 5; /* HUD layer; pointer-events:none so it never blocks input */
   width: 188px;
   height: 188px;
   pointer-events: none;
 }
 
+/* The one round thing in the UI, and the only place a 2px border earns its
+   weight: it is the porthole the world is seen through. The lift is what puts
+   it ABOVE the terrain instead of printed on it (field-kit trait 2). */
 .hud-minimap-canvas {
   display: block;
   width: 100%;
   height: 100%;
-  border: 2px solid var(--ui-border);
-  border-radius: 50%; /* circular — matches the rotate-to-heading viewport */
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--ui-round); /* circular — matches the rotate-to-heading viewport */
+  box-shadow: var(--ui-lift-2);
+  background: #1d3a52; /* deep water — matches the canvas clear color, so the
+                          ring is never an empty hole before the bake lands */
 }
 
 /* The rose orbits: Minimap.tsx writes each letter's transform every tick so N
@@ -128,16 +135,16 @@
   left: 50%;
   font-family: var(--ui-font-cond);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: var(--ui-track-label);
   line-height: 1;
   color: var(--ui-dim);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
+/* North is the only bearing you navigate by; the other three are context. */
 .hud-minimap-card--n {
   font-size: 12px;
-  font-weight: 700;
   color: var(--ui-accent);
 }
 
@@ -146,19 +153,21 @@
    class is added by the HUD only when cfg.map.minimap is true — the same gate
    that mounts the minimap (and loads this stylesheet). */
 .hud-status.has-minimap {
-  top: 238px; /* clears the 188px minimap + its S letter (24 + 188 + 17 + gap) */
+  /* clears the 188px minimap + its S letter (24 + 188 + 17 + gap) */
+  top: calc(238px + env(safe-area-inset-top, 0px));
 }
 
 @media (max-width: 720px) {
   .hud-minimap {
     width: 132px;
     height: 132px;
-    top: 20px;
-    right: 22px;
+    top: calc(20px + env(safe-area-inset-top, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
   }
 
   .hud-status.has-minimap {
-    top: 178px; /* clears the 132px mobile minimap + its S letter */
+    /* clears the 132px mobile minimap + its S letter */
+    top: calc(178px + env(safe-area-inset-top, 0px));
   }
 
   .map-body {
@@ -172,5 +181,60 @@
 
   .map-legend {
     gap: var(--ui-sp-3);
+  }
+}
+
+/* The ring is sized by the POINTER, not the width — the width query above misses
+   both ends of touch. An iPad portrait (768px) and an 800px Android tablet are
+   wide enough to take the 188px desktop ring, and a phone in LANDSCAPE (844px
+   wide, 390px tall) takes it on a viewport that has no room for it.
+
+   Placed after the width block on purpose: on a coarse phone both match, and the
+   pointer is the one that has to win. Height is what these devices are short of,
+   so `top` — not `right` — is the number doing the work: touch.css parks the menu
+   button at top 10px / 46px tall, and the design (frames 04/06) stacks the ring
+   UNDER it. `right` stays at 22px: the rose's letters orbit ~17px outside the
+   ring (Minimap.tsx, CARDINAL_GAP), and a smaller inset clips the E. */
+@media (pointer: coarse) {
+  .hud-minimap {
+    width: 132px;
+    height: 132px;
+    top: calc(66px + env(safe-area-inset-top, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
+  }
+
+  .hud-status.has-minimap {
+    /* 66 + 132 ring + its S letter + a gap */
+    top: calc(224px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* A landscape phone is ~390px tall: a 132px ring under a 66px inset already eats
+   half of it, and the clock stack has to fit under that. 104px is the budget. */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 480px) {
+  .hud-minimap {
+    width: 104px;
+    height: 104px;
+  }
+
+  .hud-status.has-minimap {
+    top: calc(196px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* HEIGHT, not pointer, is what a 188px ring actually runs out of — and the rules
+   above all gate on the pointer, so a SHORT MOUSE WINDOW (a landscape phone in
+   desktop mode, a half-height browser window) kept the full desktop ring. Below
+   ~560px the hotbar lifts to clear the vitals card and rises into exactly the band
+   the big ring occupies. Last in the sheet so it wins at equal specificity; it sets
+   only the size, leaving each pointer's `top` intact. */
+@media (max-height: 560px) {
+  .hud-minimap {
+    width: 104px;
+    height: 104px;
+  }
+
+  .hud-status.has-minimap {
+    top: calc(196px + env(safe-area-inset-top, 0px));
   }
 }

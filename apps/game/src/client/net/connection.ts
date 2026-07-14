@@ -449,6 +449,12 @@ function handleMessage(data: unknown): void {
       ui.setCodePad(null); // doc 06 — no overlays over the death screen
       ui.setContainer(null);
       ui.setPhase("dead"); // socket stays open; respawn reuses it
+      // Dying at a crate leaves the workspace raised (the crate opens it), and
+      // nothing else clears invOpen — you would respawn staring at your bag.
+      // AFTER the phase flip on purpose: closing a panel while the phase is
+      // still "playing" makes InputController re-request the pointer lock that
+      // the flip to "dead" just released.
+      ui.setInvOpen(false);
       return;
     case "notice":
       ui.pushNotice(msg.msg);
@@ -505,6 +511,13 @@ function handleMessage(data: unknown): void {
     case "cont": {
       // doc 06 M6 — authoritative crate view: opens the panel on a cOpen
       // reply, refreshes it after every cMove.
+      //
+      // The crate has no panel of its own — it renders as the NEARBY section
+      // INSIDE the inventory workspace — so the cOpen reply must raise the
+      // workspace or the crate has no surface at all. Gate on container ===
+      // null so this only fires on the open: every later `cont` is a cMove
+      // refresh, and those must not re-raise a workspace the player just closed.
+      if (ui.container === null) ui.setInvOpen(true);
       ui.setContainer({ id: msg.id, slots: msg.slots });
       return;
     }

@@ -1,0 +1,94 @@
+/* The Field Kit typeface stack, self-hosted.
+
+   Barlow (body) · Barlow Semi Condensed (display/labels) · JetBrains Mono (all
+   numerals and data). The type IS the design — with these missing every stack
+   fell through to system-ui, which is why the HUD read as "old UI, new colors".
+
+   Self-hosted, not a font CDN: a third-party CDN is an extra RTT on the join
+   path, a CSP surface, and an offline failure. These are the latin subsets only
+   (U+0000-00FF) — 10 faces, ~224 KB total, served from our own origin.
+
+   Licensed SIL OFL 1.1 (see public/fonts/OFL-*.txt, shipped alongside the
+   binaries as the license requires).
+
+   font-display:swap — the HUD must never block the join on a font fetch. Text
+   paints in the fallback and re-lays out when the face lands. */
+
+/* --- Barlow — body copy, buttons, prose --- */
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/barlow-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/barlow-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/barlow-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/barlow-700.woff2") format("woff2");
+}
+
+/* --- Barlow Semi Condensed — eyebrows, panel titles, tracked labels ---
+   The condensed width is what lets a 0.22em-tracked label stay compact. */
+@font-face {
+  font-family: "Barlow Semi Condensed";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/barlow-semi-condensed-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Semi Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/barlow-semi-condensed-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Semi Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/barlow-semi-condensed-700.woff2") format("woff2");
+}
+
+/* --- JetBrains Mono — every number in the UI ---
+   Tabular by construction: vitals, ammo, clock, weight, coords. A proportional
+   face makes a counting readout jitter; this one does not. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-700.woff2") format("woff2");
+}

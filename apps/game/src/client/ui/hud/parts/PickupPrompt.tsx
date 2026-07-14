@@ -7,7 +7,7 @@ export function PickupPrompt(): ReactElement | null {
   return (
     <div className="hud-prompt">
       <span className="ui-key">E</span>
-      <span>{prompt}</span>
+      <span className="hud-prompt-text">{prompt}</span>
     </div>
   );
 }

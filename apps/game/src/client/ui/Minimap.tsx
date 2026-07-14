@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import type { ReactElement } from "react";
 import { clientWorld } from "@/client/runtime";
+import { useUIStore } from "@/client/state/store";
 import "./map.css";
 
 /** Half-extent of the world window shown, meters (so a 220 m square). */
@@ -43,11 +44,20 @@ function drawFacingCone(ctx: CanvasRenderingContext2D, mm: number): void {
 export function Minimap(): ReactElement | null {
   // Config is set on welcome (before the playing render) and stable per session.
   const enabled = clientWorld.config.map.minimap;
+
+  // Stand down while a full-screen surface owns the view. This CANNOT be done with
+  // z-index: App.tsx mounts <Minimap /> as a SIBLING of <HUD />, and .hud carries
+  // `z-index: 5` — which makes it a stacking context, so the workspace's `z-index:
+  // 8` is trapped INSIDE it and can never out-rank a later sibling at the same
+  // level. No value works; the component has to not render. Which is also what the
+  // design says (frame 01: the workspace is a takeover, with no minimap over it).
+  const covered = useUIStore((s) => s.invOpen || s.menuOpen || s.mapOpen);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const roseRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || covered) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
@@ -141,9 +151,9 @@ export function Minimap(): ReactElement | null {
       live = false;
       window.clearInterval(id);
     };
-  }, [enabled]);
+  }, [enabled, covered]);
 
-  if (!enabled) return null;
+  if (!enabled || covered) return null;
   return (
     <div className="hud-minimap" ref={roseRef}>
       <canvas ref={canvasRef} width={188} height={188} className="hud-minimap-canvas" />

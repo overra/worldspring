@@ -2,8 +2,15 @@
    Imported by ui.css (the first sheet any UI surface pulls in), so menu.css,
    map.css and debug.css can consume these without importing anything.
 
+   The design is "2a — FIELD KIT" (docs/design/field-kit.md): soft-cornered glass
+   panels floating over the world, layered shadow for depth, Barlow + JetBrains
+   Mono. Not a flat sharp-cornered chrome — that is the *web* storefront's
+   language, and the two are deliberately different surfaces.
+
    --ui-bg / --ui-border / --ui-text / --ui-dim / --ui-accent / --ui-danger stay
    in styles.css (frozen) and are NOT redefined here. */
+
+@import "./fonts.css";
 
 :root {
   /* --- surfaces --- */
@@ -18,9 +25,17 @@
   --ui-accent-fill-hover: rgba(125, 160, 107, 0.28);
   --ui-accent-soft: rgba(125, 160, 107, 0.16); /* active segment, selected cell tint */
 
-  /* Glow is the only elevation cue in the whole UI — there are no drop shadows. */
+  /* Glow marks STATE (held, selected, active) — it is not elevation. */
   --ui-glow: 0 0 7px rgba(125, 160, 107, 0.35);
   --ui-glow-strong: 0 0 16px rgba(125, 160, 107, 0.35);
+
+  /* --- elevation ---
+     A Field Kit panel is a slab of glass over a live 3D world, so it needs a
+     real shadow to sit above it — the world behind is bright, noisy and moving,
+     and a hairline border alone does not separate them. Three steps only. */
+  --ui-lift-1: 0 4px 12px rgba(0, 0, 0, 0.4); /* chip, popover tail, hotbar slot */
+  --ui-lift-2: 0 16px 38px rgba(0, 0, 0, 0.55); /* floating HUD card, toast */
+  --ui-lift-3: 0 34px 80px rgba(0, 0, 0, 0.6); /* the tabbed workspace, esc window */
 
   /* --- semantic --- */
   --ui-danger-fill: rgba(192, 57, 43, 0.12);
@@ -43,9 +58,9 @@
   --ui-kind-wear: #9b8fb0;
 
   /* --- fonts ---
-     Self-hosted or nothing: a third-party font CDN is an extra RTT on the join
-     path, a CSP surface and an offline failure. Until subset woff2 files ship in
-     public/fonts (+ @font-face here), every stack resolves to its system tail. */
+     Self-hosted latin subsets, loaded by fonts.css (@import above). A font CDN
+     would be an extra RTT on the join path, a CSP surface and an offline
+     failure; the system tails below are the swap face, not the destination. */
   --ui-font: "Barlow", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --ui-font-cond: "Barlow Semi Condensed", "Barlow", system-ui, -apple-system, sans-serif;
   --ui-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -83,14 +98,25 @@
   --ui-edge: 16px; /* screen-edge inset, always inside an env(safe-area-inset-*) calc */
 
   /* --- shape ---
-     Radius is 0 everywhere. Only genuinely circular things (minimap, joystick,
-     touch buttons, crosshair dot) opt into --ui-round. */
-  --ui-radius: 0;
-  --ui-round: 50%;
+     Everything is soft-cornered. Radius tracks the size of the thing: the bigger
+     the surface, the rounder its corner, so a 74px cell and a 1000px workspace
+     read as the same material at different scales. */
+  --ui-r-sm: 4px; /* stripe, tick, tiny meter */
+  --ui-r: 8px; /* cell, slot, button, tab */
+  --ui-r-md: 11px; /* chip group, keycap cluster, touch button */
+  --ui-r-lg: 14px; /* floating card: vitals, storage, nearby, popover */
+  --ui-r-xl: 16px; /* the workspace / esc window itself */
+  --ui-pill: 999px; /* status pill, TAKE ALL, cast-bar track */
+  --ui-round: 50%; /* minimap, joystick, crosshair dot */
   --ui-hairline: 1px solid var(--ui-border);
   --ui-hairline-rule: 1px solid var(--ui-rule);
   --ui-hairline-accent: 1px solid var(--ui-accent);
-  --ui-blur: blur(8px); /* desktop panels only — off under (pointer: coarse) */
+
+  /* Glass. The panel is translucent over the world; blur is what keeps text
+     legible on top of moving terrain. Coarse pointers opt out (see ui.css) —
+     blurring a full-screen 3D canvas every frame is a mobile GPU tax. */
+  --ui-blur: blur(16px);
+  --ui-blur-soft: blur(4px); /* scrim behind a toast / cast bar, not a panel */
 
   /* --- fixed control sizes --- */
   --ui-slot: 56px; /* hotbar slot */

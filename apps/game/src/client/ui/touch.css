@@ -1,0 +1,280 @@
+/* Touch controls (TouchControls.tsx) — rendered on touch-primary devices only.
+   The joystick nub is moved imperatively (style.transform) at touch-move rate.
+
+   This sheet owns the on-screen CONTROLS. Where the rest of the HUD goes on a
+   phone is each surface's own business and lives in that surface's sheet
+   (chrome.css moves the hotbar/notices/chat; survival.css moves the vitals).
+
+   Field Kit (docs/design/field-kit.md), design frames 04/06. Two families:
+   round thumb verbs along the bottom (the design's action cluster) and
+   soft-square chrome in the corners (menu, chat). Both are glass — translucent
+   fills over the world, with a REAL lift so they sit above bright moving
+   terrain. Their hairline is brighter than a panel's (.2 vs .1): a control must
+   read against the terrain, not recede into it.
+
+   No backdrop-filter anywhere in here, deliberately. This layer only ever
+   mounts under (pointer: coarse), where ui.css nulls --ui-blur — blurring a
+   full-screen 3D canvas every frame is a real mobile GPU cost. The translucency
+   IS the glass on a phone; the blur is the part we drop.
+
+   Imported by TouchControls.tsx, which App renders after DebugOverlay — so the
+   coarse-landscape .debug-overlay nudge at the bottom of this file lands after
+   debug.css in the bundle and wins. Do not reorder those imports. */
+
+.touch-root {
+  position: absolute;
+  inset: 0;
+  /* Above the HUD (5), below the map/escape menu (8) and the death screen (10).
+     Being above the HUD is why TouchControls UNMOUNTS this whole layer while an
+     in-HUD surface is up (inventory workspace, chat row, code pad): raising
+     those over the controls is not enough, because .tc-btn and .tc-stick-zone
+     are pointer-events:auto and would keep swallowing the taps. Nothing in here
+     may be given a z-index that reaches 8 — the two overlays above rely on
+     covering this layer. */
+  z-index: 6;
+  pointer-events: none; /* interactive children opt back in */
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: var(--ui-font-cond);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+
+  /* Geometry. clamp(vmin) so the controls grow on a tablet and never drop under
+     the 44px touch floor on a 390px phone. The MINIMA are that floor. The
+     MAXIMA are the neighbouring sheets' budget for this layer, not taste:
+       joystick zone  ≤ 172px wide  (chrome.css parks the landscape hotbar in
+                                     the strip that starts there)
+       cluster        ≤ 204px tall  (chrome.css parks the coarse hotbar at
+                                     bottom: 216px, and the cluster's tallest
+                                     button — LOCK — must clear it)
+     The tallest stack is hero + btn + btn-sm + 32px of gaps, so those three
+     maxima ARE the cluster's height. Grow one and the LOCK button walks into
+     the hotbar on a tablet, where every clamp is pinned to its max. */
+  --tc-stick: clamp(112px, 30vmin, 136px);
+  --tc-hero: clamp(62px, 16vmin, 68px);
+  --tc-btn: clamp(50px, 13vmin, 52px);
+  --tc-btn-sm: clamp(44px, 11.5vmin, 46px);
+
+  /* The hero lifts: --ui-lift-2 tinted by the button's own hue (the design's
+     `0 6px 18px` under USE and FIRE). Local to this layer — no other surface
+     has a colored elevation, so these are not tokens. --tc-glow-attack is the
+     red twin of --ui-glow-strong: the pressed state has to glow in the button's
+     OWN hue, and haloing the red hero in olive would read as a second accent. */
+  --tc-lift-use: 0 6px 18px rgba(125, 160, 107, 0.4);
+  --tc-lift-attack: 0 6px 18px rgba(192, 57, 43, 0.4);
+  --tc-glow-attack: 0 0 16px rgba(192, 57, 43, 0.45);
+}
+
+/* --- left thumb: virtual joystick --- */
+
+.tc-stick-zone {
+  position: absolute;
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: calc(var(--tc-stick) + 40px); /* forgiving hit area around the base */
+  height: calc(var(--tc-stick) + 40px);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* Sized here, measured by TouchControls at gesture start — the rendered radius
+   IS the full-deflection distance, so CSS stays the single source of the stick's
+   geometry. Resize it and the input mapping follows. */
+.tc-stick-base {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: var(--tc-stick);
+  height: var(--tc-stick);
+  transform: translate(-50%, -50%);
+  border-radius: var(--ui-round);
+  background: rgba(10, 13, 7, 0.26); /* a lighter wash — it sits over the world */
+  border: 2px solid rgba(255, 255, 255, 0.22);
+}
+
+.tc-stick-nub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--tc-stick) * 0.46);
+  height: calc(var(--tc-stick) * 0.46);
+  transform: translate(-50%, -50%);
+  border-radius: var(--ui-round);
+  background: rgba(230, 235, 225, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: var(--ui-lift-1);
+  will-change: transform;
+}
+
+/* --- buttons --- */
+
+.tc-btn {
+  pointer-events: auto;
+  touch-action: none; /* taps are ours: no scroll/zoom gesture handoff */
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: var(--tc-btn);
+  height: var(--tc-btn);
+  padding: 0;
+  border-radius: var(--ui-round);
+  background: linear-gradient(180deg, rgba(16, 20, 11, 0.66), rgba(12, 16, 9, 0.6));
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: var(--ui-lift-1);
+  color: var(--ui-text);
+  font-family: var(--ui-font-cond);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--ui-track-label);
+  text-indent: var(--ui-track-label); /* re-center: tracking pads the last glyph */
+  text-transform: uppercase;
+}
+
+.tc-btn > svg {
+  display: block;
+}
+
+/* The label under a hero's glyph (ATTACK). Its own step down — the icon carries
+   the button, the word only confirms it. */
+.tc-btn-label {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-indent: 0.08em;
+}
+
+/* Pressed. The glow is STATE, so it stacks ON the lift — it never replaces it.
+   The only state a control in here has. There is no LATCHED state: every surface
+   these buttons open either stands this layer down (workspace, chat, code pad)
+   or paints over it (map, escape menu), so no button can still be on screen to
+   show that it is the one holding a surface open. */
+.tc-btn:active {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-fill-hover);
+  box-shadow: var(--ui-lift-1), var(--ui-glow);
+}
+
+/* --- right thumb: the action cluster ---
+   An arc off the bottom-right corner, biggest verb nearest the thumb. Offsets
+   are expressed against the button sizes above so the arc holds its spacing at
+   every clamp step. */
+
+.tc-cluster {
+  position: absolute;
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: calc(var(--tc-hero) + var(--tc-btn-sm) + 26px);
+  height: calc(var(--tc-hero) + var(--tc-btn) + var(--tc-btn-sm) + 32px);
+  pointer-events: none; /* the gaps between the buttons are still the world */
+}
+
+.tc-cluster > .tc-btn {
+  position: absolute;
+}
+
+/* The hero: always present, thumb-resting. Red is the design's FIRE recipe —
+   a ramp off --ui-danger, not a second accent hue. */
+.tc-btn--attack {
+  right: 0;
+  bottom: 0;
+  width: var(--tc-hero);
+  height: var(--tc-hero);
+  background: linear-gradient(180deg, var(--ui-danger), #8f3329);
+  border-color: transparent;
+  box-shadow: var(--tc-lift-attack);
+  color: #fff;
+}
+
+/* Must follow .tc-btn:active — same specificity, so source order is the whole
+   mechanism. Same for --interact below. */
+.tc-btn--attack:active {
+  background: linear-gradient(180deg, #d2564a, var(--ui-danger));
+  border-color: transparent;
+  box-shadow: var(--tc-lift-attack), var(--tc-glow-attack);
+}
+
+.tc-btn--jump {
+  right: calc(var(--tc-hero) + 12px);
+  bottom: 20px;
+}
+
+/* The contextual verb (TAKE / OPEN / RIDE / EXIT) — the design's USE button:
+   solid olive with dark ink, the one inversion in the UI. The root's dark text
+   shadow would halo that ink, so it comes off. */
+.tc-btn--interact {
+  right: 14px;
+  bottom: calc(var(--tc-hero) + 20px);
+  background: linear-gradient(180deg, var(--ui-accent), #5f7f4c);
+  border-color: transparent;
+  box-shadow: var(--tc-lift-use);
+  color: #0f1409;
+  text-shadow: none;
+}
+
+.tc-btn--interact:active {
+  background: linear-gradient(180deg, #8cb178, var(--ui-accent));
+  border-color: transparent;
+  box-shadow: var(--tc-lift-use), var(--ui-glow-strong);
+}
+
+.tc-btn--bag {
+  right: calc(var(--tc-hero) + 26px);
+  bottom: calc(var(--tc-hero) + 26px);
+  width: var(--tc-btn-sm);
+  height: var(--tc-btn-sm);
+  color: var(--ui-accent); /* the one tinted glyph: it opens YOUR things */
+}
+
+/* doc 06 M5 — LOCK (touch parity for the L key), above the contextual verb. It
+   is the cluster's ceiling: this offset plus --tc-btn-sm is what has to clear
+   the hotbar. */
+.tc-btn--lock {
+  right: 14px;
+  bottom: calc(var(--tc-hero) + var(--tc-btn) + 32px);
+  width: var(--tc-btn-sm);
+  height: var(--tc-btn-sm);
+  font-size: 10px;
+}
+
+/* --- corner chrome ---
+   Soft squares, not circles: these are not thumb verbs, they open a surface.
+   Radius --ui-r-md is the touch-control step. */
+
+.tc-btn--menu {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  right: calc(12px + env(safe-area-inset-right, 0px));
+  width: var(--tc-btn-sm);
+  height: var(--tc-btn-sm);
+  border-radius: var(--ui-r-md);
+}
+
+/* Top-left, right of the relocated vitals (survival.css caps that stack at
+   left 12px + 160px wide — this 180px is the other half of that contract). */
+.tc-btn--chat {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: calc(180px + env(safe-area-inset-left, 0px));
+  width: var(--tc-btn-sm);
+  height: var(--tc-btn-sm);
+  border-radius: var(--ui-r-md);
+}
+
+@media (pointer: coarse) {
+  /* Look-drags over the canvas must never scroll, zoom or pull-to-refresh
+     (declarative twin of the preventDefault in TouchControls). */
+  .game-canvas {
+    touch-action: none;
+  }
+}
+
+/* Landscape: the vitals move to the top-left (survival.css) and the debug panel
+   would cover them — park it top-center-right, clear of the clock/menu stack. */
+@media (pointer: coarse) and (orientation: landscape) {
+  .debug-overlay {
+    left: auto;
+    right: calc(110px + env(safe-area-inset-right, 0px));
+    top: calc(10px + env(safe-area-inset-top, 0px));
+  }
+}

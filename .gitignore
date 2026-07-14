@@ -33,3 +33,8 @@ meshy_output/
 
 # doc 13 M0 physics spike build output (regenerate: see scripts/physics-spike/README.md)
 apps/game/scripts/physics-spike/worker/web/browser.js
+
+# Playwright (baselines under e2e/__screenshots__ ARE committed; these are not)
+test-results/
+playwright-report/
+blob-report/

@@ -100,7 +100,7 @@ function Leaderboard(): ReactElement | null {
   if (rows.length === 0) return null;
   return (
     <div className="menu-leaderboard">
-      <div className="lb-title">LONGEST LIVES</div>
+      <div className="ui-eyebrow lb-title">LONGEST LIVES</div>
       {rows.map((row, i) => (
         <div key={`${i}-${row.name}`} className="lb-row">
           <span className="lb-rank">{i + 1}</span>
@@ -134,7 +134,11 @@ export function MainMenu(): ReactElement {
 
   return (
     <div className="menu-root">
-      <div className="menu-panel">
+      {/* The glass of the in-game HUD, before there is a world behind it: the
+          title screen is the first thing anyone sees, and it has to read as the
+          same material as everything after it. */}
+      <div className="ui-panel ui-panel--xl menu-panel">
+        <div className="menu-mark" />
         <h1 className="menu-title">Worldspring</h1>
         <p className="menu-subtitle">a web survival experiment</p>
         <div className="menu-form">
@@ -152,7 +156,7 @@ export function MainMenu(): ReactElement {
             }}
           />
           <button
-            className="menu-join"
+            className="ui-btn ui-btn--primary ui-btn--lg menu-join"
             disabled={connecting || name.trim().length === 0}
             onClick={join}
           >

@@ -3,7 +3,7 @@
 // death-screen shell (title, cause, RESPAWN) is engine-level, these rows are not:
 // a mode with no days and no zombies has nothing to put here.
 //
-// .recap-* lives in ui.css, with the rest of the overlay shell it renders into.
+// .recap-* lives in survival.css, with the rest of this mode's skin.
 
 import type { ReactElement } from "react";
 import { DAY_DURATION_S } from "@worldspring/shared/constants";
@@ -32,20 +32,20 @@ export function RecapStats({ recap }: RecapStatsProps): ReactElement {
   return (
     <div className="recap-stats">
       <div className="recap-row">
-        <span className="recap-label">SURVIVED</span>
-        <span className="recap-value">{formatSurvived(recap.survivedS, dayDurationS)}</span>
+        <span className="ui-label">Survived</span>
+        <span className="ui-num">{formatSurvived(recap.survivedS, dayDurationS)}</span>
       </div>
       <div className="recap-row">
-        <span className="recap-label">KILLS</span>
-        <span className="recap-value">{recap.kills}</span>
+        <span className="ui-label">Kills</span>
+        <span className="ui-num">{recap.kills}</span>
       </div>
       <div className="recap-row">
-        <span className="recap-label">ZOMBIE KILLS</span>
-        <span className="recap-value">{recap.zombieKills}</span>
+        <span className="ui-label">Zombie kills</span>
+        <span className="ui-num">{recap.zombieKills}</span>
       </div>
       <div className="recap-row">
-        <span className="recap-label">DISTANCE</span>
-        <span className="recap-value">{(recap.distanceM / 1000).toFixed(1)} km</span>
+        <span className="ui-label">Distance</span>
+        <span className="ui-num">{(recap.distanceM / 1000).toFixed(1)} km</span>
       </div>
     </div>
   );

@@ -3,14 +3,14 @@
 // vitals are one mode's skin, not engine core (docs/plans/00). Pure DOM — no
 // three.js. pointer-events: none everywhere except the hotbar and the panels.
 //
-// The crate / code-pad panels below are the last non-chrome, non-mode residents
-// of this file; they move to ui/inventory/ with the rest of group (b).
+// The code pad below is the last non-chrome, non-mode resident of this file; it
+// moves to ui/inventory/ with the rest of group (b). The crate is NOT here any
+// more — an open container renders as the workspace's NEARBY section
+// (inventory/InventoryPanel.tsx), so a second crate panel would only cover it.
 
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
-import { ITEM_DEFS, UNKNOWN_DEF } from "@worldspring/shared/items";
-import type { ItemStack } from "@worldspring/shared/items";
-import { doContainerMove, doSetCode, doTryCode } from "@/client/net/connection";
+import { doSetCode, doTryCode } from "@/client/net/connection";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
 import { Chrome } from "./hud/Chrome";
@@ -176,83 +176,6 @@ function CodePad(): ReactElement | null {
   );
 }
 
-// --- crate panel (doc 06 M6): 12-slot container beside the inventory ---
-
-/** First empty index in a fixed slot array, or -1. */
-function firstEmpty(slots: ReadonlyArray<ItemStack | null>): number {
-  return slots.findIndex((s) => s === null);
-}
-
-/**
- * The storage-crate panel: the crate's 12 fixed slots + your inventory, with
- * one-tap whole-stack moves (cMove — the server replies authoritative cont +
- * inv). Closes on walk-away (NetSystem's range check), on E, and on backdrop
- * click. The target slot is picked client-side as the first empty; the
- * server re-validates everything.
- */
-function CratePanel(): ReactElement | null {
-  const container = useUIStore((s) => s.container);
-  const inventory = useUIStore((s) => s.inventory);
-  if (container === null) return null;
-  const crateFree = firstEmpty(container.slots);
-  const invFree = firstEmpty(inventory);
-
-  return (
-    <div
-      className="hud-inv-backdrop hud-crate-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) useUIStore.getState().setContainer(null);
-      }}
-    >
-      <div className="hud-crate">
-        <div className="inv-title">STORAGE CRATE</div>
-        {container.slots.map((stack, i) => (
-          <div key={i} className="inv-row">
-            <span className="inv-slot-num">{i + 1}</span>
-            {stack === null ? (
-              <span className="inv-empty">empty</span>
-            ) : (
-              <>
-                <span className="inv-name">{(ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).name}</span>
-                <span className="inv-count">×{stack.count}</span>
-                <span className="inv-actions">
-                  <button
-                    className="inv-btn"
-                    disabled={invFree === -1}
-                    onClick={() => doContainerMove(container.id, i, invFree, "out")}
-                  >
-                    TAKE
-                  </button>
-                </span>
-              </>
-            )}
-          </div>
-        ))}
-        <div className="inv-title inv-subtitle">YOUR ITEMS</div>
-        {inventory.map((stack, i) =>
-          stack === null ? null : (
-            <div key={i} className="inv-row">
-              <span className="inv-slot-num">{i + 1}</span>
-              <span className="inv-name">{(ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).name}</span>
-              <span className="inv-count">×{stack.count}</span>
-              <span className="inv-actions">
-                <button
-                  className="inv-btn"
-                  disabled={crateFree === -1}
-                  onClick={() => doContainerMove(container.id, i, crateFree, "in")}
-                >
-                  STORE
-                </button>
-              </span>
-            </div>
-          ),
-        )}
-        <div className="inv-hint">walk away or press E to close</div>
-      </div>
-    </div>
-  );
-}
-
 // --- root ---
 
 export function HUD(): ReactElement {
@@ -266,7 +189,6 @@ export function HUD(): ReactElement {
       <Chrome mode={mode} />
       {mode !== null && <mode.Hud />}
       <InventoryPanel />
-      <CratePanel />
       <CodePad />
     </div>
   );

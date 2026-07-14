@@ -4,7 +4,7 @@
 // contract) and calls net action helpers on button taps. No React state at
 // touch-move rate: the joystick nub is positioned via style mutation and the
 // camera via inputState; React only re-renders at visibility rate (phase,
-// pickup prompt, inventory-open).
+// pickup prompt, the HUD surfaces that stand this layer down).
 //
 // Detection: `(pointer: coarse)` matches the device's PRIMARY pointer. Phones
 // and tablets report coarse; a desktop/laptop with a touchscreen still
@@ -19,7 +19,7 @@
 // double-firing the desktop handlers — would be ignored.
 
 import { useEffect, useRef, useState } from "react";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import type { WirePiece } from "@worldspring/shared/protocol";
 import { buildState, clientWorld, inputState, triggerLocalAttackAnim } from "@/client/runtime";
 import { attackAnimAllowed, useUIStore } from "@/client/state/store";
@@ -33,9 +33,13 @@ import {
   doPickup,
   doPlace,
 } from "@/client/net/connection";
-import "./ui.css";
+import "./touch.css";
 
-const STICK_RADIUS_PX = 60; // base circle is 120px in ui.css
+/** Full-deflection distance when the base circle cannot be measured (it is
+ * sized in touch.css and read off the DOM at gesture start, so the nub always
+ * lands exactly on the rim — see applyStick). Only a zero-size layout, which
+ * the gesture handlers can't produce, falls back to this. */
+const STICK_RADIUS_FALLBACK_PX = 60;
 const STICK_DEADZONE = 0.15; // normalized deflection below which input is 0
 const STICK_SPRINT_AT = 0.95; // push past 95% of the rim to sprint
 const LOOK_SENSITIVITY = 0.005; // rad per px at sensitivity 1
@@ -45,12 +49,14 @@ const PITCH_LIMIT = 1.45; // rad — same clamp as InputController
  * every modal composes, so a panel that renames its own class stays excluded;
  * the explicit classes cover the ones that predate it. */
 const LOOK_EXCLUDE =
-  "button, input, [data-tc], .ui-panel, .hud-inv, .hud-codepad, .hud-crate, .map-panel";
+  "button, input, [data-tc], .ui-panel, .hud-inv, .hud-codepad, .map-panel";
 
 /** No gameplay input through UI. `mapOpen` mirrors InputController's canMove
  * gate: the map overlay covers the whole screen on a phone, so a drag on it
- * must not steer the camera underneath. The crate panel is deliberately absent
- * — walking away closes it. */
+ * must not steer the camera underneath. A crate is covered by `invOpen`: it now
+ * opens INSIDE the workspace (as its NEARBY section) rather than as its own
+ * panel, so it blocks gameplay like any other open panel — walking away is no
+ * longer its close gesture. */
 function gameplayBlocked(): boolean {
   const ui = useUIStore.getState();
   return (
@@ -74,23 +80,61 @@ function interactVerb(seated: boolean): string {
   return "RIDE";
 }
 
-/** A hamburger, not the ⚙ glyph: U+2699 has an emoji presentation on iOS and
- * Android, which paints a color icon into a monochrome UI. */
-function MenuIcon(): ReactElement {
+/** The cluster's icons. Glyph for a verb that never changes (JUMP, BAG, the
+ * attack swing); a WORD for one that does (the interact button reads TAKE /
+ * OPEN / RIDE / EXIT — an icon cannot say which). Drawn inline, like
+ * VitalsPanel's: there is no shared icon module, and these are used once.
+ *
+ * No emoji glyphs anywhere: U+2699 and friends have an emoji presentation on
+ * iOS and Android, which paints a color icon into a monochrome UI. */
+function Icon({ size, children }: { size: number; children: ReactNode }): ReactElement {
   return (
     <svg
       viewBox="0 0 20 20"
-      width="20"
-      height="20"
+      width={size}
+      height={size}
       fill="none"
       stroke="currentColor"
       strokeWidth="1.6"
       strokeLinecap="round"
+      strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13" />
+      {children}
     </svg>
   );
+}
+
+function MenuIcon(): ReactElement {
+  return <Icon size={20}>{<path d="M3.5 5.5h13M3.5 10h13M3.5 14.5h13" />}</Icon>;
+}
+
+function ChatIcon(): ReactElement {
+  return (
+    <Icon size={20}>
+      <path d="M16.8 11.8a2.2 2.2 0 0 1-2.2 2.2H7.3L4 16.6V5.7a2.2 2.2 0 0 1 2.2-2.2h8.4a2.2 2.2 0 0 1 2.2 2.2z" />
+    </Icon>
+  );
+}
+
+function JumpIcon(): ReactElement {
+  return <Icon size={22}>{<path d="M10 16.5V4.6M5.2 9.4 10 4.6l4.8 4.8" />}</Icon>;
+}
+
+function BagIcon(): ReactElement {
+  return (
+    <Icon size={20}>
+      <path d="M7 6.6V5.4a3 3 0 0 1 6 0v1.2" />
+      <rect x="3.6" y="6.6" width="12.8" height="10" rx="3" />
+      <path d="M7.6 11h4.8" />
+    </Icon>
+  );
+}
+
+/** The broadhead: the design's FIRE glyph. It reads as "the offensive tap" for
+ * every weapon class, and for the build-mode place the button captures. */
+function AttackIcon(): ReactElement {
+  return <Icon size={22}>{<path d="M10 3.2 15.8 16.4 10 13.9 4.2 16.4z" />}</Icon>;
 }
 
 export function TouchControls(): ReactElement | null {
@@ -99,14 +143,36 @@ export function TouchControls(): ReactElement | null {
   );
   const phase = useUIStore((s) => s.phase);
   const prompt = useUIStore((s) => s.prompt);
+  // The three surfaces that live INSIDE .hud (z-index 5) — this layer is 6, so
+  // it paints over them. See hudSurfaceOpen below.
   const invOpen = useUIStore((s) => s.invOpen);
+  const chatOpen = useUIStore((s) => s.chatOpen);
+  const codePadOpen = useUIStore((s) => s.codePad !== null);
   // doc 06 M5 — a door in range shows the LOCK button (L-key touch parity).
   const doorPromptId = useUIStore((s) => s.doorPromptId);
   // doc 13 M4 — seated, the interact button becomes EXIT (E-key parity).
   const vehicleSeat = useUIStore((s) => s.vehicleSeat);
 
+  /** This layer stands DOWN — it does not merely go inert — while any surface in
+   * the HUD layer is up. Those three (the inventory workspace, the chat input
+   * row, the code pad) render inside `.hud` at z-index 5; `.touch-root` is 6, so
+   * every thumb control paints ON them, and `.tc-btn`/`.tc-stick-zone` are
+   * pointer-events:auto, so they SWALLOW the taps as well as cover them. On a
+   * phone the workspace is full-bleed and its × sits at the foot of the rail —
+   * directly under the joystick zone — so leaving this layer up means the bag
+   * cannot be closed with its own close button and the item sheet's USE/DROP row
+   * is half unreachable. Each of the three carries its own dismissal (the ×, the
+   * pad's CANCEL, the chat backdrop), and those become reachable exactly because
+   * this layer is gone.
+   *
+   * The overlays that paint ABOVE this layer are deliberately NOT here: the map
+   * and the escape menu are z-index 8 and already cover it. They are still in
+   * gameplayBlocked() — covering the stick is not the same as gating it. */
+  const hudSurfaceOpen = invOpen || chatOpen || codePadOpen;
+
   const rootRef = useRef<HTMLDivElement | null>(null);
   const zoneRef = useRef<HTMLDivElement | null>(null);
+  const baseRef = useRef<HTMLDivElement | null>(null);
   const nubRef = useRef<HTMLDivElement | null>(null);
 
   // Touch mode flag: while playing or on the death screen, gameplay input
@@ -121,31 +187,45 @@ export function TouchControls(): ReactElement | null {
 
   // Gesture wiring. Touch-identifier tracking keeps the joystick (left thumb)
   // and the look drag (right thumb) fully independent for multi-touch.
+  //
+  // Torn down with the layer while a HUD surface is up. That teardown is load-
+  // bearing: its resetStick() zeroes a stick the finger was still holding when
+  // the panel opened, so the walk stops (and PlayerCamera's locomotion, which
+  // reads analogX/analogZ with no UI gate of its own, drops back to idle).
   useEffect(() => {
-    if (!isTouch || phase !== "playing") return;
+    if (!isTouch || phase !== "playing" || hudSurfaceOpen) return;
     const root = rootRef.current;
     const zone = zoneRef.current;
+    const base = baseRef.current;
     const nub = nubRef.current;
-    if (root === null || zone === null || nub === null) return;
+    if (root === null || zone === null || base === null || nub === null) return;
 
     let stickId: number | null = null;
     let stickOriginX = 0;
     let stickOriginY = 0;
+    let stickRadius = STICK_RADIUS_FALLBACK_PX;
     let lookId: number | null = null;
     let lookLastX = 0;
     let lookLastY = 0;
 
-    const resetStick = (): void => {
-      stickId = null;
+    /** Stand the stick down WITHOUT dropping the gesture: the finger is still on
+     * the glass, so its identifier has to survive to touchend. Used when a
+     * blocking surface opens mid-drag. */
+    const zeroStick = (): void => {
       inputState.analogX = 0;
       inputState.analogZ = 0;
       inputState.sprint = false;
       nub.style.transform = "translate(-50%, -50%)";
     };
 
+    const resetStick = (): void => {
+      stickId = null;
+      zeroStick();
+    };
+
     const applyStick = (clientX: number, clientY: number): void => {
-      const dx = (clientX - stickOriginX) / STICK_RADIUS_PX;
-      const dy = (clientY - stickOriginY) / STICK_RADIUS_PX;
+      const dx = (clientX - stickOriginX) / stickRadius;
+      const dy = (clientY - stickOriginY) / stickRadius;
       const mag = Math.hypot(dx, dy);
       // Classic push-to-the-edge sprint: engage past the rim, release below.
       inputState.sprint = mag >= STICK_SPRINT_AT;
@@ -162,13 +242,24 @@ export function TouchControls(): ReactElement | null {
       }
       // Nub visual: deflection from the base center, clamped to the rim.
       // Style mutation only — never React state at touch-move rate.
-      const reach = Math.min(mag, 1) * STICK_RADIUS_PX;
+      const reach = Math.min(mag, 1) * stickRadius;
       const nx = mag > 0 ? (dx / mag) * reach : 0;
       const ny = mag > 0 ? (dy / mag) * reach : 0;
       nub.style.transform = `translate(calc(${nx}px - 50%), calc(${ny}px - 50%))`;
     };
 
     const onZoneTouchStart = (e: TouchEvent): void => {
+      // No gameplay input through UI — the same gate the look drag takes. The
+      // zone is unmounted while a HUD surface is up, so in practice this catches
+      // the overlays that paint above this layer (map, escape menu). It bails
+      // BEFORE preventDefault: a gesture this handler will not act on must not
+      // be consumed either, or it is stolen from whatever it was actually aimed
+      // at. mapOpen is the one that bites — NetSystem's move gate does not carry
+      // it, so a stick that writes analogX behind the map really does walk you.
+      if (gameplayBlocked()) {
+        resetStick();
+        return;
+      }
       // The zone is a pure control surface: always swallow the gesture so it
       // never scrolls the page or replays as a synthetic mouse click.
       e.preventDefault();
@@ -180,6 +271,12 @@ export function TouchControls(): ReactElement | null {
       // from wherever the thumb landed inside the zone, not the base center.
       stickOriginX = t.clientX;
       stickOriginY = t.clientY;
+      // The base is sized in touch.css and scales with the viewport, so full
+      // deflection is whatever its rendered radius is — hard-coding it would
+      // let the nub over- or under-run the rim at every size but one. Measured
+      // per gesture (not per move): one layout read, no touch-move cost.
+      const baseWidth = base.getBoundingClientRect().width;
+      stickRadius = baseWidth > 0 ? baseWidth / 2 : STICK_RADIUS_FALLBACK_PX;
       applyStick(t.clientX, t.clientY);
     };
 
@@ -314,8 +411,15 @@ export function TouchControls(): ReactElement | null {
         const t = e.changedTouches.item(i);
         if (t === null) continue;
         if (t.identifier === stickId) {
-          applyStick(t.clientX, t.clientY);
           handled = true;
+          // Same contract as the look branch: keep tracking the finger, stop
+          // steering. Reached when a surface this layer does NOT stand down for
+          // (map, escape menu) opens under a thumb that is already on the stick.
+          if (gameplayBlocked()) {
+            zeroStick();
+            continue;
+          }
+          applyStick(t.clientX, t.clientY);
         } else if (t.identifier === lookId) {
           const dx = t.clientX - lookLastX;
           const dy = t.clientY - lookLastY;
@@ -361,18 +465,22 @@ export function TouchControls(): ReactElement | null {
       resetStick();
       lookId = null;
     };
-  }, [isTouch, phase]);
+  }, [isTouch, phase, hudSurfaceOpen]);
 
-  if (!isTouch || phase !== "playing") return null;
+  if (!isTouch || phase !== "playing" || hudSurfaceOpen) return null;
 
   return (
     <div ref={rootRef} className="touch-root">
       <div ref={zoneRef} className="tc-stick-zone">
-        <div className="tc-stick-base">
+        <div ref={baseRef} className="tc-stick-base">
           <div ref={nubRef} className="tc-stick-nub" />
         </div>
       </div>
 
+      {/* The action cluster: an arc off the bottom-right corner, hero nearest
+          the resting thumb. Order is the paint order — the two contextual
+          buttons sit furthest out, so a target coming into range never moves
+          the verbs the thumb already knows. */}
       <div className="tc-cluster">
         {prompt !== null && (
           <button
@@ -390,24 +498,23 @@ export function TouchControls(): ReactElement | null {
           </button>
         )}
         <button type="button" data-tc="attack" className="tc-btn tc-btn--attack">
-          ATTACK
+          <AttackIcon />
+          <span className="tc-btn-label">ATTACK</span>
         </button>
-        <button type="button" data-tc="jump" className="tc-btn tc-btn--jump">
-          JUMP
+        <button type="button" data-tc="jump" aria-label="Jump" className="tc-btn tc-btn--jump">
+          <JumpIcon />
         </button>
-        <button
-          type="button"
-          data-tc="bag"
-          className={invOpen ? "tc-btn tc-btn--bag tc-btn--active" : "tc-btn tc-btn--bag"}
-        >
-          BAG
+        {/* Opens the workspace only. It has no latched state because it cannot
+            be on screen while the workspace is: the panel's own × closes it. */}
+        <button type="button" data-tc="bag" aria-label="Inventory" className="tc-btn tc-btn--bag">
+          <BagIcon />
         </button>
       </div>
 
       {/* Top-left, just right of the relocated vitals — clear of the
           joystick, cluster and the top-right status/menu stack. */}
       <button type="button" data-tc="chat" aria-label="Chat" className="tc-btn tc-btn--chat">
-        CHAT
+        <ChatIcon />
       </button>
 
       <button type="button" data-tc="menu" aria-label="Menu" className="tc-btn tc-btn--menu">

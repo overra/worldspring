@@ -16,14 +16,16 @@ export function BuildPanel(): ReactElement | null {
   const info = useUIStore((s) => s.buildInfo);
   if (info === null) return null;
   return (
-    <div className="hud-build">
+    <div className="hud-build ui-panel ui-panel--hud">
       <div className="hud-build-row">
         <span className="hud-build-piece">
           {PIECE_LABELS[info.kind] ?? info.kind} · {info.tier === 1 ? "scrap" : "wood"}
         </span>
-        {info.status !== null && <span className="hud-build-status">{info.status}</span>}
+        {info.status !== null && (
+          <span className="hud-build-status ui-chip">{info.status}</span>
+        )}
       </div>
-      <div className="hud-build-hints">
+      <div className="hud-build-hints ui-hint">
         <span className="hud-prompt-key">[Q]</span> piece
         <span className="hud-prompt-key">[T]</span> tier
         <span className="hud-prompt-key">[LMB]</span> place

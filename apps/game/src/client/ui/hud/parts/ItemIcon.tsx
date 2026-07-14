@@ -10,7 +10,8 @@ const BLANK_PX =
 
 interface ItemIconProps {
   type: ItemType;
-  /** Site-specific box class (hotbar-swatch hotbar-icon / inv-swatch inv-icon / ui-cell-icon). */
+  /** The icon's box class at this site — always `ui-cell-icon` plus any local
+   * size tweak (e.g. `ui-cell-icon hotbar-icon`). */
   className: string;
   alt?: string;
 }

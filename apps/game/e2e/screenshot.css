@@ -1,0 +1,24 @@
+/* Applied to every page during a toHaveScreenshot() comparison (config
+   expect.toHaveScreenshot.stylePath). Its only job is to remove things that
+   change between runs but are not the DOM under test.
+
+   The 3D canvas is masked per-spec (Playwright paints a flat box over it), not
+   hidden here — hiding it would collapse the layout the HUD is positioned
+   against, and position is exactly what we are testing. */
+
+/* The world is live behind the HUD, so anything that samples it drifts run to
+   run. Freeze every animation and transition rather than racing them. */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
+  caret-color: transparent !important;
+}
+
+/* Nothing here should ever scroll — a scrollbar appearing IS a bug, but it is a
+   bug the responsive spec asserts on explicitly, with a clear message. Letting it
+   also corrupt every unrelated baseline just buries the signal. */
+::-webkit-scrollbar {
+  display: none;
+}

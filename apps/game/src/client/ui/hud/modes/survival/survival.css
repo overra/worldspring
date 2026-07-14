@@ -1,5 +1,53 @@
-/* Survival's HUD skin. The panels it styles (.hud-vitals, .hud-temp, .hud-build)
-   live in ui.css; what is here is what only this mode has. */
+/* Survival's HUD skin — the vitals card, the build panel, the vehicle readout,
+   and the life recap. This is ONE mode's surface, not engine chrome: arena
+   ships no HUD module and gets none of this (docs/plans/00).
+
+   Composes the primitives in ui.css (.ui-panel, .bar*, .ui-chip, .ui-num …).
+   The shared chrome it sits inside (.hud, hotbar, notices, chat) is
+   hud/chrome.css.
+
+   Every surface here is a Field Kit card: glass + soft corner + lift, composed
+   from .ui-panel/.ui-panel--hud in the markup. What stays in this sheet is what
+   is survival's alone — where the card sits, how wide it is, and the vital hues.
+
+   .hud sets a text-shadow on everything under it (free-floating HUD text needs
+   it over bright terrain). Inside a glass card it just smears the type, so each
+   panel below turns it off.
+
+   Rule order inside this sheet is load-bearing: the responsive blocks at the
+   bottom override one another at equal specificity, so keep them in order. */
+
+/* --- vitals card (bottom-left; top-left under a coarse pointer) ---
+   Design frame 02: a 308px glass card, 3 segmented meters + a core-temp row
+   under a rule. Sized in vw so it holds from a 390px phone to an ultrawide. */
+
+.hud-vitals {
+  position: absolute;
+  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
+  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
+  /* The floor is not cosmetic: below ~276px the cold temp row (label + reading
+     + SHIVERING chip) no longer fits on one line, and the narrow blocks at the
+     bottom of this sheet are what handle that case. */
+  width: clamp(276px, 22vw, 308px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-4);
+  padding: var(--ui-sp-5) var(--ui-sp-6);
+  text-shadow: none;
+}
+
+/* The meter rows run wider gutters than the .bar default — the card gives them
+   the room, and the temp row below matches so the icon column lines up. */
+.hud-vitals .bar {
+  gap: var(--ui-sp-4);
+}
+
+/* The number is the thing you look at: 14px, not the 12px of a glanced-past
+   readout. Re-declared in each responsive block below — .hud-vitals .bar-value
+   outranks ui.css's own @media shrink, so it has to carry it itself. */
+.hud-vitals .bar-value {
+  font-size: 14px;
+}
 
 /* Vitals glyphs take their vital's hue; the thermometer follows the temp row. */
 .bar-icon--hp { color: var(--ui-hp); }
@@ -8,29 +56,21 @@
 .bar-icon--temp { color: var(--ui-dim); }
 .hud-temp--cold .bar-icon--temp { color: var(--ui-cold); }
 
-/* --- driving HUD (doc 13 M4) --- */
-
-.hud-vehicle {
-  position: absolute;
-  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
-  bottom: calc(120px + env(safe-area-inset-bottom, 0px));
-  width: 232px;
+/* Core temp is not a 0–100 meter — it is a reading, so it gets a value and a
+   state chip instead of a track, under a rule that separates it from the three
+   that are. */
+.hud-temp {
+  padding-top: var(--ui-sp-4);
+  border-top: var(--ui-hairline-rule);
   display: flex;
-  flex-direction: column;
-  gap: var(--ui-sp-2);
-  padding: var(--ui-sp-4) var(--ui-sp-5);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
+  align-items: center;
+  gap: var(--ui-sp-4);
 }
 
-.hud-vehicle-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--ui-sp-3);
-}
-
-.hud-vehicle-role {
+.hud-temp-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
   font-family: var(--ui-font-cond);
   font-size: var(--ui-fs-label);
   font-weight: 600;
@@ -39,16 +79,118 @@
   color: var(--ui-dim);
 }
 
-.hud-vehicle-speed {
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data-lg);
-  font-weight: 500;
+.hud-temp .hud-temp-value {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Cold state colors the reading, the glyph and the chip — the label stays dim.
+   A label that changes color with its value reads as a second alarm. */
+.hud-temp--cold .hud-temp-value {
+  color: var(--ui-cold);
+}
+
+/* SHIVERING — a state chip. .ui-chip--solid derives its fill from `color`, so
+   the one declaration recolors the whole chip; it is scoped under .hud-vitals
+   to outrank the primitive's own `color` regardless of sheet order.
+   The pulse is the alarm: the chip only exists below TEMP_SHIVER, where hp is
+   draining. */
+.hud-vitals .hud-shiver {
+  color: var(--ui-cold);
+  animation: hud-shiver-pulse 1s ease-in-out infinite;
+}
+
+@keyframes hud-shiver-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* --- build mode panel (doc 06) ---
+   Under the crosshair, so it is small: it takes the interaction-hint recipe
+   from design frame 02 (--ui-r-md, not the card's --ui-r-lg) rather than the
+   full card corner. Radius is written .hud-build.ui-panel, not .hud-build —
+   a bare class would only TIE with .ui-panel's own radius and the winner would
+   come down to which sheet the bundler emitted last. */
+
+.hud-build.ui-panel {
+  border-radius: var(--ui-r-md);
+}
+
+.hud-build {
+  position: absolute;
+  left: 50%;
+  /* BELOW the cast bar's band, not in it. .hud-channel (chrome.css) starts at
+     50% + 110px and its elapsed/total readout ends at ~+165 — and the two are
+     concurrent: the server's startUse takes any slot and does not require the
+     item be equipped, so eating or bandaging from the inventory with build mode
+     on runs a cast while this panel is still up. */
+  top: calc(50% + 178px);
+  transform: translateX(-50%);
+  max-width: calc(100vw - 2 * var(--ui-edge));
+  padding: var(--ui-sp-3) var(--ui-sp-5);
+  text-align: center;
+  text-shadow: none;
+}
+
+.hud-build-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-sp-4);
+}
+
+.hud-build-piece {
+  font-family: var(--ui-font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: var(--ui-track-title);
+  text-transform: uppercase;
   color: var(--ui-text);
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* "too far away" / "needs 4 wood" — why the ghost is red. Scoped so the chip's
+   own `color` (which its border and fill are mixed from) loses on specificity,
+   not on sheet order. */
+.hud-build .hud-build-status {
+  flex: none;
+  color: var(--ui-danger);
+}
+
+.hud-build-hints {
+  margin-top: var(--ui-sp-1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-sp-1) var(--ui-sp-3);
+}
+
+/* --- driving HUD (doc 13 M4) --- */
+
+.hud-vehicle {
+  position: absolute;
+  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
+  bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  width: clamp(212px, 17vw, 248px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-5) var(--ui-sp-6);
+  text-shadow: none;
+}
+
+.hud-vehicle-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+  padding-bottom: var(--ui-sp-1);
 }
 
 .hud-vehicle-unit {
   font-size: var(--ui-fs-data-sm);
+  font-weight: 500;
   color: var(--ui-dim);
 }
 
@@ -62,14 +204,245 @@
 }
 
 .hud-vehicle-hint {
-  font-size: var(--ui-fs-micro);
-  letter-spacing: var(--ui-track-micro);
-  color: var(--ui-dim);
+  padding-top: var(--ui-sp-3);
+  border-top: var(--ui-hairline-rule);
 }
 
-/* Keyboard hints are meaningless on touch (same rule as .hud-build-hints). */
+/* ================== Life recap (death screen + LAST LIFE toast) ================== */
+/* Shared stat rows rendered by RecapStats — a monospace ledger between two
+   rules. The death-screen shell itself is engine-level and lives in menu.css;
+   this is the body survival hands it. */
+
+.recap-stats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-2);
+  width: 230px;
+  padding: var(--ui-sp-4) 0;
+  border-top: var(--ui-hairline-rule);
+  border-bottom: var(--ui-hairline-rule);
+}
+
+.recap-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-sp-5);
+}
+
+/* On the death screen the cause line already carries 40px bottom margin;
+   mirror it below the stats so the RESPAWN button keeps its distance. */
+.death-root .recap-stats {
+  margin: -16px 0 38px;
+}
+
+/* --- LAST LIFE toast (top-center, while playing): you died offline ---
+   A card you stop and read, so it takes the full .ui-panel glass rather than
+   the lighter over-world one. The border carries the hp hue — the design's own
+   toast tints its whole hairline, which is the soft-cornered replacement for
+   the 2px rule this used to wear across its top edge. Compound selector for the
+   same reason as .hud-build.ui-panel above: a bare class ties with .ui-panel. */
+
+.hud-lastlife.ui-panel {
+  border-color: rgba(179, 58, 46, 0.42);
+}
+
+.hud-lastlife {
+  position: absolute;
+  /* Top-centre from 0 to ~70px is the COMPASS's band (chrome.css mounts
+     <Compass /> for every mode), and the notice stack starts at 96px. A centered
+     340px card at 14px drew straight through both — this clears the notices. */
+  top: calc(150px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(340px, calc(100vw - 24px)); /* 336px at a 360px viewport */
+  padding: var(--ui-sp-4) var(--ui-sp-5) var(--ui-sp-5);
+  pointer-events: auto;
+  text-shadow: none;
+}
+
+.hud-lastlife .recap-stats {
+  width: auto;
+}
+
+.lastlife-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+}
+
+.hud-lastlife .lastlife-title {
+  color: var(--ui-hp);
+}
+
+.lastlife-close {
+  margin: -6px -8px -6px 0; /* grow the hit area without moving the glyph */
+  padding: var(--ui-sp-2) var(--ui-sp-4);
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r);
+  color: var(--ui-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lastlife-close:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ui-text);
+}
+
+.lastlife-close:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.lastlife-msg {
+  margin: 7px 0 var(--ui-sp-4);
+}
+
+/* ========================= Responsive =========================
+   Keep these blocks in this order — they override one another at equal
+   specificity, so "later in the sheet wins" is the whole mechanism. */
+
 @media (pointer: coarse) {
+  /* Vitals ride above the joystick zone (superseded by the touch-layout block
+     further down, which moves them to the top-left entirely). */
+  .hud-vitals {
+    bottom: calc(186px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* [Q]/[T]/[LMB]/[hold X] are keyboard prompts — meaningless on touch.
+     Touch places via the ATTACK button (build mode captures the tap);
+     kind/tier cycling and demolish are a touch-UI follow-up (doc 08). */
+  .hud-build-hints {
+    display: none;
+  }
+
+  /* Keyboard hints are meaningless on touch (same rule as .hud-build-hints). */
   .hud-vehicle-hint {
     display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  /* Vitals: narrower card, tighter type — the track keeps what is left. */
+  .hud-vitals {
+    width: 208px;
+    gap: var(--ui-sp-3);
+    padding: var(--ui-sp-4) var(--ui-sp-5);
+  }
+
+  .hud-vitals .bar {
+    gap: var(--ui-sp-3);
+  }
+
+  .hud-vitals .bar-value {
+    font-size: var(--ui-fs-data);
+  }
+
+  /* Under the card's 276px floor the chip cannot share the row with the label
+     and the reading, so it takes the line below them. */
+  .hud-temp {
+    flex-wrap: wrap;
+    gap: var(--ui-sp-3);
+    padding-top: var(--ui-sp-3);
+  }
+
+  .hud-temp .hud-temp-value {
+    font-size: var(--ui-fs-data);
+  }
+
+  .hud-shiver {
+    flex: 1 0 100%;
+    justify-content: center;
+  }
+}
+
+/* Touch phones: the joystick owns the bottom-left — stack above it. */
+@media (pointer: coarse) and (max-width: 768px) {
+  .hud-vitals {
+    bottom: calc(282px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* Touch layout v2: vitals live TOP-left on touch devices — the bottom belongs
+   to thumbs. Overrides the coarse lifts above (later in file wins). */
+@media (pointer: coarse) {
+  .hud-vitals {
+    top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
+    bottom: auto;
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    /* The chat button starts at left 180px — the card must end before it. */
+    width: 168px;
+    gap: var(--ui-sp-2);
+    padding: var(--ui-sp-3);
+  }
+
+  /* The chip cannot share a 168px row with the label and the reading, so the
+     row wraps and the chip takes the line under them — the temp row is the only
+     place the cold state is named. */
+  .hud-temp {
+    flex-wrap: wrap;
+    gap: var(--ui-sp-2);
+    padding-top: var(--ui-sp-2);
+  }
+
+  .hud-vitals .bar {
+    gap: var(--ui-sp-2);
+  }
+
+  /* HYDRATION at 9px condensed is ~45px; 52px holds it without clipping. */
+  .hud-vitals .bar-label {
+    width: 52px;
+  }
+
+  .hud-vitals .bar-label,
+  .hud-temp-label {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+
+  .hud-vitals .bar-icon {
+    width: 12px;
+    height: 12px;
+  }
+
+  .hud-vitals .bar-value {
+    width: 24px;
+    font-size: var(--ui-fs-data-sm);
+  }
+
+  .hud-temp .hud-temp-value {
+    font-size: var(--ui-fs-data-sm);
+  }
+
+  .hud-shiver {
+    flex: 1 0 100%;
+    justify-content: center;
+  }
+
+  /* Vitals/menu own the top strip — drop the toast below them. 148px clears the
+     card at its tallest: 10px inset + 127px, which is the cold state (the
+     SHIVERING chip takes a line of its own at this width). */
+  .hud-lastlife {
+    top: calc(148px + env(safe-area-inset-top, 0px));
+  }
+
+  .lastlife-close {
+    padding: var(--ui-sp-5) 14px;
+    font-size: 20px;
+  }
+}
+
+/* Where the band below the crosshair is scarce, the CAST BAR is the thing that
+   claims it and lifts ABOVE the crosshair (chrome.css keys the cast bar on these
+   same two queries), which frees the tight spot under it for the build panel.
+   The base +178 cannot hold here: on a 844px-tall portrait phone it lands on the
+   lifted hotbar, and on a 390px-tall landscape phone it falls off the bottom. */
+@media (max-width: 980px) and (orientation: portrait), (max-height: 480px) {
+  .hud-build {
+    top: calc(50% + 92px);
   }
 }

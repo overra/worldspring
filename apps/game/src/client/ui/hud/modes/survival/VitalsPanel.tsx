@@ -31,12 +31,15 @@ function VitalIcon({ kind }: { kind: VitalKind }): ReactElement {
 }
 
 /** Survival's vitals: health, food, hydration, core temperature. Health is the
- * only one an arena would keep — the panel as composed is this mode's skin. */
+ * only one an arena would keep — the panel as composed is this mode's skin.
+ *
+ * The card is .ui-panel--hud, not the full-blur .ui-panel: it sits over live
+ * gameplay and the world behind it has to stay readable. */
 export function VitalsPanel(): ReactElement {
   const vitals = useUIStore((s) => s.vitals);
   const shivering = vitals.temp < TEMP_SHIVER;
   return (
-    <div className="hud-vitals">
+    <div className="hud-vitals ui-panel ui-panel--hud">
       <Bar
         icon={<VitalIcon kind="hp" />}
         label="Health"
@@ -63,9 +66,9 @@ export function VitalsPanel(): ReactElement {
       />
       <div className={shivering ? "hud-temp hud-temp--cold" : "hud-temp"}>
         <VitalIcon kind="temp" />
-        <span>Core temp</span>
-        <span className="hud-temp-value">{vitals.temp.toFixed(1)}°C</span>
-        {shivering && <span className="hud-shiver">Shivering</span>}
+        <span className="hud-temp-label">Core temp</span>
+        <span className="hud-temp-value ui-num">{vitals.temp.toFixed(1)}°C</span>
+        {shivering && <span className="hud-shiver ui-chip ui-chip--solid">Shivering</span>}
       </div>
     </div>
   );

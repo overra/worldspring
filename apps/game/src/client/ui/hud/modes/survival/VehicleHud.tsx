@@ -13,10 +13,10 @@ export function VehicleHud(): ReactElement | null {
   const driver = seat.index === 0;
   const empty = fuelPct === 0;
   return (
-    <div className="hud-vehicle">
+    <div className="hud-vehicle ui-panel ui-panel--hud">
       <div className="hud-vehicle-head">
-        <span className="hud-vehicle-role">{driver ? "Driving" : "Passenger"}</span>
-        <span className="hud-vehicle-speed">
+        <span className="ui-eyebrow">{driver ? "Driving" : "Passenger"}</span>
+        <span className="ui-num ui-num--lg">
           {kmh}
           <span className="hud-vehicle-unit"> km/h</span>
         </span>
@@ -35,7 +35,7 @@ export function VehicleHud(): ReactElement | null {
         fillClass={hullPct < 30 ? "bar-fill--danger" : "bar-fill--accent"}
         valueText={`${hullPct}%`}
       />
-      <div className="hud-vehicle-hint">
+      <div className="hud-vehicle-hint ui-hint">
         {driver ? "[W/S] drive · [A/D] steer · [Shift] brake · [E] exit" : "[E] exit"}
         {empty && driver ? " — OUT OF FUEL" : ""}
       </div>

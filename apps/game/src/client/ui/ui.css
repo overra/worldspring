@@ -1,45 +1,87 @@
-/* Worldspring UI — spare, survival-minimal.
+/* Worldspring UI — the shared primitives. NOTHING ELSE LIVES HERE.
+   Every surface's own rules sit in its own sheet: hud/chrome.css,
+   hud/modes/survival/survival.css, inventory/inventory.css, menu.css,
+   touch.css, map.css, debug.css. Six agents work these in parallel; a rule
+   that only one surface uses does not belong in this file.
+
    Design tokens live in tokens.css (imported below); the base tokens it builds
    on (--ui-bg, --ui-border, --ui-text, --ui-dim, --ui-accent, --ui-danger) come
    from styles.css (frozen).
 
-   Three rules decide every judgment call here:
-     1. radius 0 — only circles (minimap, joystick, touch buttons, crosshair dot)
-        keep 50%;
-     2. no drop shadows — the only elevation is the olive glow on the selected
-        element (plus the HUD's existing text-shadow);
-     3. mono for every number, condensed caps for every label. */
+   The design is "2a — FIELD KIT" (docs/design/field-kit.md). A panel is a slab
+   of glass held over bright, noisy, MOVING terrain, and three traits follow
+   from that. They decide every judgment call in this file:
+
+     1. SOFT CORNERS. Radius tracks the size of the surface — --ui-r-sm (stripe)
+        → --ui-r (cell/button) → --ui-r-md (keycap cluster) → --ui-r-lg (card)
+        → --ui-r-xl (workspace) → --ui-pill (chip, meter track). A hard 90°
+        corner reads as a rendering artifact against organic terrain.
+     2. REAL DEPTH. --ui-lift-1|2|3 put the panel ABOVE the world; a hairline
+        alone cannot separate them. Glow (--ui-glow) is STATE — held, selected,
+        active — and is never elevation. A cell that is both raised and held
+        carries both: `box-shadow: var(--ui-lift-1), var(--ui-glow)`.
+     3. GLASS. Translucent fill + backdrop-filter. Coarse pointers opt out of
+        the blur (bottom of this file) — blurring a full-screen 3D canvas every
+        frame is a real mobile GPU cost.
+
+   Type: --ui-font-cond for tracked uppercase (labels, titles, buttons),
+   --ui-font for prose, --ui-mono for EVERY NUMBER. Loaded weights are the only
+   ones that exist (fonts.css): Barlow 400/500/600/700, Semi Condensed
+   500/600/700, JetBrains Mono 400/500/700 — never ask for mono 600. */
 
 @import "./tokens.css";
 
-/* ============================== Primitives ==============================
-   Shared, reusable classes. Prefer composing these over re-declaring the
-   panel/button/label/bar recipes in a component slice. */
+/* ============================== Surfaces ==============================
+   The glass. Compose .ui-panel — do NOT re-roll the recipe with var(--ui-bg)
+   in a slice sheet: --ui-bg is frozen in styles.css at 0.78 alpha and the
+   Field Kit glass is 0.60. The primitive IS the source of truth for the fill. */
 
-/* --- surfaces --- */
-
+/* The card: menus, storage panels, the equipment pane, popovers. */
 .ui-panel {
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
+  background: rgba(14, 17, 11, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--ui-r-lg);
+  box-shadow: var(--ui-lift-2);
   backdrop-filter: var(--ui-blur);
+}
+
+/* A card that floats over LIVE gameplay (vitals, vehicle readout, toast, cast
+   bar, prompt). Lighter blur: it is small and the world behind it must stay
+   readable — the full 16px blur is for panels you stop and read. */
+.ui-panel--hud {
+  background: linear-gradient(180deg, rgba(16, 20, 11, 0.68), rgba(10, 13, 7, 0.66));
+  border-color: rgba(255, 255, 255, 0.09);
+  backdrop-filter: var(--ui-blur-soft);
+}
+
+/* The workspace / esc window: the largest surface, so the roundest corner and
+   the deepest lift. */
+.ui-panel--xl {
+  border-radius: var(--ui-r-xl);
+  box-shadow: var(--ui-lift-3);
 }
 
 /* Modal over modal (item detail card, code pad) — reads above .ui-panel. */
 .ui-panel--deep {
   background: var(--ui-bg-deep);
+  border-color: rgba(255, 255, 255, 0.13);
+  box-shadow: var(--ui-lift-3);
 }
 
-/* Panel header strip: eyebrow left, meta/close right. */
+/* Panel header strip: eyebrow left, meta/close right. `inherit` picks up
+   whichever radius step the panel it sits in chose, so the strip never squares
+   off the card's top corners. */
 .ui-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--ui-sp-5);
-  height: 48px;
-  padding: 0 18px;
+  min-height: 48px;
+  padding: var(--ui-sp-5) clamp(var(--ui-sp-5), 2vw, var(--ui-sp-7));
   background: rgba(255, 255, 255, 0.02);
-  border-bottom: var(--ui-hairline);
+  border-bottom: var(--ui-hairline-rule);
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
 }
 
 .ui-divider {
@@ -50,14 +92,20 @@
 }
 
 /* Full-screen catcher behind a panel: tap/click outside closes it (the panel's
-   own clicks land on its children, not the backdrop). */
+   own clicks land on its children, not the backdrop). Invisible by default. */
 .ui-backdrop {
   position: absolute;
   inset: 0;
   pointer-events: auto;
 }
 
-/* --- type --- */
+/* Add when the panel above it is a full workspace: the world dims so the glass
+   reads as the foreground. */
+.ui-backdrop--scrim {
+  background: linear-gradient(180deg, rgba(8, 11, 8, 0.5), rgba(6, 9, 6, 0.66));
+}
+
+/* ================================ Type ================================ */
 
 .ui-eyebrow {
   font-family: var(--ui-font-cond);
@@ -86,19 +134,25 @@
   color: var(--ui-dim);
 }
 
+/* Prose — item descriptions, hints in sentences. The only class that is NOT
+   uppercase-tracked. */
 .ui-body {
+  font-family: var(--ui-font);
   font-size: var(--ui-fs-body);
+  font-weight: 400;
   line-height: 1.45;
   color: var(--ui-text);
 }
 
 .ui-hint {
+  font-family: var(--ui-font);
   font-size: var(--ui-fs-micro);
   letter-spacing: var(--ui-track-micro);
   color: var(--ui-dim);
 }
 
-/* Numbers, always. */
+/* Numbers, always. A proportional face makes a counting readout jitter as the
+   digits change width — this is not decoration. */
 .ui-num {
   font-family: var(--ui-mono);
   font-size: var(--ui-fs-data);
@@ -108,10 +162,13 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The readout you are meant to look at: clock, vital, weight. */
 .ui-num--lg {
   font-size: var(--ui-fs-data-lg);
+  font-weight: 700;
 }
 
+/* Meta you are meant to glance past: ping, online, slot n°. */
 .ui-num--sm {
   font-size: var(--ui-fs-data-sm);
   font-weight: 400;
@@ -119,29 +176,34 @@
 }
 
 /* Boxed key cap (TAB, F3, E). For a key inline in a sentence use
-   .hud-prompt-key instead — it stays un-boxed. */
+   .hud-prompt-key instead (chrome.css) — it stays un-boxed. */
 .ui-key {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  border: var(--ui-hairline);
+  min-width: 24px;
+  height: 24px;
+  padding: 0 var(--ui-sp-2);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: var(--ui-r);
   font-family: var(--ui-mono);
   font-size: var(--ui-fs-data-sm);
-  font-weight: 500;
+  font-weight: 700;
   letter-spacing: var(--ui-track-title);
   color: var(--ui-text);
 }
 
-/* Hairline chip. Set `color` (e.g. a --ui-kind-* token) and the border follows. */
+/* Hairline pill. Set `color` (e.g. a --ui-kind-* token) and BOTH the border and
+   the fill follow it — one declaration recolors the whole chip. */
 .ui-chip {
   display: inline-flex;
   align-items: center;
+  gap: var(--ui-sp-2);
   padding: 3px var(--ui-sp-3);
+  background: color-mix(in srgb, currentColor 12%, transparent);
   border: 1px solid currentColor;
-  background: transparent;
+  border-radius: var(--ui-pill);
   font-family: var(--ui-font-cond);
   font-size: 10px;
   font-weight: 600;
@@ -150,14 +212,28 @@
   color: var(--ui-dim);
 }
 
-/* --- buttons ---
-   One primary style everywhere: translucent olive tint + olive hairline. */
+/* The tag form: no border, a stronger wash (SHIVERING, the FOOD kind tag). */
+.ui-chip--solid {
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  border-color: transparent;
+  font-weight: 700;
+}
+
+/* ============================== Buttons ==============================
+   Two affirmative weights, both olive: .ui-btn is the workhorse (tinted, still
+   a hairline — USE, DROP, TAKE ALL, CRAFT) and .ui-btn--primary is the one
+   hero CTA on a surface (solid, dark ink — RESUME, EAT, JOIN). A surface with
+   two solid buttons has no hero. */
 
 .ui-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-sp-2);
   padding: var(--ui-sp-4) var(--ui-sp-6);
   background: var(--ui-accent-fill);
   border: var(--ui-hairline-accent);
-  border-radius: var(--ui-radius);
+  border-radius: var(--ui-r);
   color: var(--ui-text);
   font-family: var(--ui-font-cond);
   font-size: var(--ui-fs-btn);
@@ -169,6 +245,30 @@
 
 .ui-btn:hover:not(:disabled) {
   background: var(--ui-accent-fill-hover);
+}
+
+/* Dark ink on olive is the one place in the UI that inverts — that is what
+   makes it read as THE action. The gradient stops are literal: they are a
+   ramp off --ui-accent, not two more accent hues. */
+.ui-btn--primary {
+  background: linear-gradient(180deg, var(--ui-accent), #5f7f4c);
+  border-color: transparent;
+  color: #0f1409;
+  font-weight: 700;
+  box-shadow: var(--ui-lift-1);
+}
+
+.ui-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8cb178, var(--ui-accent));
+  box-shadow: var(--ui-lift-1), var(--ui-glow);
+}
+
+/* The big one: a CTA that owns its row (RESUME, the mobile action bar). */
+.ui-btn--lg {
+  min-height: 48px;
+  padding: var(--ui-sp-5) var(--ui-sp-7);
+  border-radius: var(--ui-r-md);
+  font-size: 15px;
 }
 
 .ui-btn--secondary {
@@ -184,19 +284,19 @@
 }
 
 .ui-btn--warn {
-  background: transparent;
-  border-color: var(--ui-warn);
+  background: rgba(200, 134, 46, 0.07);
+  border-color: rgba(200, 134, 46, 0.35);
   color: var(--ui-warn);
 }
 
 .ui-btn--warn:hover:not(:disabled) {
-  background: rgba(200, 134, 46, 0.12);
+  background: rgba(200, 134, 46, 0.16);
   color: var(--ui-text);
 }
 
 .ui-btn--danger {
-  background: transparent;
-  border-color: var(--ui-danger);
+  background: rgba(192, 57, 43, 0.07);
+  border-color: rgba(192, 57, 43, 0.35);
   color: var(--ui-danger);
 }
 
@@ -210,8 +310,21 @@
   cursor: default;
 }
 
-/* --- item cells (hotbar, inventory grid, crate grid) --- */
+/* Keyboard reach: the HUD is gamepad-/keyboard-navigable, and an outline is the
+   only affordance that survives every fill above. */
+.ui-btn:focus-visible,
+.ui-cell:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
 
+/* ==================== Item cells (hotbar, inventory, crate) ====================
+   A cell is a recessed well in the glass: it darkens downward, and the item in
+   it lifts back out (--ui-lift-1). Selection/holding is the GLOW on top of
+   that lift — depth and state are different channels and both can be on. */
+
+/* The column count is the surface's call (the inventory runs 6, the crate 4) —
+   override grid-template-columns in the slice sheet. */
 .ui-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -222,33 +335,35 @@
 .ui-cell {
   position: relative;
   padding: 0;
-  background: var(--ui-cell);
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
+  background: linear-gradient(180deg, var(--ui-cell), rgba(0, 0, 0, 0.14));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--ui-r);
   color: var(--ui-text);
 }
 
 .ui-cell--filled {
-  background: var(--ui-cell-filled);
+  background: linear-gradient(180deg, var(--ui-cell-filled), rgba(21, 27, 14, 0.86));
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: var(--ui-lift-1);
 }
 
 .ui-cell:hover {
   border-color: var(--ui-dim);
 }
 
-/* Held/equipped: the soft glow. Selected for inspection: the strong one — the
-   only "elevation" in the UI. */
+/* Held/equipped: the soft glow. Selected for inspection: the strong one. The
+   lift stays under both — the glow is state, it is not what raises the cell. */
 .ui-cell--equipped,
 .ui-cell--equipped:hover {
   border-color: var(--ui-accent);
   background: var(--ui-accent-soft);
-  box-shadow: var(--ui-glow);
+  box-shadow: var(--ui-lift-1), var(--ui-glow);
 }
 
 .ui-cell--selected,
 .ui-cell--selected:hover {
   border-color: var(--ui-accent);
-  box-shadow: var(--ui-glow-strong);
+  box-shadow: var(--ui-lift-1), var(--ui-glow-strong);
 }
 
 .ui-cell-icon {
@@ -263,11 +378,13 @@
 
 .ui-cell-index {
   position: absolute;
-  top: var(--ui-sp-1);
-  left: var(--ui-sp-1);
+  top: var(--ui-sp-2);
+  left: var(--ui-sp-2);
   font-family: var(--ui-mono);
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
 }
 
 .ui-cell--equipped .ui-cell-index {
@@ -276,29 +393,33 @@
 
 .ui-cell-count {
   position: absolute;
-  right: var(--ui-sp-1);
+  right: var(--ui-sp-2);
   bottom: var(--ui-sp-1);
   font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data-sm);
+  font-size: var(--ui-fs-data);
+  font-weight: 700;
   color: var(--ui-text);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 /* ItemKind stripe — the one thing that makes a grid of icons readable.
    Color it with a --ui-kind-* token. */
 .ui-cell-stripe {
   position: absolute;
-  top: 5px;
-  left: 5px;
-  width: 14px;
+  top: var(--ui-sp-2);
+  left: var(--ui-sp-2);
+  width: 15px;
   height: 3px;
+  border-radius: var(--ui-r-sm);
   background: currentColor;
   color: var(--ui-dim);
 }
 
-/* --- bars / meters ---
+/* ============================== Bars / meters ==============================
    The .bar family is the shared primitive: vitals, cast bar and vehicle meters
-   all compose it. Row anatomy: [icon] [label] [track] [value]. */
+   all compose it. Row anatomy: [icon] [label] [track] [value]. The track is a
+   pill — 999px on an 8px-tall box resolves to a 4px cap. */
 
 .bar {
   display: flex;
@@ -307,8 +428,8 @@
 }
 
 .bar-icon {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   flex: none;
   display: block;
 }
@@ -331,7 +452,7 @@
   height: var(--ui-bar-h);
   background: rgba(255, 255, 255, 0.09);
   border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
+  border-radius: var(--ui-pill);
   overflow: hidden;
 }
 
@@ -340,6 +461,7 @@
   top: 0;
   bottom: 0;
   left: 0;
+  border-radius: var(--ui-pill);
   transition: var(--ui-bar-transition);
 }
 
@@ -350,7 +472,7 @@
 .bar-fill--warn { background: var(--ui-warn); }
 .bar-fill--danger { background: var(--ui-danger); }
 .bar-fill--channel,
-.bar-fill--accent { background: var(--ui-accent); }
+.bar-fill--accent { background: linear-gradient(90deg, #5f7f4c, var(--ui-accent)); }
 
 /* Segment ticks: a cosmetic overlay above the fill, inside the track. */
 .bar-ticks {
@@ -370,955 +492,37 @@
   text-align: right;
   font-family: var(--ui-mono);
   font-size: var(--ui-fs-data);
-  font-weight: 500;
-  letter-spacing: var(--ui-track-data);
-  color: var(--ui-text);
-  font-variant-numeric: tabular-nums;
-}
-
-/* ============================== Main menu ============================== */
-
-.menu-root {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background:
-    radial-gradient(ellipse at 50% 115%, rgba(28, 38, 33, 0.55), transparent 60%),
-    linear-gradient(180deg, #0c1013 0%, #121a1d 45%, #090c0a 100%);
-}
-
-.menu-root::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.72) 100%);
-}
-
-.menu-panel {
-  position: relative;
-  width: min(440px, calc(100vw - 32px));
-  /* Horizontal padding shrinks with the viewport so the panel (and the
-     clamp()-sized title below) fits 360px-wide screens. */
-  padding: 44px clamp(20px, 6vw, 44px) 36px;
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  text-align: center;
-}
-
-.menu-title {
-  margin: 0;
-  /* 9 letterspaced caps ≈ 9.7em — clamp keeps the wordmark inside the panel
-     from 360px phones up (a fixed 42px overflowed even the 440px panel). */
-  font-family: var(--ui-font-cond);
-  font-size: clamp(20px, calc(10vw - 12px), 34px);
-  font-weight: 600;
-  letter-spacing: 0.34em;
-  text-indent: 0.34em; /* balance trailing letterspace */
-  text-transform: uppercase;
-  color: var(--ui-text);
-}
-
-.menu-subtitle {
-  margin: var(--ui-sp-4) 0 0;
-  font-size: var(--ui-fs-body);
-  letter-spacing: 0.12em;
-  color: var(--ui-dim);
-}
-
-.menu-form {
-  display: flex;
-  gap: var(--ui-sp-3);
-  margin-top: var(--ui-sp-9);
-}
-
-.menu-input {
-  flex: 1;
-  min-width: 0;
-  padding: var(--ui-sp-4) var(--ui-sp-5);
-  background: rgba(0, 0, 0, 0.45);
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
-  color: var(--ui-text);
-  letter-spacing: 0.05em;
-  outline: none;
-}
-
-.menu-input::placeholder {
-  color: var(--ui-dim);
-  opacity: 0.7;
-}
-
-.menu-input:focus {
-  border-color: var(--ui-accent);
-}
-
-.menu-join {
-  padding: var(--ui-sp-4) 18px;
-  background: var(--ui-accent-fill);
-  border: var(--ui-hairline-accent);
-  border-radius: var(--ui-radius);
-  color: var(--ui-text);
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-btn);
-  font-weight: 600;
-  letter-spacing: var(--ui-track-btn);
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.menu-join:hover:not(:disabled) {
-  background: var(--ui-accent-fill-hover);
-}
-
-.menu-join:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.menu-error {
-  margin: 14px 0 0;
-  font-size: var(--ui-fs-body);
-  color: var(--ui-danger);
-}
-
-.menu-controls {
-  position: absolute;
-  bottom: var(--ui-sp-8);
-  left: 0;
-  right: 0;
-  padding: 0 var(--ui-edge);
-  text-align: center;
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-micro);
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ui-dim);
-}
-
-/* ================================= HUD ================================= */
-
-.hud {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  pointer-events: none;
-  user-select: none;
-  font-family: var(--ui-font);
-  font-size: var(--ui-fs-body);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
-}
-
-/* --- damage vignette flash --- */
-
-.hud-damage-flash {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    ellipse at center,
-    rgba(160, 20, 12, 0) 38%,
-    rgba(160, 20, 12, 0.55) 100%
-  );
-  animation: hud-damage-fade 250ms ease-out forwards;
-}
-
-@keyframes hud-damage-fade {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-/* --- vitals (bottom-left) --- */
-
-.hud-vitals {
-  position: absolute;
-  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
-  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
-  width: 240px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--ui-sp-3);
-}
-
-.hud-temp {
-  margin-top: 2px;
-  padding-top: var(--ui-sp-4);
-  border-top: var(--ui-hairline-rule);
-  display: flex;
-  align-items: center;
-  gap: var(--ui-sp-3);
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-label);
-  font-weight: 600;
-  letter-spacing: var(--ui-track-label);
-  text-transform: uppercase;
-  color: var(--ui-dim);
-}
-
-.hud-temp-value {
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data);
-  font-weight: 500;
-  letter-spacing: var(--ui-track-data);
-  text-transform: none;
-  color: var(--ui-text);
-  font-variant-numeric: tabular-nums;
-}
-
-.hud-temp--cold,
-.hud-temp--cold .hud-temp-value {
-  color: var(--ui-cold);
-}
-
-/* Hairline chip, not a pill. */
-.hud-shiver {
-  margin-left: auto;
-  padding: 3px var(--ui-sp-3);
-  border: 1px solid var(--ui-cold);
-  font-size: 10px;
-  letter-spacing: var(--ui-track-label);
-  color: var(--ui-cold);
-  animation: hud-shiver-pulse 1s ease-in-out infinite;
-}
-
-@keyframes hud-shiver-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.25; }
-}
-
-/* --- hotbar (bottom-center) --- */
-
-.hud-hotbar {
-  position: absolute;
-  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: var(--ui-sp-2);
-  pointer-events: auto;
-}
-
-.hotbar-slot {
-  position: relative;
-  width: var(--ui-slot);
-  height: var(--ui-slot);
-  padding: 0;
-  background: var(--ui-cell);
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
-  color: var(--ui-text);
-}
-
-/* A slot that holds an item is opaque whether or not the component sets
-   .hotbar-slot--filled — over the world an item must never float on a 3% wash. */
-.hotbar-slot--filled,
-.hotbar-slot:has(> .hotbar-swatch) {
-  background: var(--ui-cell-filled);
-}
-
-.hotbar-slot:hover {
-  border-color: var(--ui-dim);
-}
-
-/* Doubled class: must out-specify the :has() fill rule above. */
-.hotbar-slot.hotbar-slot--selected,
-.hotbar-slot.hotbar-slot--selected:hover {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-soft);
-  box-shadow: var(--ui-glow);
-}
-
-.hotbar-index {
-  position: absolute;
-  top: var(--ui-sp-1);
-  left: var(--ui-sp-1);
-  font-family: var(--ui-mono);
-  font-size: 10px;
-  color: var(--ui-dim);
-}
-
-.hotbar-slot--selected .hotbar-index {
-  color: var(--ui-accent);
-}
-
-.hotbar-swatch {
-  position: absolute;
-  inset: 14px;
-  opacity: 0.92;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-}
-
-.hotbar-count {
-  position: absolute;
-  right: var(--ui-sp-1);
-  bottom: var(--ui-sp-1);
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data-sm);
-  color: var(--ui-text);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
-}
-
-/* --- crosshair + pickup prompt (center) --- */
-
-/* Four ticks + a centre dot, drawn entirely from the empty .hud-crosshair div —
-   no child nodes. */
-.hud-crosshair {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 28px;
-  height: 28px;
-  margin: -14px 0 0 -14px;
-}
-
-.hud-crosshair::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
-    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
-    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82)),
-    linear-gradient(rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.82));
-  background-size: 8px 2px, 8px 2px, 2px 8px, 2px 8px;
-  background-position: left center, right center, center top, center bottom;
-  background-repeat: no-repeat;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.75));
-}
-
-.hud-crosshair::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 3px;
-  height: 3px;
-  margin: -1.5px 0 0 -1.5px;
-  border-radius: var(--ui-round);
-  background: #fff;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.75);
-}
-
-.hud-prompt {
-  position: absolute;
-  left: 50%;
-  top: calc(50% + 26px);
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: var(--ui-sp-2);
-  padding: var(--ui-sp-2) var(--ui-sp-4);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  font-size: var(--ui-fs-body);
-  color: var(--ui-text);
-  white-space: nowrap;
-}
-
-/* --- ammo readout for the equipped ranged weapon (doc 11 M3) --- */
-
-.hud-ammo {
-  position: absolute;
-  /* Rendered INSIDE .hud-hotbar and anchored to its top edge, so it follows
-   * every media-query relocation/rescale of the bar (980px lift, coarse-pointer
-   * portrait/landscape moves, 40px slots) for free — no offsets to mirror. */
-  bottom: calc(100% + var(--ui-sp-3));
-  left: 50%;
-  transform: translateX(-50%);
-  /* The hotbar opts into pointer-events; the readout is cosmetic. */
-  pointer-events: none;
-  display: flex;
-  align-items: baseline;
-  gap: var(--ui-sp-1);
-  padding: 3px var(--ui-sp-4);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  font-family: var(--ui-mono);
-  letter-spacing: var(--ui-track-data);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.hud-ammo-mag {
-  font-size: 15px;
-  color: var(--ui-text);
-}
-
-.hud-ammo--empty .hud-ammo-mag {
-  color: var(--ui-danger);
-}
-
-.hud-ammo-sep,
-.hud-ammo-reserve {
-  font-size: var(--ui-fs-data);
-  color: var(--ui-dim);
-}
-
-.hud-ammo-hint {
-  margin-left: var(--ui-sp-2);
-  font-family: var(--ui-font);
-  font-size: var(--ui-fs-data);
-  color: var(--ui-dim);
-}
-
-/* --- build mode panel (doc 06) --- */
-
-.hud-build {
-  position: absolute;
-  left: 50%;
-  top: calc(50% + 92px);
-  transform: translateX(-50%);
-  padding: var(--ui-sp-2) var(--ui-sp-5);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  white-space: nowrap;
-  text-align: center;
-}
-
-.hud-build-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ui-sp-4);
-}
-
-.hud-build-piece {
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data);
-  letter-spacing: var(--ui-track-data);
-  color: var(--ui-text);
-}
-
-.hud-build-status {
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-label);
-  font-weight: 600;
-  letter-spacing: var(--ui-track-label);
-  text-transform: uppercase;
-  color: var(--ui-danger);
-}
-
-.hud-build-hints {
-  margin-top: var(--ui-sp-1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--ui-sp-2);
-  font-size: var(--ui-fs-micro);
-  color: var(--ui-dim);
-}
-
-/* --- cast bar for the channeled (timed) action (doc 11 M2) --- */
-
-.hud-channel {
-  position: absolute;
-  left: 50%;
-  top: calc(50% + 60px);
-  transform: translateX(-50%);
-  width: 280px;
-  padding: var(--ui-sp-2) var(--ui-sp-4);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-}
-
-.hud-channel .bar {
-  flex-wrap: wrap;
-}
-
-/* The cast bar's label is a full-width caption above its track, not a column. */
-.hud-channel .bar-label {
-  width: auto;
-  flex: 1;
-  font-size: var(--ui-fs-data);
-  letter-spacing: 0.2em;
-  color: var(--ui-text);
-  white-space: nowrap;
-}
-
-.hud-channel .bar-track {
-  flex: 1 0 100%;
-  order: 3;
-  margin-top: var(--ui-sp-1);
-}
-
-/* Inline key in a sentence ([R] reload, [hold X] demolish) — un-boxed by
-   design; the boxed cap is .ui-key. */
-.hud-prompt-key {
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data-sm);
-  font-weight: 500;
-  letter-spacing: var(--ui-track-title);
-  color: var(--ui-accent);
-}
-
-/* --- status (top-right) --- */
-
-.hud-status {
-  position: absolute;
-  top: 14px;
-  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  text-align: right;
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data-sm);
-  letter-spacing: var(--ui-track-data);
-  color: var(--ui-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.hud-clock {
-  font-size: var(--ui-fs-data-lg);
-  font-weight: 500;
-  color: var(--ui-text);
-}
-
-/* --- notices (top-left) --- */
-
-.hud-notices {
-  position: absolute;
-  top: 14px;
-  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
-  display: flex;
-  flex-direction: column;
-  gap: var(--ui-sp-1);
-  max-width: 320px;
-}
-
-.hud-notice {
-  padding: var(--ui-sp-1) var(--ui-sp-4);
-  background: var(--ui-bg);
-  border-left: 2px solid var(--ui-accent);
-  font-size: var(--ui-fs-data);
-  color: var(--ui-text);
-  animation: hud-notice-fade 0.6s ease 6s forwards;
-}
-
-@keyframes hud-notice-fade {
-  to { opacity: 0; }
-}
-
-/* --- inventory panel --- */
-
-.hud-inv {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(880px, calc(100vw - 48px));
-  max-height: min(720px, calc(100vh - 48px));
-  overflow-y: auto;
-  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  backdrop-filter: var(--ui-blur);
-  pointer-events: auto;
-}
-
-/* Opt out of the panel's own padding when a .ui-panel-head strip runs edge to
-   edge; the sections below it then own their padding (.inv-body, inventory.css). */
-.hud-inv--flush {
-  padding: 0;
-}
-
-.inv-title {
-  margin-bottom: var(--ui-sp-4);
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-eyebrow);
-  font-weight: 600;
-  letter-spacing: var(--ui-track-eyebrow);
-  text-transform: uppercase;
-  color: var(--ui-dim);
-}
-
-.inv-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ui-sp-4);
-  padding: var(--ui-sp-2) 0;
-  border-bottom: var(--ui-hairline-rule);
-  min-height: 34px;
-}
-
-.inv-row:last-of-type {
-  border-bottom: none;
-}
-
-.inv-slot-num {
-  width: 14px;
-  flex: none;
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data-sm);
-  color: var(--ui-dim);
-}
-
-.inv-swatch {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35);
-}
-
-.inv-name {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--ui-fs-body);
-  color: var(--ui-text);
-}
-
-.inv-empty {
-  flex: 1;
-  font-size: var(--ui-fs-body);
-  color: var(--ui-dim);
-  opacity: 0.6;
-}
-
-.inv-count {
-  width: 36px;
-  flex: none;
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data);
-  letter-spacing: var(--ui-track-data);
-  color: var(--ui-dim);
-}
-
-.inv-actions {
-  display: flex;
-  gap: var(--ui-sp-2);
-  width: 112px;
-  justify-content: flex-end;
-}
-
-.inv-btn {
-  padding: var(--ui-sp-1) var(--ui-sp-4);
-  background: transparent;
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
-  color: var(--ui-text);
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-micro);
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.inv-btn:hover:not(:disabled) {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-fill);
-}
-
-.inv-btn:disabled {
-  opacity: 0.4;
-  cursor: default;
-  border-color: var(--ui-border);
-  background: transparent;
-}
-
-.inv-hint {
-  margin-top: var(--ui-sp-4);
-  text-align: center;
-  font-size: var(--ui-fs-micro);
-  letter-spacing: var(--ui-track-micro);
-  color: var(--ui-dim);
-}
-
-/* Second .inv-title in the same panel (the crate's YOUR ITEMS heading). */
-.inv-subtitle {
-  margin-top: 14px;
-}
-
-/* ============================ Death screen ============================= */
-
-.death-root {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  pointer-events: auto;
-  font-family: var(--ui-font);
-  background: radial-gradient(
-    ellipse at center,
-    rgba(42, 5, 2, 0.84) 0%,
-    rgba(12, 2, 1, 0.96) 100%
-  );
-  animation: death-fade-in 1.2s ease forwards;
-}
-
-@keyframes death-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.death-title {
-  margin: 0;
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-hero);
   font-weight: 700;
-  letter-spacing: var(--ui-track-hero);
-  text-indent: var(--ui-track-hero);
-  color: var(--ui-hp);
-  text-shadow: 0 0 28px rgba(179, 58, 46, 0.45);
-}
-
-.death-cause {
-  margin: 14px 0 40px;
-  font-size: 14px;
-  letter-spacing: 0.1em;
-  color: var(--ui-dim);
-}
-
-.death-respawn {
-  padding: var(--ui-sp-5) 34px;
-  background: rgba(179, 58, 46, 0.14);
-  border: 1px solid var(--ui-hp);
-  border-radius: var(--ui-radius);
+  letter-spacing: var(--ui-track-data);
   color: var(--ui-text);
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-btn);
-  font-weight: 600;
-  letter-spacing: 0.26em;
-  text-indent: 0.26em;
-  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
 }
 
-.death-respawn:hover {
-  background: rgba(179, 58, 46, 0.3);
-}
-
-/* Narrow viewports: lift the hotbar clear of the vitals stack. */
-@media (max-width: 980px) {
-  .hud-hotbar {
-    bottom: calc(140px + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-/* ====================== Touch controls (coarse pointer) ====================== */
-/* Rendered by TouchControls.tsx on touch-primary devices only. The joystick
-   nub is moved imperatively (style.transform) at touch-move rate. */
-
-.touch-root {
-  position: absolute;
-  inset: 0;
-  z-index: 6; /* above the HUD (5), below the death screen (10) */
-  pointer-events: none; /* interactive children opt back in */
-  user-select: none;
-  -webkit-user-select: none;
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-body);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
-}
-
-/* --- left thumb: virtual joystick --- */
-
-.tc-stick-zone {
-  position: absolute;
-  left: calc(12px + env(safe-area-inset-left, 0px));
-  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  width: 160px; /* forgiving hit area around the 120px base */
-  height: 160px;
-  pointer-events: auto;
-  touch-action: none;
-}
-
-.tc-stick-base {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 120px;
-  height: 120px;
-  transform: translate(-50%, -50%);
-  border-radius: var(--ui-round);
-  background: rgba(10, 13, 7, 0.28); /* a lighter wash — it sits over the world */
-  border: 2px solid rgba(255, 255, 255, 0.22);
-}
-
-.tc-stick-nub {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 52px;
-  height: 52px;
-  transform: translate(-50%, -50%);
-  border-radius: var(--ui-round);
-  background: rgba(216, 220, 212, 0.16);
-  border: 1px solid var(--ui-dim);
-  will-change: transform;
-}
-
-/* --- buttons --- */
-
-.tc-btn {
-  pointer-events: auto;
-  touch-action: none; /* taps are ours: no scroll/zoom gesture handoff */
-  -webkit-tap-highlight-color: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--ui-round);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  color: var(--ui-text);
-  font-family: var(--ui-font-cond);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: var(--ui-track-label);
-  text-indent: var(--ui-track-label);
-  text-transform: uppercase;
-}
-
-.tc-btn:active {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-fill-hover);
-}
-
-.tc-btn--active {
-  border-color: var(--ui-accent);
-  box-shadow: var(--ui-glow);
-}
-
-/* Right thumb cluster: all targets >= 56px. */
-.tc-cluster {
-  position: absolute;
-  right: calc(12px + env(safe-area-inset-right, 0px));
-  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
-  width: 196px;
-  height: 200px;
-  pointer-events: none;
-}
-
-.tc-cluster > .tc-btn {
-  position: absolute;
-}
-
-.tc-btn--attack {
-  right: 4px;
-  bottom: 0;
-  width: 88px;
-  height: 88px;
-  font-size: 11px;
-  border-color: rgba(179, 58, 46, 0.55);
-}
-
-.tc-btn--attack:active {
-  border-color: var(--ui-hp);
-  background: rgba(179, 58, 46, 0.22);
-}
-
-.tc-btn--jump {
-  right: 104px;
-  bottom: 12px;
-  width: 60px;
-  height: 60px;
-}
-
-.tc-btn--interact {
-  right: 14px;
-  bottom: 100px;
-  width: 64px;
-  height: 64px;
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-soft);
-}
-
-.tc-btn--bag {
-  right: 112px;
-  bottom: 88px;
-  width: 56px;
-  height: 56px;
-}
-
-.tc-btn--menu {
-  position: absolute;
-  top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
-  right: calc(var(--ui-sp-4) + env(safe-area-inset-right, 0px));
-  width: 56px;
-  height: 56px;
-  font-size: 22px;
-  text-indent: 0;
-  letter-spacing: 0;
-}
-
-/* ================= Responsive HUD (small / touch screens) ================= */
+/* ========================= Responsive (primitives) ========================= */
 
 @media (pointer: coarse) {
-  /* Look-drags over the canvas must never scroll, zoom or pull-to-refresh
-     (declarative twin of the preventDefault in TouchControls). */
-  .game-canvas {
-    touch-action: none;
-  }
-
-  /* Blur is decoration, not legibility (--ui-bg is already 0.78-opaque) and it
-     costs fill rate on phones — a full-screen panel over the canvas recomposites
-     every frame. Killed at the token, not per selector: a media query adds no
-     specificity, so a selector list here ties with every `.panel { backdrop-filter:
-     var(--ui-blur) }` rule and silently loses to any that is declared later in the
-     file. Redefining the token makes the opt-out immune to rule order, and covers
-     panels in the slice stylesheets too. Must stay below the @import of tokens.css
-     (where --ui-blur is set) — CSS requires @import at the top, so it always is. */
+  /* Blur is what keeps text legible over moving terrain — but on a phone it
+     recomposites the whole 3D canvas every frame, and the fills above are
+     opaque enough to hold on their own. Killed at the TOKEN, not per selector:
+     a media query adds no specificity, so a selector list here would tie with
+     every `{ backdrop-filter: var(--ui-blur) }` rule and silently lose to any
+     declared later in the bundle. Redefining the token makes the opt-out immune
+     to sheet order, and covers the slice stylesheets too. Must stay below the
+     @import of tokens.css (where --ui-blur is set) — CSS requires @import at
+     the top of a sheet, so it always is. */
   :root {
     --ui-blur: none;
   }
 
-  /* Keyboard legend is noise on touch devices. */
-  .menu-controls {
-    display: none;
-  }
-
-  /* Clear the ⚙ button in the top-right corner. */
-  .hud-status {
-    right: calc(78px + env(safe-area-inset-right, 0px));
-  }
-
-  /* Vitals ride above the joystick zone. */
-  .hud-vitals {
-    bottom: calc(186px + env(safe-area-inset-bottom, 0px));
-  }
-
-  /* Finger-sized USE/DROP; the Tab hint is meaningless without a keyboard. */
-  .inv-btn,
+  /* Finger-sized. 44px is the floor for anything tappable. */
   .ui-btn {
+    min-height: 44px;
     padding: var(--ui-sp-4) 14px;
-  }
-
-  .inv-hint {
-    display: none;
-  }
-
-  /* "[R] reload" is a keyboard prompt — meaningless on touch (same rule as
-     .menu-controls / .inv-hint). Touch reloads via the inv-panel RELOAD
-     button or the server auto-reload on an empty trigger pull. */
-  .hud-ammo-hint {
-    display: none;
-  }
-
-  /* [Q]/[T]/[LMB]/[hold X] are keyboard prompts — meaningless on touch.
-     Touch places via the ATTACK button (build mode captures the tap);
-     kind/tier cycling and demolish are a touch-UI follow-up (doc 08). */
-  .hud-build-hints {
-    display: none;
   }
 }
 
 @media (max-width: 768px) {
-  .hud {
-    font-size: var(--ui-fs-data);
-  }
-
-  /* Vitals: narrower bars, tighter type. */
-  .hud-vitals {
-    width: 180px;
-    gap: var(--ui-sp-2);
-  }
-
+  /* Meters: narrower label column, tighter type — the track keeps the room. */
   .bar-label {
     width: 56px;
     font-size: 10px;
@@ -1334,619 +538,7 @@
     font-size: var(--ui-fs-data-sm);
   }
 
-  /* Hotbar: 40px slots, tighter gap (8 slots = 348px, fits 360px screens). */
-  .hud-hotbar {
-    gap: var(--ui-sp-1);
-  }
-
-  .hotbar-slot {
-    width: 40px;
-    height: 40px;
-  }
-
-  .hotbar-swatch {
-    inset: 10px;
-  }
-
-  .hotbar-count {
-    font-size: 10px;
-  }
-
-  /* Notices: stay clear of the top-right meta stack. */
-  .hud-notices {
-    max-width: min(240px, calc(100vw - 170px));
-  }
-
-  .hud-notice {
-    font-size: var(--ui-fs-micro);
-    padding: 3px var(--ui-sp-3);
-  }
-
-  /* Top-right meta stack, smaller. */
-  .hud-status {
-    font-size: var(--ui-fs-micro);
-  }
-
-  .hud-clock {
-    font-size: 15px;
-  }
-
-  /* Inventory: a full-screen sheet. */
-  .hud-inv {
-    inset: 0;
-    left: 0;
-    top: 0;
-    transform: none;
-    width: 100vw;
-    max-height: 100vh;
-    overflow-y: auto;
-    border: none;
-  }
-
   .ui-grid {
     grid-auto-rows: 68px;
   }
-
-  /* Death screen, scaled down. */
-  .death-title {
-    font-size: clamp(30px, 11vw, 52px);
-  }
-
-  .death-cause {
-    font-size: var(--ui-fs-body);
-    margin: 12px 0 30px;
-  }
-
-  .death-respawn {
-    padding: 11px 26px;
-    font-size: var(--ui-fs-body);
-  }
-}
-
-/* Touch phones: stack the bottom HUD clear of the joystick and the button
-   cluster — joystick (to ~172px) < hotbar < vitals. Must follow the generic
-   980px/coarse rules above so it wins the cascade. */
-@media (pointer: coarse) and (max-width: 768px) {
-  .hud-hotbar {
-    bottom: calc(226px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .hud-vitals {
-    bottom: calc(282px + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-/* ==================== Touch layout v2: use the screen edges ====================
-   Overrides the earlier coarse-pointer lift rules (later in file wins at equal
-   specificity). Vitals live top-left on touch devices — the bottom belongs to
-   thumbs. The hotbar hugs whatever free strip the orientation offers. */
-@media (pointer: coarse) {
-  .hud-vitals {
-    top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
-    bottom: auto;
-    left: calc(12px + env(safe-area-inset-left, 0px));
-    /* The chat button starts at left 180px — the stack must end before it. */
-    width: 160px;
-    gap: 5px;
-  }
-
-  /* HYDRATION at 9px condensed is ~45px; 52px holds it without clipping. */
-  .hud-vitals .bar-label {
-    width: 52px;
-    font-size: 9px;
-    letter-spacing: 0.06em;
-  }
-
-  .hud-vitals .bar-icon {
-    width: 12px;
-    height: 12px;
-  }
-
-  .hud-vitals .bar-value {
-    width: 24px;
-  }
-
-  /* Notices drop below the relocated vitals. */
-  .hud-notices {
-    top: calc(120px + env(safe-area-inset-top, 0px));
-    left: calc(12px + env(safe-area-inset-left, 0px));
-  }
-
-  /* Portrait: the joystick/buttons own the bottom ~210px; the hotbar sits
-     immediately above them instead of floating mid-screen. */
-  .hud-hotbar {
-    bottom: calc(216px + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-/* Landscape: the strip between the joystick (left, ends ~172px) and the
-   button cluster (right, 208px incl. margin) is free — put the hotbar there,
-   at the bottom where thumbs expect it. Slots shrink on narrow phones so
-   8 of them always fit the strip (min 30px, max 44px). */
-@media (pointer: coarse) and (orientation: landscape) {
-  .hud-hotbar {
-    bottom: calc(var(--ui-sp-4) + env(safe-area-inset-bottom, 0px));
-    gap: 3px;
-  }
-
-  .hotbar-slot {
-    width: clamp(30px, calc((100vw - 420px) / 8), 44px);
-    height: auto;
-    aspect-ratio: 1;
-  }
-
-  /* The debug panel would cover the relocated vitals — park it top-center-
-     right, clear of the clock/gear stack. */
-  .debug-overlay {
-    left: auto;
-    right: calc(110px + env(safe-area-inset-right, 0px));
-    top: calc(10px + env(safe-area-inset-top, 0px));
-  }
-}
-
-/* Full-screen catcher behind the inventory: tap/click outside the panel
-   closes it (the panel's own clicks land on children, not the backdrop). */
-.hud-inv-backdrop {
-  position: absolute;
-  inset: 0;
-  pointer-events: auto;
-}
-
-/* ================== Life recap (death screen + LAST LIFE toast) ================== */
-/* Shared stat rows rendered by RecapStats — minimal monospace ledger. */
-
-.recap-stats {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  width: 230px;
-  padding: var(--ui-sp-4) 0;
-  border-top: var(--ui-hairline-rule);
-  border-bottom: var(--ui-hairline-rule);
-}
-
-.recap-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--ui-sp-5);
-}
-
-.recap-label {
-  font-family: var(--ui-font-cond);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ui-dim);
-}
-
-.recap-value {
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data);
-  font-weight: 500;
-  letter-spacing: var(--ui-track-data);
-  color: var(--ui-text);
-  font-variant-numeric: tabular-nums;
-}
-
-/* On the death screen the cause line already carries 40px bottom margin;
-   mirror it below the stats so the RESPAWN button keeps its distance. */
-.death-root .recap-stats {
-  margin: -16px 0 38px;
-}
-
-/* --- LAST LIFE toast (top-center, while playing): you died offline --- */
-
-.hud-lastlife {
-  position: absolute;
-  top: calc(14px + env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(340px, calc(100vw - 24px)); /* 336px at a 360px viewport */
-  padding: var(--ui-sp-4) var(--ui-sp-5) var(--ui-sp-5);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  border-top: 2px solid var(--ui-hp);
-  pointer-events: auto;
-}
-
-.hud-lastlife .recap-stats {
-  width: auto;
-}
-
-.lastlife-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ui-sp-3);
-}
-
-.lastlife-title {
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-eyebrow);
-  font-weight: 600;
-  letter-spacing: var(--ui-track-eyebrow);
-  text-transform: uppercase;
-  color: var(--ui-hp);
-}
-
-.lastlife-close {
-  margin: -6px -8px -6px 0; /* grow the hit area without moving the glyph */
-  padding: var(--ui-sp-2) var(--ui-sp-4);
-  background: transparent;
-  border: none;
-  color: var(--ui-dim);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.lastlife-close:hover {
-  color: var(--ui-text);
-}
-
-.lastlife-msg {
-  margin: 7px 0 var(--ui-sp-4);
-  font-size: var(--ui-fs-data);
-  color: var(--ui-text);
-}
-
-/* Touch layout: vitals/menu own the top strip — drop the toast below them
-   (notices are transient; brief overlap is fine, the toast is dismissible). */
-@media (pointer: coarse) {
-  .hud-lastlife {
-    top: calc(124px + env(safe-area-inset-top, 0px));
-  }
-
-  .lastlife-close {
-    padding: var(--ui-sp-5) 14px;
-    font-size: 20px;
-  }
-}
-
-/* ===================== Main menu: longest-lives board ===================== */
-
-.menu-leaderboard {
-  margin-top: 26px;
-  padding-top: var(--ui-sp-6);
-  border-top: var(--ui-hairline);
-}
-
-.lb-title {
-  margin-bottom: var(--ui-sp-4);
-  font-family: var(--ui-font-cond);
-  font-size: var(--ui-fs-eyebrow);
-  font-weight: 600;
-  letter-spacing: 0.28em;
-  text-indent: 0.28em;
-  text-transform: uppercase;
-  color: var(--ui-dim);
-}
-
-.lb-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--ui-sp-4);
-  padding: 3px 0;
-  font-family: var(--ui-mono);
-  font-size: var(--ui-fs-data);
-  letter-spacing: var(--ui-track-data);
-  color: var(--ui-dim);
-  text-align: left;
-  font-variant-numeric: tabular-nums;
-}
-
-.lb-rank {
-  width: 14px;
-  flex: none;
-  opacity: 0.7;
-}
-
-.lb-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ui-text);
-}
-
-.lb-days {
-  width: 44px;
-  flex: none;
-  text-align: right;
-}
-
-.lb-kills {
-  width: 60px;
-  flex: none;
-  text-align: right;
-}
-
-/* Rendered item icons (Blender stills) in the hotbar + inventory. The base
-   swatch classes keep their box size; icons just fill them. */
-.hotbar-icon {
-  object-fit: contain;
-  image-rendering: auto;
-  /* No !important: the HUD onError handler sets an inline background color as the
-     missing-icon swatch fallback, and an !important rule here would override it
-     (that left items without a /icons/<type>.png showing a broken image). */
-  background: transparent;
-  /* .hotbar-swatch (also applied) sets an inset, which over-constrains the
-     absolutely-positioned img against the 80% size below and pins it top-left.
-     Reset to inset:0 + margin:auto so the 80% box centers in the slot. */
-  inset: 0;
-  margin: auto;
-  width: 80%;
-  height: 80%;
-}
-
-.inv-icon {
-  object-fit: contain;
-  background: transparent;
-  width: 22px;
-  height: 22px;
-}
-
-/* ============================ Proximity chat ============================ */
-/* ChatPanel.tsx — log bottom-left above the vitals; input row while open.
-   Lines fade via the opacity transition once ChatPanel's 1s tick applies
-   .chat-line--faded (8s after receipt). */
-
-/* Full-screen catcher while the input is open: tap/click outside closes
-   without sending (same pattern as .hud-inv-backdrop). */
-.chat-backdrop {
-  position: absolute;
-  inset: 0;
-  pointer-events: auto;
-}
-
-.hud-chat {
-  position: absolute;
-  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
-  bottom: calc(124px + env(safe-area-inset-bottom, 0px)); /* above the vitals */
-  width: min(340px, calc(100vw - 200px));
-  display: flex;
-  flex-direction: column;
-}
-
-/* The open panel paints above the backdrop (later sibling), so clicks on the
-   log/input land here instead of close-through. Closed, it stays inert. */
-.hud-chat--open {
-  pointer-events: auto;
-}
-
-.chat-log {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.chat-line {
-  font-size: var(--ui-fs-data);
-  line-height: 1.35;
-  overflow-wrap: anywhere; /* a 120-char token must wrap, not overflow */
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
-  opacity: 1;
-  transition: opacity 0.9s ease;
-}
-
-.chat-line--faded {
-  opacity: 0;
-}
-
-/* Proximity chat carries a name and a string — there are no channels and no
-   per-speaker colors. */
-.chat-name {
-  color: var(--ui-dim);
-}
-
-.chat-name::after {
-  content: ":";
-}
-
-.chat-text {
-  color: var(--ui-text);
-}
-
-.chat-input-row {
-  position: relative;
-  margin-top: 5px;
-  pointer-events: auto;
-}
-
-.chat-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: var(--ui-sp-2) var(--ui-sp-3);
-  background: rgba(0, 0, 0, 0.55);
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
-  color: var(--ui-text);
-  font: inherit;
-  font-size: var(--ui-fs-body);
-  letter-spacing: 0.03em;
-  outline: none;
-  user-select: text; /* .hud sets user-select: none */
-  -webkit-user-select: text;
-}
-
-.chat-input:focus {
-  border-color: var(--ui-accent);
-}
-
-.chat-input::placeholder {
-  color: var(--ui-dim);
-  opacity: 0.7;
-}
-
-/* Right-aligned inside the input row, clear of the caret. */
-.chat-send-hint {
-  position: absolute;
-  right: var(--ui-sp-3);
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  font-family: var(--ui-mono);
-  font-size: 10px;
-  color: var(--ui-dim);
-}
-
-/* ≤980px lifts the hotbar to bottom 140px — keep the chat clear of it. */
-@media (max-width: 980px) {
-  .hud-chat {
-    bottom: calc(196px + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-/* Touch layout: the bottom-left belongs to the joystick and the portrait
-   hotbar sits at ~216px — park the log above both. Lines grow upward. */
-@media (pointer: coarse) {
-  .hud-chat {
-    left: calc(12px + env(safe-area-inset-left, 0px));
-    bottom: calc(266px + env(safe-area-inset-bottom, 0px));
-    width: min(300px, calc(100vw - 230px));
-  }
-
-  .chat-line {
-    font-size: var(--ui-fs-micro);
-  }
-}
-
-/* Landscape: the hotbar drops to the bottom strip, so the log can sit just
-   above the joystick zone (ends ~172px). */
-@media (pointer: coarse) and (orientation: landscape) {
-  .hud-chat {
-    bottom: calc(186px + env(safe-area-inset-bottom, 0px));
-  }
-}
-
-/* Touch chat button (TouchControls): top-left area, right of the relocated
-   vitals (left 12px + 160px wide), under no other control. */
-.tc-btn--chat {
-  position: absolute;
-  top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
-  left: calc(180px + env(safe-area-inset-left, 0px));
-  width: 48px;
-  height: 48px;
-}
-
-/* OS frame-throttle warning — shown when the page is visible but the frame
-   loop is starved (occluded/embedded window). DOM timers outlive rAF. */
-.hud-throttle-warning {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(140, 60, 10, 0.85);
-  color: #ffe9d0;
-  font-size: var(--ui-fs-body);
-  padding: var(--ui-sp-2) 14px;
-  border: 1px solid rgba(255, 180, 90, 0.4);
-  pointer-events: none;
-  z-index: 40;
-}
-
-/* ==================== Base building: locks + crates (doc 06) ============ */
-/* CodePad + CratePanel in HUD.tsx. Both reuse the .hud-inv panel idioms
-   (backdrop, inv-title/inv-row/inv-btn); only the pad grid is new. */
-
-.hud-codepad {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(260px, calc(100vw - 32px));
-  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
-  background: var(--ui-bg-deep);
-  border: var(--ui-hairline);
-  pointer-events: auto;
-  text-align: center;
-}
-
-.codepad-display {
-  display: flex;
-  justify-content: center;
-  gap: var(--ui-sp-4);
-  margin: var(--ui-sp-2) 0 var(--ui-sp-5);
-  font-family: var(--ui-mono);
-  font-size: 22px;
-}
-
-.codepad-cell {
-  width: 28px;
-  height: 34px;
-  line-height: 34px;
-  border: var(--ui-hairline);
-  color: var(--ui-dim);
-}
-
-.codepad-cell--set {
-  color: var(--ui-text);
-  border-color: var(--ui-accent);
-}
-
-.codepad-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--ui-sp-2);
-}
-
-.codepad-btn {
-  padding: var(--ui-sp-4) 0;
-  font-family: var(--ui-mono);
-  font-size: 16px;
-  background: transparent;
-  border: var(--ui-hairline);
-  border-radius: var(--ui-radius);
-  color: var(--ui-text);
-  cursor: pointer;
-  pointer-events: auto;
-}
-
-.codepad-btn:hover:not(:disabled) {
-  border-color: var(--ui-accent);
-  background: var(--ui-accent-fill);
-}
-
-.codepad-btn:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.codepad-btn--ok {
-  border-color: var(--ui-accent);
-}
-
-.codepad-actions {
-  display: flex;
-  justify-content: center;
-  gap: var(--ui-sp-3);
-  margin-top: var(--ui-sp-4);
-}
-
-/* Crate panel: the inventory-panel skeleton, offset so both can breathe on
-   wide screens; scrolls inside itself on short ones. */
-.hud-crate {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(460px, calc(100vw - 32px));
-  max-height: min(560px, calc(100vh - 40px));
-  overflow-y: auto;
-  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
-  background: var(--ui-bg);
-  border: var(--ui-hairline);
-  backdrop-filter: var(--ui-blur);
-  pointer-events: auto;
-}
-
-/* doc 06 M5 — LOCK button (touch parity for the L key), above the TAKE slot. */
-.tc-btn--lock {
-  right: 14px;
-  bottom: 172px;
-  width: 56px;
-  height: 56px;
 }

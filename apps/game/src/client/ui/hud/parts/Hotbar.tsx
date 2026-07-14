@@ -15,9 +15,13 @@ export function Hotbar(): ReactElement {
     <div className="hud-hotbar">
       {Array.from({ length: INVENTORY_SLOTS }, (_, i) => {
         const stack = inventory[i] ?? null;
-        const classes = ["hotbar-slot"];
-        if (stack !== null) classes.push("hotbar-slot--filled");
-        if (i === selectedSlot) classes.push("hotbar-slot--selected");
+        // A hotbar slot IS an item cell — same well, same fill, same lift as the
+        // inventory grid (.ui-cell in ui.css); .hotbar-slot only sizes it.
+        // "Selected" here means the item is IN YOUR HANDS, which is what
+        // --equipped marks everywhere else in the UI.
+        const classes = ["ui-cell", "hotbar-slot"];
+        if (stack !== null) classes.push("ui-cell--filled");
+        if (i === selectedSlot) classes.push("ui-cell--equipped");
         return (
           <button
             key={i}
@@ -27,16 +31,16 @@ export function Hotbar(): ReactElement {
               setSelectedSlot(i);
             }}
           >
-            <span className="hotbar-index">{i + 1}</span>
+            <span className="ui-cell-index">{i + 1}</span>
             {stack !== null && (
               <ItemIcon
-                className="hotbar-swatch hotbar-icon"
+                className="ui-cell-icon hotbar-icon"
                 type={stack.type}
                 alt={(ITEM_DEFS[stack.type] ?? UNKNOWN_DEF).name}
               />
             )}
             {stack !== null && stack.count > 1 && (
-              <span className="hotbar-count">{stack.count}</span>
+              <span className="ui-cell-count">{stack.count}</span>
             )}
           </button>
         );

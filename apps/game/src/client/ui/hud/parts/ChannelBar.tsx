@@ -24,6 +24,12 @@ export function ChannelBar({ labels }: ChannelBarProps): ReactElement | null {
         value={elapsed}
         max={action.totalS}
         fillClass="bar-fill--channel"
+        // The barber-pole hatch: chrome.css restyles .bar-ticks for this one
+        // surface and turns it (@keyframes hud-channel-hatch). A filling bar
+        // with moving stripes reads as WORK UNDERWAY; a flat one reads as a
+        // level you are looking at, which is what .bar-ticks means everywhere
+        // else (the vitals' segment ticks).
+        ticks
         valueText={null}
       />
       <div className="hud-channel-times">

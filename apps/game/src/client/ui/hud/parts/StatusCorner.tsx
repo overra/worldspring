@@ -25,10 +25,14 @@ export function StatusCorner({ Slot }: StatusCornerProps): ReactElement {
   const cls = clientWorld.config.map.minimap ? "hud-status has-minimap" : "hud-status";
   return (
     <div className={cls}>
-      <div className="hud-clock">{formatClock(clockHours)}</div>
+      <div className="hud-clock ui-num ui-num--lg">{formatClock(clockHours)}</div>
       {Slot !== undefined && <Slot />}
-      <div>{playerCount} online</div>
-      <div>{Math.round(pingMs)}ms</div>
+      {/* Online and ping are the meta you glance past, so they share one line
+          under the clock rather than each claiming a row of the corner. */}
+      <div className="hud-status-meta">
+        <span className="ui-num ui-num--sm">{playerCount} online</span>
+        <span className="ui-num ui-num--sm">{Math.round(pingMs)} ms</span>
+      </div>
     </div>
   );
 }

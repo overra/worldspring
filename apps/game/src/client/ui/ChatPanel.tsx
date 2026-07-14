@@ -12,6 +12,9 @@ import { CHAT_MAX_LENGTH } from "@worldspring/shared/constants";
 import { sendChat } from "@/client/net/connection";
 import { useUIStore } from "@/client/state/store";
 import "./ui.css";
+// Chat's LAYOUT is the HUD's (hud/chrome.css owns where the log sits); its LOOK
+// is here, with the other overlay surfaces that are made of glass.
+import "./menu.css";
 
 /** How many of the newest lines are shown. */
 const VISIBLE_LINES = 6;
@@ -42,7 +45,10 @@ function ChatInputRow(): ReactElement {
   };
 
   return (
-    <div className="chat-input-row">
+    // The ROW is the glass (a card floating over live gameplay); the field
+    // inside it is stripped back to a caret. The hint is not a keycap — it sits
+    // inside the field, where a keycap would read as a button.
+    <div className="chat-input-row ui-panel ui-panel--hud">
       <input
         className="chat-input"
         type="text"
@@ -55,6 +61,7 @@ function ChatInputRow(): ReactElement {
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
       />
+      <span className="chat-send-hint">ENTER</span>
     </div>
   );
 }

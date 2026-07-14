@@ -10,14 +10,14 @@ export function LastLifeToast(): ReactElement | null {
   const setRecap = useUIStore((s) => s.setRecap);
   if (phase !== "playing" || recap === null) return null;
   return (
-    <div className="hud-lastlife">
+    <div className="hud-lastlife ui-panel">
       <div className="lastlife-head">
-        <span className="lastlife-title">LAST LIFE</span>
+        <span className="lastlife-title ui-eyebrow">LAST LIFE</span>
         <button className="lastlife-close" aria-label="dismiss" onClick={() => setRecap(null)}>
           ×
         </button>
       </div>
-      <p className="lastlife-msg">While you were away you died — killed by {recap.by}</p>
+      <p className="lastlife-msg ui-body">While you were away you died — killed by {recap.by}</p>
       <RecapStats recap={recap} />
     </div>
   );
