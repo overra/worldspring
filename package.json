@@ -17,7 +17,8 @@
     "deploy:game": "turbo run deploy --filter=@worldspring/game",
     "deploy:web": "turbo run deploy --filter=@worldspring/web",
     "deploy:prober": "turbo run deploy --filter=@worldspring/prober",
-    "loadtest": "pnpm --filter @worldspring/game loadtest"
+    "loadtest": "pnpm --filter @worldspring/game loadtest",
+    "mod:check": "node scripts/mod-check.mjs"
   },
   "devDependencies": {
     "turbo": "^2.9.18"
