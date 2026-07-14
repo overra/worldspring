@@ -13,7 +13,7 @@ import type { ReactElement } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import type { Building, World } from "@worldspring/shared/world";
+import { FOUNDATION_DEPTH, type Building, type World } from "@worldspring/shared/world";
 import { createRng, hashString } from "@worldspring/shared/rng";
 import { clientWorld } from "@/client/runtime";
 import {
@@ -52,8 +52,12 @@ const WINDOW_CENTER_Y = 1.3;
 const WINDOW_DOOR_CLEARANCE = 1.2;
 /** Keep windows clear of corners: frame half-width 0.55 + post + breathing room. */
 const WINDOW_EDGE_MARGIN = 1.0;
-/** Posts start below the floor and reach the roofline (foundation-skirt overlap). */
-const POST_SKIRT = 0.3;
+// Corner posts span the SAME vertical extent as the walls they trim: from the
+// wall foundation (floorY - FOUNDATION_DEPTH, imported from shared/world.ts so
+// it can never drift) up to the roofline. A shallower skirt left the post
+// hanging in mid-air on the downhill side of a slope while the wall beside it
+// carried on down into the terrain. The buried portion is hidden by the ground
+// on flat land, exactly as the wall's own foundation is.
 /** Chimney center distance in from the roof corner. */
 const CHIMNEY_INSET = 0.9;
 
@@ -82,6 +86,21 @@ interface TrimInstance {
 interface TrimPart {
   geometry: THREE.BufferGeometry;
   material: THREE.Material | THREE.Material[];
+  /**
+   * The mesh's transform inside the kit GLB, in the loaded scene's frame.
+   *
+   * NOT identity, and must not be assumed so: `models:export` runs
+   * gltf-transform's meshopt pass, which QUANTIZES positions to normalized
+   * int16 and compensates with a per-node scale/translation. The raw geometry
+   * is therefore in a unit-ish quantized space, not placement space — dropping
+   * this matrix renders every piece at the wrong size (a 0.5-scaled
+   * fascia_strip came out 2x, spearing out past the roofline).
+   *
+   * Folded into the INSTANCE matrix rather than baked into the geometry:
+   * BufferGeometry.applyMatrix4 on a normalized-int16 position attribute would
+   * write floats back into an Int16Array and corrupt the mesh.
+   */
+  matrix: THREE.Matrix4;
 }
 
 /** Pulls shared geometry + material pairs out of a GLB node's mesh children
@@ -89,6 +108,9 @@ interface TrimPart {
 function extractParts(scene: THREE.Group, name: string): TrimPart[] {
   const node = scene.getObjectByName(name);
   if (!node) return [];
+  // Read each mesh's transform relative to the loaded scene (see TrimPart.matrix).
+  scene.updateMatrixWorld(true);
+  const sceneInv = new THREE.Matrix4().copy(scene.matrixWorld).invert();
   const parts: TrimPart[] = [];
   node.traverse((obj) => {
     if (!(obj instanceof THREE.Mesh)) return;
@@ -96,7 +118,11 @@ function extractParts(scene: THREE.Group, name: string): TrimPart[] {
     // windows are see-through gameplay surfaces, so the pane stays out.
     const mat = obj.material;
     if (!Array.isArray(mat) && mat.name === "pane_dark") return;
-    parts.push({ geometry: obj.geometry, material: mat });
+    parts.push({
+      geometry: obj.geometry,
+      material: mat,
+      matrix: new THREE.Matrix4().multiplyMatrices(sceneInv, obj.matrixWorld),
+    });
   });
   return parts;
 }
@@ -176,16 +202,16 @@ function collectBuilding(
     });
   }
 
-  // --- Corner posts: unit-height base origin, stretched skirt-to-roofline ---
+  // --- Corner posts: unit-height base origin, stretched foundation-to-roofline ---
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       push("corner_post", {
         x: b.cx + sx * b.halfW,
-        y: b.floorY - POST_SKIRT,
+        y: b.floorY - FOUNDATION_DEPTH,
         z: b.cz + sz * b.halfD,
         yaw: 0,
         sx: 1,
-        sy: b.wallHeight + POST_SKIRT,
+        sy: b.wallHeight + FOUNDATION_DEPTH,
         sz: 1,
       });
     }
@@ -252,8 +278,14 @@ function buildTrim(scene: THREE.Group, world: World): ChunkedDressing {
       dummy.rotation.set(0, inst.yaw, 0);
       dummy.scale.set(inst.sx, inst.sy, inst.sz);
       dummy.updateMatrix();
-      const matrix = dummy.matrix.clone();
-      for (const bucket of ids) entries.push({ bucket, matrix });
+      // placement * part-local. Each part carries its own GLB node transform,
+      // so parts of one piece no longer share a matrix (see TrimPart.matrix).
+      parts.forEach((part, i) => {
+        entries.push({
+          bucket: ids[i],
+          matrix: new THREE.Matrix4().multiplyMatrices(dummy.matrix, part.matrix),
+        });
+      });
     }
   }
   return buildChunkedDressing(buckets, entries);
