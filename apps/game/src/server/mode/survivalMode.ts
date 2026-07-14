@@ -5,10 +5,10 @@
 // systems still live in ../systems and are still called by GameRoom for message
 // handlers + world seeding; only the tick ORDER lives here now.
 import type { GameMode, ModeTickCtx, PhaseTimer } from "./GameMode";
-import type { GameState } from "../systems/state";
+import type { GameState, ServerPlayer } from "../systems/state";
 import { DECAY_SWEEP_INTERVAL_S } from "@worldspring/shared/constants";
 import { performAttack } from "../systems/combat";
-import { stepPortals, tickActiveActions } from "../systems/players";
+import { createPlayer, respawnPlayer, stepPortals, tickActiveActions } from "../systems/players";
 import { spawnInitialProps } from "../systems/props";
 import { sweepDecay, tickStructures } from "../systems/structures";
 import { tickAmbientSeeds, tickTreeGrowth, tickTrunks } from "../systems/trees";
@@ -90,5 +90,20 @@ export const survivalMode: GameMode = {
     // cadence from here.
     sweepDecay(game, ctx.lastSeenMs);
     game.decayNextAt = game.time + DECAY_SWEEP_INTERVAL_S;
+  },
+
+  // Player lifecycle — survival's answers delegate verbatim to systems/players.ts
+  // (a fresh beach spawn with the starting loadout) and the operator-tuned
+  // respawn delay. Behaviour is identical to the pre-seam direct calls.
+  createPlayer(game: GameState, id: string, name: string, tokenHash: string): ServerPlayer {
+    return createPlayer(game, id, name, tokenHash);
+  },
+
+  respawnPlayer(game: GameState, player: ServerPlayer): void {
+    respawnPlayer(game, player);
+  },
+
+  respawnDelayS(game: GameState): number {
+    return game.config.session.respawnDelayS;
   },
 };

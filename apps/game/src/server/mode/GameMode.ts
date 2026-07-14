@@ -8,7 +8,7 @@
 // message handlers + world seeding. The GameState core/slice split, a mode-owned
 // snapshot contribution, and physical @worldspring/engine + mode-survival packages
 // are later increments.
-import type { GameState } from "../systems/state";
+import type { GameState, ServerPlayer } from "../systems/state";
 
 /** Stamps the cost since the previous stamp into a named /api/health phase bucket. */
 export type PhaseTimer = (label: string) => void;
@@ -43,4 +43,46 @@ export interface GameMode {
    * persisted snapshot instead). Owns any always-fresh entities and boot upkeep.
    */
   onWorldReady(game: GameState, fresh: boolean, ctx: ModeTickCtx): void;
+
+  // --- Player lifecycle (docs/plans/00 decision 4) --------------------------
+  //
+  // The mode owns WHERE a player enters and WHAT they carry — the flagship's
+  // beach spawn + starting loadout is one mode's answer; an arena's spread
+  // spawn + combat kit is another. The ENGINE (GameRoom) still owns the
+  // plumbing around these: sockets, the players map, persistence + the
+  // adopt/resume/new join-identity decision, testbed provisioning, and the
+  // welcome/snapshot. It calls these at the two gameplay decision points a
+  // joining or dying player hits.
+  //
+  // Granularity is whole-function-with-delegation, not a spawn-state callback,
+  // because the survival spawn logic lives in ../systems/players.ts, which the
+  // mode already imports — so the mode delegates INTO players.ts rather than
+  // players.ts reaching back for a mode (which would be an import cycle). A
+  // future engine/mode-survival package split extracts the reusable skeleton
+  // (transient-field construction) so a mode fills only the spawn state; until
+  // then survival owns the whole body and byte-identity is trivial.
+
+  /**
+   * Build a brand-new player entering the world for the first life: construct
+   * the ServerPlayer, place it, kit it out, and insert it into `game.players`.
+   * The caller (join path 3 — a fresh/dead-row identity) then layers on host
+   * concerns (keep-inventory restore, testbed seeding, welcome). Survival:
+   * random beach spawn, full vitals, flashlight + bandage (+ map).
+   */
+  createPlayer(game: GameState, id: string, name: string, tokenHash: string): ServerPlayer;
+
+  /**
+   * Re-spawn an existing dead player in place (mutates them alive again). The
+   * engine gates this on `respawnDelayS` before calling. Survival: fresh beach
+   * spawn + full vitals, keeping or resetting the loadout per `pvp.fullLoot`,
+   * and restarting the per-life stats.
+   */
+  respawnPlayer(game: GameState, player: ServerPlayer): void;
+
+  /**
+   * Game-seconds a dead player must wait after `diedAt` before a respawn
+   * request is honored. Survival returns the operator-tuned
+   * `config.session.respawnDelayS`; a round-based mode can gate on match state.
+   */
+  respawnDelayS(game: GameState): number;
 }

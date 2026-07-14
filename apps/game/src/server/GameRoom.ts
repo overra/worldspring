@@ -88,13 +88,11 @@ import { survivalMode } from "./mode/survivalMode";
 import {
   applyQueuedInputs,
   craftItem,
-  createPlayer,
   dropSlot,
   equipSlot,
   markExploration,
   pickupLoot,
   queueInput,
-  respawnPlayer,
   restorePlayer,
   sanitizeName,
   startUse,
@@ -689,8 +687,8 @@ export class GameRoom extends DurableObject<Env> {
           this.persistAll(game);
           break;
         }
-        if (!player.alive && game.time - player.diedAt >= this.config.session.respawnDelayS) {
-          respawnPlayer(game, player);
+        if (!player.alive && game.time - player.diedAt >= this.mode.respawnDelayS(game)) {
+          this.mode.respawnPlayer(game, player);
           // Persist the new life right away (atomically with the world):
           // overwrites the dead row and clears any stale pending recap.
           this.persistAll(game);
@@ -965,7 +963,7 @@ export class GameRoom extends DurableObject<Env> {
     // while its owner was offline, deliver the stored recap exactly once.
     const name = sanitizeName(rawName, game);
     const id = crypto.randomUUID().slice(0, 8);
-    const player = createPlayer(game, id, name, tokenHash);
+    const player = this.mode.createPlayer(game, id, name, tokenHash);
     // Keep-inventory (pvp.fullLoot=false): a player who closed the tab on the
     // death screen rejoins into their DEAD row here — restore the inventory held
     // at death (createPlayer started them empty) rather than destroying it. The
