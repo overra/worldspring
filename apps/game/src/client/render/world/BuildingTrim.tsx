@@ -82,6 +82,21 @@ interface TrimInstance {
 interface TrimPart {
   geometry: THREE.BufferGeometry;
   material: THREE.Material | THREE.Material[];
+  /**
+   * The mesh's transform inside the kit GLB, in the loaded scene's frame.
+   *
+   * NOT identity, and must not be assumed so: `models:export` runs
+   * gltf-transform's meshopt pass, which QUANTIZES positions to normalized
+   * int16 and compensates with a per-node scale/translation. The raw geometry
+   * is therefore in a unit-ish quantized space, not placement space — dropping
+   * this matrix renders every piece at the wrong size (a 0.5-scaled
+   * fascia_strip came out 2x, spearing out past the roofline).
+   *
+   * Folded into the INSTANCE matrix rather than baked into the geometry:
+   * BufferGeometry.applyMatrix4 on a normalized-int16 position attribute would
+   * write floats back into an Int16Array and corrupt the mesh.
+   */
+  matrix: THREE.Matrix4;
 }
 
 /** Pulls shared geometry + material pairs out of a GLB node's mesh children
@@ -89,6 +104,9 @@ interface TrimPart {
 function extractParts(scene: THREE.Group, name: string): TrimPart[] {
   const node = scene.getObjectByName(name);
   if (!node) return [];
+  // Read each mesh's transform relative to the loaded scene (see TrimPart.matrix).
+  scene.updateMatrixWorld(true);
+  const sceneInv = new THREE.Matrix4().copy(scene.matrixWorld).invert();
   const parts: TrimPart[] = [];
   node.traverse((obj) => {
     if (!(obj instanceof THREE.Mesh)) return;
@@ -96,7 +114,11 @@ function extractParts(scene: THREE.Group, name: string): TrimPart[] {
     // windows are see-through gameplay surfaces, so the pane stays out.
     const mat = obj.material;
     if (!Array.isArray(mat) && mat.name === "pane_dark") return;
-    parts.push({ geometry: obj.geometry, material: mat });
+    parts.push({
+      geometry: obj.geometry,
+      material: mat,
+      matrix: new THREE.Matrix4().multiplyMatrices(sceneInv, obj.matrixWorld),
+    });
   });
   return parts;
 }
@@ -252,8 +274,14 @@ function buildTrim(scene: THREE.Group, world: World): ChunkedDressing {
       dummy.rotation.set(0, inst.yaw, 0);
       dummy.scale.set(inst.sx, inst.sy, inst.sz);
       dummy.updateMatrix();
-      const matrix = dummy.matrix.clone();
-      for (const bucket of ids) entries.push({ bucket, matrix });
+      // placement * part-local. Each part carries its own GLB node transform,
+      // so parts of one piece no longer share a matrix (see TrimPart.matrix).
+      parts.forEach((part, i) => {
+        entries.push({
+          bucket: ids[i],
+          matrix: new THREE.Matrix4().multiplyMatrices(dummy.matrix, part.matrix),
+        });
+      });
     }
   }
   return buildChunkedDressing(buckets, entries);
