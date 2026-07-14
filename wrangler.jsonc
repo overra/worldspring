@@ -1,0 +1,51 @@
+{
+  // The "Deploy to Cloudflare" button reads THIS file — the repo root — to work out
+  // what a virgin account must provision (the GameRoom DO + its SQLite migration, the
+  // client assets), and Workers Builds then runs the root build + `npx wrangler deploy`
+  // from here. It deploys apps/game only; apps/web is worldspring.games and apps/prober
+  // is ours, neither belongs in a self-host.
+  //
+  // Why a SECOND config instead of pointing the button at apps/game: the button treats a
+  // subdirectory URL as the entire repo, so a fork would arrive without packages/shared
+  // or the lockfile and `workspace:*` would not resolve. It must therefore stay in sync
+  // with apps/game/wrangler.jsonc (same bindings, same migrations) — that one is what
+  // `vite build` consumes and what CI deploys via the emitted dist/worldspring/wrangler.json.
+  "name": "worldspring",
+  "compatibility_date": "2026-06-01",
+  // Build OUTPUT, not source: `pnpm build` (or `pnpm --filter @worldspring/game build`)
+  // must run first. The Vite plugin emits a PRE-BUNDLED worker whose Rapier .wasm is an
+  // external module, so `no_bundle` + the ESModule rule are load-bearing — without them
+  // Wrangler re-bundles the already-bundled output and the wasm import breaks. Both
+  // mirror the plugin-emitted apps/game/dist/worldspring/wrangler.json.
+  "main": "apps/game/dist/worldspring/index.js",
+  "no_bundle": true,
+  "rules": [{ "type": "ESModule", "globs": ["**/*.js", "**/*.mjs"] }],
+  "assets": {
+    "directory": "apps/game/dist/client",
+    "not_found_handling": "single-page-application"
+  },
+  // No `routes` and no `account_id`: a stranger's deploy lands on
+  // <worker-name>.<their-subdomain>.workers.dev and can never contend for
+  // play.worldspring.games, which is attached account-side to OUR prod worker.
+  "workers_dev": true,
+  // Protect operator-set vars (GAME_CONFIG, doc 04 §4) from being cleared by the next
+  // Workers Builds deploy — this config deliberately carries none.
+  "keep_vars": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GAME",
+        "class_name": "GameRoom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GameRoom"]
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

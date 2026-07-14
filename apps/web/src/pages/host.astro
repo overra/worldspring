@@ -2,51 +2,56 @@
 // /host — the "host your own world" pitch (the landing nav's Host link). A static
 // marketing page built on the shared Layout / "field manual" design system:
 // near-black ground, olive accent, hairline borders, mono data readouts, sharp
-// corners. Copy is the CURRENT survival framing only — self-host a configurable
-// Worldspring server on your own Cloudflare account. The "fork it, make your own
-// game" platform messaging is a separate pass and is deliberately NOT here. No SSR
-// data loads: prerendered. The "DEPLOY — NEW WORLD" console is a decorative mock
-// (illustration, not a live form).
+// corners. No SSR data loads: prerendered. The deploy card in the hero is a REAL
+// call to action — every value it shows is a fact about what the button does, not a
+// form being filled in; DEPLOY_URL is Cloudflare's hosted setup page, which clones
+// the repo into the visitor's own GitHub and provisions the DO in their account.
+// Nothing here may promise a choice the button does not offer (it asks for a repo
+// name, a Worker name, and the .dev.vars.example secrets — no region, no preset, no
+// wipe schedule; those are post-deploy config).
 import Layout from "../layouts/Layout.astro";
 
 export const prerender = true;
 
-// The mock deploy console in the hero — presentational only. Values echo the
-// vocabulary the rest of the site already uses (deadcoast preset, 40 max/world).
-const term = {
+const REPO_URL = "https://github.com/overra/worldspring";
+const DEPLOY_URL = `https://deploy.workers.cloudflare.com/?url=${REPO_URL}`;
+const GUIDE_URL = `${REPO_URL}/blob/main/docs/SELF_HOSTING.md`;
+
+// What the click actually gets you — read-outs, not inputs.
+const spec = {
   fields: [
-    { k: "region", v: "us-east" },
-    { k: "preset", v: "deadcoast · balanced" },
+    { k: "source", v: "a fork, in your GitHub" },
+    { k: "runs on", v: "your Cloudflare account" },
+    { k: "url", v: "your-world.workers.dev" },
   ],
   inline: [
-    { k: "players", v: "40" },
-    { k: "wipe", v: "monthly" },
+    { k: "cost", v: "pennies / month" },
+    { k: "cli", v: "not required" },
   ],
 };
 
-// The three-step process (doc 00 self-host framing). Verbatim mock copy for 02/03.
 const steps = [
   {
     n: "01",
-    h: "Runs on your account",
-    p: "Your world runs on your account, in your own Cloudflare — you own the data, the uptime, and the whole pennies-a-month bill. No game host to rent.",
+    h: "Click deploy",
+    p: "Cloudflare clones this repo into your own GitHub account and provisions the world — a Durable Object and its storage — in your own Cloudflare. You sign in to them, not to us.",
   },
   {
     n: "02",
-    h: "Pick a preset, name it",
-    p: "Choose a personality and a wipe schedule, or tune the rules yourself.",
+    h: "It builds and goes live",
+    p: "The build runs, the world deploys to your workers.dev subdomain, and your fork stays wired to it: every push you make redeploys your server.",
   },
   {
     n: "03",
-    h: "Share the link",
-    p: "It lists in the directory and heartbeats its status. Friends just click to join.",
+    h: "Make it yours",
+    p: "Pick a preset and tune the rules with one config var. Point a coding agent at the fork to change the game itself. Claim a directory listing so friends can find you.",
   },
 ];
 ---
 
 <Layout
   title="Host — run your own Worldspring island"
-  description="Deploy your own Worldspring world on your Cloudflare account. Your rules, your wipe schedule, pennies a month — and it lists itself in the public directory."
+  description="Deploy your own Worldspring world to your own Cloudflare account in one click. You get a source fork you can mod, your rules, and a pennies-a-month bill."
   active="host"
 >
   <section class="hero">
@@ -55,35 +60,36 @@ const steps = [
         <p class="eyebrow">Host · Self-serve on Cloudflare</p>
         <h1>Host the island.<br />Your rules. Your own.</h1>
         <p class="lede">
-          Deploy the world to your own Cloudflare account. Set your own wipe schedule. It
-          heartbeats to the directory so friends can find it. No servers to babysit.
+          One click puts a fork of the whole game in your GitHub and a running world in your
+          Cloudflare account. Not a rented slot on our box — your source, your server, your
+          bill. Mod it as far as you like.
         </p>
         <div class="cta">
-          <a class="btn primary" href="/servers/register">Deploy your world →</a>
-          <a class="btn" href="/getting-started">Read the docs</a>
+          <a class="btn primary" href={DEPLOY_URL} target="_blank" rel="noopener">Deploy to Cloudflare →</a>
+          <a class="btn" href={GUIDE_URL} target="_blank" rel="noopener">Setup guide</a>
           <span class="mono note">pennies a month · your Cloudflare account</span>
         </div>
       </div>
 
-      <div class="term" role="img" aria-label="Mock deploy console: deploying a new world to Cloudflare, then a live play.yourname.workers.dev link.">
+      <div class="term">
         <div class="term-bar">
           <span class="term-title mono">Deploy — new world</span>
           <span class="term-dots" aria-hidden="true"><i></i><i></i><i class="on"></i></span>
         </div>
-        <div class="term-body mono" aria-hidden="true">
+        <div class="term-body mono">
           <div class="term-fields">
-            {term.fields.map((f) => (
+            {spec.fields.map((f) => (
               <div class="tf"><span class="pair"><span class="k">{f.k}</span><span class="v">{f.v}</span></span></div>
             ))}
             <div class="tf">
-              {term.inline.map((f) => (
+              {spec.inline.map((f) => (
                 <span class="pair"><span class="k">{f.k}</span><span class="v">{f.v}</span></span>
               ))}
             </div>
           </div>
-          <div class="term-out">
-            <p class="line dim">&gt; deploying to your cloudflare…</p>
-            <p class="line ok"><span class="chk">✓</span> live <span class="sep">·</span> <span class="url">play.yourname.workers.dev</span><span class="cursor"></span></p>
+          <div class="term-cta">
+            <a class="btn primary" href={DEPLOY_URL} target="_blank" rel="noopener">Deploy to Cloudflare →</a>
+            <p class="line dim">Cloudflare asks for a repo name, a Worker name, and nothing else you don't have.</p>
           </div>
         </div>
       </div>
@@ -113,19 +119,25 @@ const steps = [
         <div class="cb-copy">
           <span class="eyebrow">Ready when you are</span>
           <h2>Stand up your island</h2>
-          <p class="cb-lede">Read the setup guide, or claim your listing in the directory and go live.</p>
+          <p class="cb-lede">
+            Deploy it in a click, or clone and run <code class="mono">wrangler deploy</code> yourself — the
+            setup guide covers both, plus presets, directory listing, and modding the fork.
+          </p>
         </div>
         <div class="cb-actions">
-          <a class="btn primary" href="/servers/register">Deploy your world →</a>
-          <a class="btn" href="/getting-started">Read the docs</a>
+          <a class="btn primary" href={DEPLOY_URL} target="_blank" rel="noopener">Deploy to Cloudflare →</a>
+          <a class="btn" href={GUIDE_URL} target="_blank" rel="noopener">Setup guide</a>
         </div>
       </div>
+      <p class="post-note">
+        Already deployed a server? <a href="/servers/register">Claim its listing</a> in the directory.
+      </p>
     </section>
   </div>
 </Layout>
 
 <style>
-  /* ---- Hero: text + mock deploy console (mirrors index/about hero) ---- */
+  /* ---- Hero: text + deploy card (mirrors index/about hero) ---- */
   .hero { position: relative; overflow: hidden; border-bottom: 1px solid var(--hairline); }
   .hero-inner {
     position: relative; z-index: 1; padding: 88px 28px 76px;
@@ -149,7 +161,7 @@ const steps = [
     mask-image: linear-gradient(90deg, transparent, #000 55%);
   }
 
-  /* ---- Mock deploy console ---- */
+  /* ---- Deploy card ---- */
   .term { border: 1px solid var(--hairline); background: var(--surface); min-width: 0; }
   .term-bar {
     display: flex; align-items: center; justify-content: space-between;
@@ -161,24 +173,17 @@ const steps = [
   .term-dots i.on { background: var(--ink-3); border-color: var(--ink-3); }
   .term-body { padding: 18px 18px 20px; font-size: 13px; line-height: 1.85; }
   .term-fields {
-    margin: 0 0 14px; padding: 0 0 14px; border-bottom: 1px solid var(--hairline);
+    margin: 0 0 16px; padding: 0 0 16px; border-bottom: 1px solid var(--hairline);
     display: flex; flex-direction: column; gap: 6px;
   }
   .tf { display: flex; gap: 40px; flex-wrap: wrap; }
   .pair { display: flex; gap: 12px; }
   .k { color: var(--ink-3); min-width: 56px; }
   .v { color: var(--ink-body); }
-  .term-out .line { margin: 0; }
+  .term-cta { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+  .term-cta .btn { width: 100%; justify-content: center; }
+  .term-cta .line { margin: 0; font-size: 11.5px; line-height: 1.6; }
   .line.dim { color: var(--ink-3); }
-  .line.ok { color: var(--ink-body); margin-top: 4px; }
-  .chk { color: var(--accent); }
-  .sep { color: var(--ink-3); }
-  .url { color: var(--accent-bright); }
-  .cursor {
-    display: inline-block; width: 7px; height: 14px; margin-left: 6px; vertical-align: -2px;
-    background: var(--accent); animation: term-blink 1.1s steps(1) infinite;
-  }
-  @keyframes term-blink { 50% { opacity: 0; } }
 
   /* ---- Section scaffolding (matches about.astro) ---- */
   .block { margin: 72px 0 0; }
@@ -200,12 +205,11 @@ const steps = [
     gap: 30px; flex-wrap: wrap;
   }
   .cb-copy h2 { font-size: clamp(20px, 2.6vw, 25px); font-weight: 700; letter-spacing: 0.05em; margin: 10px 0 0; }
-  .cb-lede { margin: 10px 0 0; color: var(--ink-2); font-size: 15px; max-width: 46ch; }
+  .cb-lede { margin: 10px 0 0; color: var(--ink-2); font-size: 15px; max-width: 52ch; }
+  .cb-lede code { font-size: 13px; color: var(--ink-body); }
   .cb-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+  .post-note { margin: 14px 0 0; color: var(--ink-3); font-size: 13.5px; }
 
-  @media (prefers-reduced-motion: reduce) {
-    .cursor { animation: none; }
-  }
   @media (max-width: 900px) {
     .hero-inner { grid-template-columns: 1fr; gap: 40px; }
     .lede { max-width: 620px; }

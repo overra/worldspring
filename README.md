@@ -2,14 +2,35 @@
 
 A browser-native multiplayer survival game on a procedurally generated island:
 loot towns, manage hunger/thirst/temperature, and outlast zombies and other players.
-DayZ-inspired at its core, but built to grow into a platform for worlds you host and
-configure — community servers, presets, base-building, and bigger worlds are on the
-roadmap (see [docs/plans](docs/plans/)). Persistent authoritative server on a Cloudflare
-Durable Object; React Three Fiber client with client-side prediction. The visual
-style mixes low-poly primitives with compact authored/generated GLBs; procedural
-tree variants are baked offline and instanced at runtime.
+DayZ-inspired at its core, and underneath it a platform for browser-native,
+self-hostable multiplayer worlds — you fork it, point a coding agent at it, and deploy
+the result to your own Cloudflare (see [docs/plans/00](docs/plans/00-agent-moddable-platform.md)).
+Persistent authoritative server on a Cloudflare Durable Object; React Three Fiber client
+with client-side prediction. The visual style mixes low-poly primitives with compact
+authored/generated GLBs; procedural tree variants are baked offline and instanced at
+runtime.
 
-## Run
+## Run your own · mod your own
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/overra/worldspring)
+
+One click clones this repo into **your** GitHub account, provisions the `GameRoom`
+Durable Object in **your** Cloudflare, and connects Workers Builds so your pushes
+redeploy your server. You get a source fork, not a black box — no CLI, no bill from us,
+pennies a month.
+
+Then make it yours: `GAME_CONFIG` picks a preset (`deadcoast`, `ironcoast`, `driftwood`,
+`homestead`, `warpath`, `arena`), and for anything deeper you point a coding agent at the
+fork. `pnpm mod:check` is the guardrail — types, worldgen determinism, protocol
+round-trip, sim + `GameMode` probes, build — run it before you deploy a mod, because the
+break an agent is most likely to introduce (a stray `Math.random()` in the sim) is silent.
+
+Full operator guide, including the CLI path and directory listing:
+**[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**. The button flow is wired but not yet
+click-tested against a fresh Cloudflare account — the monorepo build under Workers Builds
+is the open risk (SELF_HOSTING has the workaround).
+
+## Develop
 
 This repo is a **pnpm workspace** (`apps/game`, `apps/web`, `apps/prober`,
 `packages/shared`); see [docs/plans/09](docs/plans/09-monorepo-migration.md).

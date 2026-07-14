@@ -1,0 +1,17 @@
+# Secrets for a self-hosted Worldspring server. The "Deploy to Cloudflare" button
+# prompts for every key in this file and stores the answers as Worker secrets.
+#
+# There is nothing you must supply to get a playable server: leave this blank and
+# deploy. Everything the game needs has a code default (see docs/SELF_HOSTING.md).
+#
+# GAME_CONFIG (preset / rules) is deliberately NOT here — it is a plain var, not a
+# secret. Set it in the Cloudflare dashboard (Settings -> Variables) or in your
+# fork's wrangler.jsonc `vars` block.
+
+# Directory listing (optional). The token is minted AFTER your server is live —
+# worldspring.games/servers/register probes your URL and shows it once — so you
+# cannot have it at deploy time. Leave it blank now; set it later with
+#   npx wrangler secret put DIRECTORY_TOKEN
+# and add the var DIRECTORY_URL=https://worldspring.games. Heartbeats need BOTH,
+# so a blank token here leaves the subsystem completely inert.
+DIRECTORY_TOKEN=

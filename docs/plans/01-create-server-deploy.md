@@ -1,5 +1,50 @@
 # Create Your Server: one-click Worldspring deploys into the user's own Cloudflare account
 
+> ## ⚠️ STATUS 2026-07-14 — M4–M8 SUPERSEDED by the Deploy-to-Cloudflare button
+>
+> **The OAuth client, the Deployer DO, the `/create` UI, and the update/delete jobs (M4–M8)
+> will not be built.** Cloudflare's [Deploy to Cloudflare button](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
+> does the job with a `wrangler.jsonc` and a link: it clones the repo into the visitor's own
+> GitHub account, provisions the `GameRoom` DO, prompts for the `.dev.vars.example` secrets,
+> and connects Workers Builds so their pushes redeploy their server. Live at `/host` and in
+> the README; the operator path is `docs/SELF_HOSTING.md`.
+>
+> §10 of this doc rated the button "keep in the README for hackers." The platform pivot
+> (`00-agent-moddable-platform.md`) inverts that ranking, and the two things §10 scored the
+> button *down* for are now what we want:
+>
+> - **"A clone in their GitHub, no upstream link."** That is the product now — a moddable
+>   source fork you point a coding agent at. This doc's Deployer ships a *prebuilt artifact*:
+>   an opaque copy the user cannot mod.
+> - **"Updates are manual."** A modded fork does not want our commits force-applied over it.
+>   Decision 1 of doc 00 ("zero sync") means updates are never a correctness need; upstream
+>   is `git merge upstream/main`, agent-assisted.
+> - And the decisive one: **we never custody a deploy-capable credential.** Cloudflare holds
+>   it. Summary decision 1 above already names that risk "the single worst risk this feature
+>   can take on" — the button removes it entirely rather than mitigating it.
+>
+> **What survives from this doc:**
+>
+> - **M2 — release pipeline / version tagging.** Still wanted for `GAME_VERSION`, honest
+>   directory `version` fields, and reproducible releases. No R2 artifact replay needed —
+>   the button builds from source.
+> - **M3 — game-worker env surface** (`GAME_CONFIG`, `DIRECTORY_URL`, `DIRECTORY_TOKEN`).
+>   Shipped, and it is exactly what the button prompts against.
+> - **§9 — the CLI path**, now the primary documented operator path alongside the button.
+> - **§8 / M8's "register an existing server"** — shipped (`/servers/register`). The button
+>   cannot inject a `DIRECTORY_TOKEN` (the token is minted *after* the server answers
+>   `/api/server-info`), so directory listing stays a post-deploy claim for every on-ramp.
+> - **§6's threat model and research/cf-oauth.md** — kept as the reasoning that killed the
+>   custodial design. Read before anyone proposes standing deploy tokens again.
+>
+> The rest of the design below stands as written and is **not** being deleted: if a hosted
+> "we run it for you" tier ever ships (open question 8, Workers for Platforms), the state
+> machine, migration-chaining, and token-rotation work in §5/§7 is the blueprint.
+>
+> **Remaining validation:** the button flow has **not** been click-tested end-to-end against
+> a virgin Cloudflare account. The open risk is the monorepo build under Workers Builds
+> (pnpm workspace install + the root build command). See `docs/SELF_HOSTING.md`.
+
 ## Summary
 
 A visitor on the official Worldspring site clicks **Create Server**, signs in with Cloudflare
