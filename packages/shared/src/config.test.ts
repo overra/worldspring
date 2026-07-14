@@ -296,9 +296,9 @@ describe("resolveServerConfig", () => {
 // =============================================================================
 
 describe("PRESETS", () => {
-  it("ships exactly the six documented presets", () => {
+  it("ships exactly the seven documented presets", () => {
     expect(Object.keys(PRESETS).sort()).toEqual(
-      ["deadcoast", "driftwood", "homestead", "ironcoast", "nightfall", "warpath"].sort(),
+      ["arena", "deadcoast", "driftwood", "homestead", "ironcoast", "nightfall", "warpath"].sort(),
     );
   });
 

@@ -84,7 +84,7 @@ import {
 } from "./persistence";
 import type { SaveWorldStats, SchemaBootContext } from "./persistence";
 import type { GameMode } from "./mode/GameMode";
-import { survivalMode } from "./mode/survivalMode";
+import { makeMode } from "./mode/registry";
 import {
   applyQueuedInputs,
   craftItem,
@@ -198,9 +198,10 @@ export class GameRoom extends DurableObject<Env> {
    * info badges, and (in M3+) every system's tuning. */
   private config: ServerConfig;
   /** The active game mode (docs/plans/00, engine⟷game seam) — owns the per-tick
-   * gameplay composition. Survival is the flagship; the engine holds it as a
-   * swappable GameMode rather than hardcoding the survival phase list in tick(). */
-  private mode: GameMode = survivalMode;
+   * gameplay composition + the player lifecycle. Resolved once from config.mode
+   * (survival is the flagship default; arena is the first alternative) so the
+   * engine never hardcodes a survival phase list. See mode/registry.ts. */
+  private mode: GameMode;
   /** Connection state lives in memory, keyed by WebSocket (see header note). */
   private playerBySocket = new Map<WebSocket, string>();
   private socketByPlayer = new Map<string, WebSocket>();
@@ -273,6 +274,7 @@ export class GameRoom extends DurableObject<Env> {
     // (below); the warnings are logged here.
     this.resolved = resolveServerConfig(env.GAME_CONFIG);
     this.config = this.resolved.config;
+    this.mode = makeMode(this.config);
     this.testbed = isTestbedEnabled(env);
     // Heartbeat sender (doc 03 M3): beats reuse buildServerInfo's request-less
     // path (joinUrl from the captured publicOrigin / meta.origin).
@@ -768,7 +770,7 @@ export class GameRoom extends DurableObject<Env> {
       const match = SIZE_TIERS.find((t) => tierParamsOf(t).size === world.size);
       if (match) this.config.world.sizeTier = match;
     }
-    const game = createGameState(world, this.config);
+    const game = createGameState(world, this.config, this.mode);
     // loadWorld hydrates loot/corpses/fires/respawn timers (and rebuilds
     // vehicles/barrels from the persisted `bodies` snapshot) and restores
     // game.time/tick from meta; the active mode seeds the rest — fresh-only
