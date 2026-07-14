@@ -10,6 +10,7 @@
 // runtime cycle.
 
 import {
+  ARENA_RESPAWN_DELAY_S,
   CABIN_COUNT,
   DAY_DURATION_S,
   DEER_COUNT,
@@ -44,6 +45,17 @@ import type { WorldGenParams } from "./world";
 export type WorldSizeTier = "standard" | "large" | "huge";
 /** World wipe cadence. */
 export type WipeSchedule = "never" | "weekly" | "biweekly" | "monthly";
+
+/**
+ * The GameMode a server runs (docs/plans/00). Survival is the flagship; arena
+ * is the first non-survival mode. LIVE-class — it changes the GAMEPLAY layer,
+ * not worldgen (the procedural island is identical), so it never taints a
+ * persisted world's fingerprint. The server maps this id to a mode object
+ * (server/mode/registry.ts); the client receives it in `welcome.config` and can
+ * skin the HUD per-mode.
+ */
+export const GAME_MODES = ["survival", "arena"] as const;
+export type GameModeId = (typeof GAME_MODES)[number];
 
 export interface WorldConfig {
   /** Worldgen seed. WIPE-class. Default WORLD_SEED (1337). */
@@ -180,6 +192,8 @@ export interface PhysicsConfig {
 export interface ServerConfig {
   /** Resolved preset id ("custom" when overrides touch any field). */
   preset: string;
+  /** Which GameMode runs (docs/plans/00). Default "survival". */
+  mode: GameModeId;
   world: WorldConfig;
   threats: ThreatsConfig;
   loot: LootConfig;
@@ -206,6 +220,7 @@ export interface ServerConfig {
  */
 export const DEFAULT_CONFIG: ServerConfig = {
   preset: "deadcoast",
+  mode: "survival",
   world: {
     seed: WORLD_SEED,
     sizeTier: "standard",
@@ -346,6 +361,21 @@ export const PRESETS: Record<string, DeepPartial<ServerConfig>> = {
     wildlife: { deerDensity: 2 },
     building: { pieceCapPerPlayer: 200, decayHours: 0, offlineRaidMult: 0 },
     session: { respawnDelayS: 0, logoutLingerS: 0 },
+  },
+
+  // Round-based frag deathmatch — the first non-survival mode (docs/plans/00).
+  // `mode:"arena"` routes to the arena GameMode; the rest is the config combat
+  // needs: PvP on, and corpses spawn EMPTY (fullLoot:false) so a felled fighter
+  // leaves no gun to scavenge. Zombies + base-building off, quick respawn, no
+  // logout linger. The arena tick doesn't run the survival systems at all, so
+  // their multipliers are left at default — the mode, not the config, is what
+  // makes this a different game.
+  arena: {
+    mode: "arena",
+    threats: { zombies: false },
+    pvp: { enabled: true, fullLoot: false },
+    building: { enabled: false },
+    session: { respawnDelayS: ARENA_RESPAWN_DELAY_S, logoutLingerS: 0 },
   },
 
   // The sun never rises — fixedHour 1 means warmth only from campfires.
@@ -631,6 +661,7 @@ function clampInto(
 
   const config: ServerConfig = {
     preset: typeof r.preset === "string" ? r.preset : base.preset,
+    mode: gameMode(r.mode, base.mode, warnings),
     world: { seed, sizeTier, waterFeatures },
     threats: {
       zombies: bool(rt.zombies, base.threats.zombies, "threats.zombies", warnings),
@@ -723,6 +754,16 @@ function mapAcquire(raw: unknown, fallback: MapAcquire, warnings: string[]): Map
   }
   if (raw !== undefined) {
     warnings.push(`map.acquire: unknown "${String(raw)}", using ${fallback}`);
+  }
+  return fallback;
+}
+
+function gameMode(raw: unknown, fallback: GameModeId, warnings: string[]): GameModeId {
+  if (typeof raw === "string" && (GAME_MODES as readonly string[]).includes(raw)) {
+    return raw as GameModeId;
+  }
+  if (raw !== undefined) {
+    warnings.push(`mode: unknown "${String(raw)}", using ${fallback}`);
   }
   return fallback;
 }

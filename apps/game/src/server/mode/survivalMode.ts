@@ -106,4 +106,8 @@ export const survivalMode: GameMode = {
   respawnDelayS(game: GameState): number {
     return game.config.session.respawnDelayS;
   },
+
+  // Survival scores finished lives on the persisted longest-life leaderboard
+  // (the engine's death sink), not per-kill — so a kill needs no mode reaction.
+  onKill(): void {},
 };

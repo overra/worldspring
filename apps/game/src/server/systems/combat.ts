@@ -300,7 +300,13 @@ function meleeAttack(
   }
   if (hitPlayer) {
     const pvpDmg = dmg * state.config.pvp.damageMult;
-    if (damagePlayer(state, hitPlayer, pvpDmg, player.name, true)) player.stats.kills++;
+    if (damagePlayer(state, hitPlayer, pvpDmg, player.name, true)) {
+      player.stats.kills++;
+      // Mode hook (docs/plans/00): survival no-ops, arena scores the frag. `?.`
+      // tolerates untyped .mjs harness states that hand-roll a GameState with no
+      // mode — every real room always carries one.
+      state.mode?.onKill(state, player, hitPlayer);
+    }
   }
 }
 
@@ -535,6 +541,9 @@ function fireRanged(
       damagePlayer(state, hitPlayer, def.power * state.config.pvp.damageMult, player.name, true)
     ) {
       player.stats.kills++;
+      // Mode hook (docs/plans/00): survival no-ops, arena scores the frag. See
+      // the melee site above for the `?.` rationale.
+      state.mode?.onKill(state, player, hitPlayer);
     }
   }
 

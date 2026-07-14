@@ -23,6 +23,7 @@ import type {
 import { pieceAabbs } from "@worldspring/shared/structures";
 import type { World } from "@worldspring/shared/world";
 import type { PlantedTreeDelta } from "@worldspring/shared/trees";
+import type { GameMode } from "../mode/GameMode";
 import { PhysicsSystem } from "../physics/PhysicsSystem";
 
 /**
@@ -402,6 +403,10 @@ export interface GameState {
   /** Resolved server config (deploy-time rules). Read by systems at their point
    * of use; the WIPE-class world fields here match `world` by construction. */
   config: ServerConfig;
+  /** The active GameMode (docs/plans/00). The engine host sets it at boot from
+   * config.mode; systems reach mode hooks through it (e.g. combat's onKill).
+   * Transient — a function object, never persisted. */
+  mode: GameMode;
   /** Game time in seconds since room boot. */
   time: number;
   tick: number;
@@ -505,10 +510,12 @@ export interface GameState {
 export function createGameState(
   world: World,
   config: ServerConfig,
+  mode: GameMode,
 ): GameState {
   return {
     world,
     config,
+    mode,
     time: 0,
     tick: 0,
     players: new Map(),

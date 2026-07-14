@@ -25,6 +25,14 @@ Why it's achievable and cheap: the hard 90% — netcode, world, physics — is d
 - **Source / fork layer:** GitHub forks today. **Cloudflare Artifacts** — Git-compatible versioned storage built for AI agents ("tens of millions of repos," "create 10,000 forks from a known-good starting point"; private beta 2026-04, public beta ~May, cheap) — is a strikingly on-point future home for the fork layer. Track it; don't build on it until GA. It is **not** a package registry.
 - **Deploy layer:** the host's fork CI → their own Cloudflare (the `01-create-server-deploy` Deployer arc). **OPEN:** does the GitHub-fork route *extend* or *replace* that arc? Decide before building the fork loop.
 
+### A server is a DEPLOY, not a route (the mode/subdomain model)
+
+The worker routes every request to a single Durable Object named `"main"`, configured once from the worker-wide `GAME_CONFIG` env var. So the unit is fixed: **one worker deploy = one DO = one config = one game.** `play.worldspring.games` is an account-side alias on the one prod `worldspring` worker. This IS the fork model — fork, deploy, your one server — and it decides three things:
+
+1. **Mode is a per-deploy config field** (`config.mode`, resolved from `GAME_CONFIG`), LIVE-class — it changes the gameplay layer, never worldgen, so it never taints a persisted world. A first-party arena server is just a second deploy of the same binary with `mode:"arena"` (the `arena` preset). Hosting several modes inside one worker would need named rooms + per-room config, which fights "one server = one game" — don't.
+2. **Subdomains don't scale servers — the directory does.** First-party modes are directory entries with stable join URLs, not a subdomain each; reserve a vanity subdomain (`arena.`) only for a mode we actively market. Community servers own their domains; the directory links out. `play.` stays the survival flagship alias (⚠️ character tokens are origin-scoped — verify identity continuity before ever repointing it).
+3. **Previews don't multiply per mode.** Per-mode *correctness* is gated by headless probes (`arena-probe.mjs` and kin) + tests — no deploy. Human QA of a mode = inject a `GAME_CONFIG`/mode `--var` on the single per-PR preview worker (the `TESTBED` var pattern); only spin a second preview worker when a PR must show two modes at once.
+
 ## First moves (build order)
 
 1. **Carve the internal engine/game seam** — `@worldspring/engine` + `@worldspring/mode-survival` as a workspace-package split (internal, unpublished). Forces the seam, defines the future API surface, dogfoods the host boundary.
