@@ -294,8 +294,22 @@ export function doTryCode(id: number, code: string): void {
   sendMsg({ t: "tryCode", id, code });
 }
 
+/**
+ * The crate id of a `cOpen` we have sent and not yet seen the reply for.
+ *
+ * `cont` is the reply to BOTH cOpen and cMove, and only the cOpen one may raise
+ * the workspace. `ui.container === null` looks like it discriminates them, but it
+ * is exactly the state CLOSING produces (InputController nulls the container when
+ * invOpen falls) — so a cMove refresh still in flight when the player closes the
+ * bag would arrive, see null, and REOPEN the crate they just dismissed. One
+ * round-trip is all the window it needs. Track what we actually asked for instead.
+ * Same shape as pendingTryId above, for the same reason.
+ */
+let pendingOpenId: number | null = null;
+
 /** doc 06 M6 — request a crate's contents; the server replies `cont`. */
 export function doContainerOpen(id: number): void {
+  pendingOpenId = id;
   sendMsg({ t: "cOpen", id });
 }
 
@@ -448,6 +462,9 @@ function handleMessage(data: unknown): void {
       ui.closeChat(); // a half-typed line must not sit over the death screen
       ui.setCodePad(null); // doc 06 — no overlays over the death screen
       ui.setContainer(null);
+      // A cOpen still in flight when you died would come back as a `cont` and
+      // raise the workspace ON TOP of the death screen. Forget we ever asked.
+      pendingOpenId = null;
       ui.setPhase("dead"); // socket stays open; respawn reuses it
       // Dying at a crate leaves the workspace raised (the crate opens it), and
       // nothing else clears invOpen — you would respawn staring at your bag.
@@ -509,15 +526,22 @@ function handleMessage(data: unknown): void {
       return;
     }
     case "cont": {
-      // doc 06 M6 — authoritative crate view: opens the panel on a cOpen
+      // doc 06 M6 — authoritative crate view: opens the workspace on a cOpen
       // reply, refreshes it after every cMove.
       //
       // The crate has no panel of its own — it renders as the NEARBY section
       // INSIDE the inventory workspace — so the cOpen reply must raise the
-      // workspace or the crate has no surface at all. Gate on container ===
-      // null so this only fires on the open: every later `cont` is a cMove
-      // refresh, and those must not re-raise a workspace the player just closed.
-      if (ui.container === null) ui.setInvOpen(true);
+      // workspace or the crate has no surface at all. ONLY the cOpen reply may:
+      // a cMove refresh must never re-raise a workspace the player just closed.
+      const isOpenReply = pendingOpenId === msg.id;
+      if (isOpenReply) pendingOpenId = null;
+
+      // A refresh for a crate the player has already dismissed is stale — drop it
+      // whole. Updating `container` here would put the crate back with no
+      // workspace around it, which is a state nothing renders.
+      if (!isOpenReply && (ui.container === null || ui.container.id !== msg.id)) return;
+
+      if (isOpenReply) ui.setInvOpen(true);
       ui.setContainer({ id: msg.id, slots: msg.slots });
       return;
     }
@@ -562,6 +586,7 @@ function onWelcome(msg: Extract<ServerMsg, { t: "welcome" }>): void {
   // clear the reconnect backoff so the next drop starts a fresh attempt budget.
   reconnectAttempts = 0;
   pendingTryId = null; // stale pre-reconnect submits must not earn the cache
+  pendingOpenId = null; // ...and a pre-reconnect cOpen must not raise the workspace
 
   resetPrediction();
   resetInterpolation();

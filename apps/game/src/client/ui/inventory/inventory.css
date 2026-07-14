@@ -869,9 +869,15 @@
   letter-spacing: 0.12em;
 }
 
-/* Keyboard/gamepad users close with the cell; touch needs a target. */
+/* The ONLY control wired to onClose, so it cannot be touch-only: it used to be
+   `display: none` here and `flex` under (pointer: coarse), on the theory that a
+   mouse user "closes with the cell". They can't — the cell's onClick is
+   onInspect(slot), which re-selects the same slot rather than toggling it off, and
+   there is no Esc or click-outside handler for the card either. On a desktop that
+   left the popover with no way to dismiss it at all short of changing tabs or
+   closing the whole workspace. It is shown for every pointer now. */
 .inv-pop-close {
-  display: none;
+  display: flex;
   align-items: center;
   justify-content: center;
   width: 44px;
@@ -1237,10 +1243,6 @@
 
   .inv-pop-tail {
     display: none;
-  }
-
-  .inv-pop-close {
-    display: flex;
   }
 
   .inv-pop-actions .ui-btn {

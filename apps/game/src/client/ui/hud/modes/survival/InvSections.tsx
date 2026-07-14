@@ -10,6 +10,7 @@
 // the shell's contract — they live in inventory.css and the tab reveal keys on
 // them. Renaming one here silently breaks the reveal.
 
+import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
 import { MAX_FOOD, MAX_HP, MAX_WATER, TEMP_SHIVER } from "@worldspring/shared/constants";
 import { RECIPES } from "@worldspring/shared/items";
@@ -198,8 +199,33 @@ function CraftRow({ recipe, index, inventory, nearFire }: CraftRowProps): ReactE
  * crafting is INSTANT server-side — a hold-to-craft bar would be theatre over a
  * one-tick action.
  */
+/**
+ * Campfire proximity, kept live.
+ *
+ * nearFireClient() reads `clientWorld` — a mutable object deliberately OUTSIDE
+ * React (it is written every snapshot; making it reactive would re-render the tree
+ * at network rate). So a plain call during render is a one-shot: nothing re-runs it
+ * when the world changes underneath.
+ *
+ * The player cannot walk out of range while this is on screen — an open workspace
+ * blocks movement — but the FIRE can leave: campfires burn out, and another player
+ * can light or destroy one. Without this, the fire-gated recipes sit there enabled,
+ * and CRAFT fails against a server that can see the fire is gone.
+ *
+ * A 250ms poll, not a subscription: this gates a button, not a frame, and the check
+ * is a distance test over the handful of fires the client knows about.
+ */
+function useNearFire(): boolean {
+  const [nearFire, setNearFire] = useState(nearFireClient);
+  useEffect(() => {
+    const id = window.setInterval(() => setNearFire(nearFireClient()), 250);
+    return () => window.clearInterval(id);
+  }, []);
+  return nearFire;
+}
+
 function CraftingSection({ inventory }: { inventory: (ItemStack | null)[] }): ReactElement {
-  const nearFire = nearFireClient();
+  const nearFire = useNearFire();
   return (
     <section className="inv-sec inv-craft">
       <div className="inv-sec-head">
