@@ -11,9 +11,13 @@ import type { DeathRecap } from "@worldspring/shared/protocol";
 import { clientWorld } from "@/client/runtime";
 
 /** Game-seconds survived -> "2.3 days" / "5.1 hours" (in-game time).
- * When connected (config truthy), uses the server's dayLengthMin so the
- * display matches the actual day cycle the player experienced. Falls back to
- * the compiled constant for pre-join contexts (e.g. leaderboard on MainMenu). */
+ *
+ * `dayDurationS` is optional because of the CALLER, not because the config can be
+ * missing: MainMenu's leaderboard renders before a server is chosen, so it has no
+ * server day-length to pass and takes the compiled default. In-game, RecapStats
+ * passes the live one so the number matches the day cycle actually experienced.
+ * (clientWorld.config is a non-nullable ServerConfig seeded with DEFAULT_CONFIG —
+ * it is never falsy. An earlier version of this comment implied otherwise.) */
 export function formatSurvived(survivedS: number, dayDurationS?: number): string {
   const duration = dayDurationS ?? DAY_DURATION_S;
   const days = survivedS / duration;

@@ -194,6 +194,36 @@ test("nothing paints over the open workspace", async ({ page }) => {
   expect(failures, `something is covering the open workspace:\n${failures.join("\n")}`).toEqual([]);
 });
 
+test("the open map swallows every touch control", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "there are no touch controls on a fine pointer");
+
+  await joinGame(page, "maplayer");
+  await page.keyboard.press("KeyM");
+  await expect(page.locator(".map-backdrop")).toBeVisible();
+
+  // TouchControls' bag/chat/menu handlers cannot use gameplayBlocked() — it returns
+  // true whenever a panel is open, and `bag` has to stay able to CLOSE the bag — so
+  // they carry their own block-list. They now include mapOpen, but the map ALSO
+  // covers them with its backdrop, and that redundancy is the point: this pins the
+  // layering, so if the map panel ever goes pointer-events:none (as the minimap
+  // already is) we find out here rather than by taps leaking through an open map.
+  const reachable = await page.evaluate(() => {
+    const leaks: string[] = [];
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>(".tc-btn"))) {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0) continue;
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      if (top === el || el.contains(top)) leaks.push(String(el.className));
+    }
+    return leaks;
+  });
+
+  expect(
+    reachable,
+    `these touch controls are still tappable THROUGH an open map:\n${reachable.join("\n")}`,
+  ).toEqual([]);
+});
+
 // NOT COVERED HERE, and deliberately said out loud rather than left to look like
 // coverage: the TRANSIENT surfaces — the cast bar (.hud-channel), the build panel
 // (.hud-build), the LAST LIFE toast (.hud-lastlife) and the notice stack

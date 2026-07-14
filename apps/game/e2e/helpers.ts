@@ -94,6 +94,14 @@ export async function joinGame(page: Page, name = "e2e"): Promise<void> {
     { timeout: JOIN_TIMEOUT_MS },
   );
 
+  // Triangles prove the RENDERER is alive; they do not prove the app has reached
+  // the "playing" phase with its key handlers mounted. A spec that pressed Tab on
+  // the strength of the triangle check alone was intermittently sending it into a
+  // window that had nothing listening yet — a flake, and flakes are how a suite
+  // stops being believed. The hotbar renders only while playing, so waiting for it
+  // is the honest readiness signal for anything that then drives input.
+  await page.locator(".hud-hotbar").waitFor({ state: "visible", timeout: 15_000 });
+
   // A pageerror during join is never acceptable, even if pixels appeared anyway.
   expect(errors, "no uncaught exception during join").toEqual([]);
 }

@@ -8,11 +8,15 @@
 // SAME component — the projection inside mapBake is hard-won and must have
 // exactly one caller.
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import type { ReactElement } from "react";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
+import { useBakedMap } from "./useBakedMap";
 import "./map.css";
+
+/** Redraw cadence, ms. 10 Hz — markers move at walking pace at map scale. */
+const MAP_REDRAW_MS = 100;
 
 /** Panel drawing-buffer resolution (square); CSS scales it to the viewport. */
 const PANEL_PX = 760;
@@ -38,55 +42,34 @@ interface MapCanvasProps {
 export function MapCanvas({ className = "map-canvas" }: MapCanvasProps): ReactElement {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
+  // useBakedMap owns the chunk load, the timer and the teardown — including the
+  // rule that mapBake must never be imported statically (see useBakedMap.ts). All
+  // that lives here is the drawing. Always active: this component is mounted only
+  // while the map is on screen, and unmounting is what stops the redraw.
+  useBakedMap(true, MAP_REDRAW_MS, ({ drawDynamicLayer, drawFog, drawLabels, getBakedMap }) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    if (!canvas || !ctx) return null;
     const R = canvas.width;
 
-    // mapBake MUST stay behind a dynamic import (runtime.ts loads it the same
-    // way): the panels that mount this component are on the menu-shell/HUD
-    // chunks, so a static import would pull the baker and its raster deps onto
-    // the join path.
-    let id = 0;
-    let live = true;
-    void import("@/client/render/map/mapBake").then(
-      ({ drawDynamicLayer, drawFog, drawLabels, getBakedMap }) => {
-        if (!live) return; // panel closed before the chunk landed
-
-        const draw = (): void => {
-          ctx.clearRect(0, 0, R, R);
-          const baked = getBakedMap();
-          if (!baked) return;
-          ctx.drawImage(baked.base, 0, 0, baked.px, baked.px, 0, 0, R, R);
-          const k = R / baked.px;
-          const toPx = (x: number, z: number): { x: number; y: number } => {
-            const c = baked.proj.worldToImage(x, z);
-            return { x: c.ix * k, y: c.iy * k };
-          };
-          // Labels go BEFORE fog so unexplored town names stay hidden (matching the
-          // old baked layering); the full map is unrotated, so they read upright.
-          if (clientWorld.world) drawLabels(ctx, clientWorld.world, toPx, R / 55);
-          const explored = clientWorld.explored;
-          if (clientWorld.config.map.reveal === "explored" && explored) drawFog(ctx, explored, toPx);
-          drawDynamicLayer(ctx, toPx, 1.4);
-        };
-
-        draw();
-        id = window.setInterval(draw, 100); // 10 Hz — markers move slowly at map scale
-      },
-      (err: unknown) => {
-        // A stale deploy or a network blip fails the chunk fetch. Say so — a
-        // silently blank map reads as a rendering bug, not a load failure.
-        console.error("map: mapBake chunk failed to load", err);
-      },
-    );
-
-    return () => {
-      live = false;
-      window.clearInterval(id);
+    return (): void => {
+      ctx.clearRect(0, 0, R, R);
+      const baked = getBakedMap();
+      if (!baked) return;
+      ctx.drawImage(baked.base, 0, 0, baked.px, baked.px, 0, 0, R, R);
+      const k = R / baked.px;
+      const toPx = (x: number, z: number): { x: number; y: number } => {
+        const c = baked.proj.worldToImage(x, z);
+        return { x: c.ix * k, y: c.iy * k };
+      };
+      // Labels go BEFORE fog so unexplored town names stay hidden (matching the
+      // old baked layering); the full map is unrotated, so they read upright.
+      if (clientWorld.world) drawLabels(ctx, clientWorld.world, toPx, R / 55);
+      const explored = clientWorld.explored;
+      if (clientWorld.config.map.reveal === "explored" && explored) drawFog(ctx, explored, toPx);
+      drawDynamicLayer(ctx, toPx, 1.4);
     };
-  }, []);
+  });
 
   return <canvas ref={canvasRef} width={PANEL_PX} height={PANEL_PX} className={className} />;
 }

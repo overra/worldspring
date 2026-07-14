@@ -365,17 +365,26 @@ export function TouchControls(): ReactElement | null {
           if (lockDoorId !== null) ui.setCodePad({ id: lockDoorId, mode: "set" });
           return;
         }
+        // These three are the panel TOGGLES, so they cannot use gameplayBlocked():
+        // it returns true whenever a panel is open, and `bag` has to stay able to
+        // CLOSE the bag. They carry their own list — which must include mapOpen.
+        //
+        // Not reachable today (the full-screen .map-backdrop covers every .tc-btn,
+        // verified by hit-test), but that is the map's layering doing this list's
+        // job. The minimap is already pointer-events:none; the day the map panel
+        // follows, these fire straight through an open map. Guard them here, where
+        // the rule lives, instead of depending on what happens to be painted on top.
         case "bag":
-          if (ui.menuOpen || ui.chatOpen || ui.phase !== "playing") return;
+          if (ui.menuOpen || ui.chatOpen || ui.mapOpen || ui.phase !== "playing") return;
           ui.setInvOpen(!ui.invOpen);
           return;
         case "chat":
-          if (ui.menuOpen || ui.chatOpen || ui.phase !== "playing") return;
+          if (ui.menuOpen || ui.chatOpen || ui.mapOpen || ui.phase !== "playing") return;
           if (ui.invOpen) ui.setInvOpen(false); // chat replaces the bag panel
           ui.openChat();
           return;
         case "menu":
-          if (ui.menuOpen || ui.chatOpen || ui.phase !== "playing") return;
+          if (ui.menuOpen || ui.chatOpen || ui.mapOpen || ui.phase !== "playing") return;
           ui.setMenuOpen(true);
           return;
         default:

@@ -3,10 +3,11 @@
 // redrawn at snapshot rate. pointer-events:none — never steals input or the
 // pointer lock. Full reveal; fog mask is M6.
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import type { ReactElement } from "react";
 import { clientWorld } from "@/client/runtime";
 import { useUIStore } from "@/client/state/store";
+import { useBakedMap } from "./useBakedMap";
 import "./map.css";
 
 /** Half-extent of the world window shown, meters (so a 220 m square). */
@@ -14,6 +15,9 @@ const MINIMAP_WORLD_RADIUS = 110;
 
 /** Half-angle of the facing wedge, radians. A readability cue, not the frustum. */
 const CONE_HALF = (38 * Math.PI) / 180;
+
+/** Redraw cadence, ms. ~15 Hz — snapshot rate, not frame rate. */
+const MINIMAP_REDRAW_MS = 66;
 
 /** Gap between the ring and the compass letters, CSS px. */
 const CARDINAL_GAP = 11;
@@ -56,102 +60,80 @@ export function Minimap(): ReactElement | null {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const roseRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!enabled || covered) return;
+  // useBakedMap owns the chunk load, the timer and the teardown — including the
+  // rule that mapBake must never be imported statically (see useBakedMap.ts). All
+  // that lives here is the drawing.
+  useBakedMap(enabled && !covered, MINIMAP_REDRAW_MS, ({ blitWindow, drawDynamicLayer, drawFog, getBakedMap }) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    if (!canvas || !ctx) return null;
     const MM = canvas.width;
     const R = MINIMAP_WORLD_RADIUS;
     const rose = roseRef.current;
     const cards = rose ? Array.from(rose.querySelectorAll<HTMLElement>(".hud-minimap-card")) : [];
 
-    // mapBake MUST stay behind a dynamic import (runtime.ts loads it the same
-    // way): App.tsx mounts this component from the menu-shell chunk, so a static
-    // import would pull the baker and its raster deps onto the join path.
-    let id = 0;
-    let live = true;
-    void import("@/client/render/map/mapBake").then(
-      ({ blitWindow, drawDynamicLayer, drawFog, getBakedMap }) => {
-        if (!live) return; // unmounted before the chunk landed
+    return (): void => {
+      ctx.clearRect(0, 0, MM, MM);
+      ctx.save();
+      // Circular viewport — hides the rotated-window corners (CSS rounds the
+      // element to match).
+      ctx.beginPath();
+      ctx.arc(MM / 2, MM / 2, MM / 2, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.fillStyle = "#1d3a52"; // deep-water bg shows through off-island edges
+      ctx.fillRect(0, 0, MM, MM);
+      const baked = getBakedMap();
+      const me = clientWorld.me;
+      if (baked) {
+        // Rotate-to-heading: spin the whole view so the player's facing points UP.
+        // The baked base is a true overhead projection (projection.ts: +Z up, +X
+        // left), so heading-up is a PLAIN rotation of it — by (yaw − π), which
+        // sends the forward dir (−sin,−cos) to screen-up. Terrain, fog, entities,
+        // and the you-arrow all ride this one rotation (the arrow derives its own
+        // heading from toPx, so it nets to straight up). No mirroring and no
+        // per-marker counter-rotation — that asymmetry was the old left/right flip.
+        ctx.save();
+        ctx.translate(MM / 2, MM / 2);
+        ctx.rotate(me.yaw - Math.PI);
+        ctx.translate(-MM / 2, -MM / 2);
+        // Window corners in image space: +Z up & +X left ⇒ top-left = (me.x+R, me.z+R).
+        const tl = baked.proj.worldToImage(me.x + R, me.z + R);
+        const br = baked.proj.worldToImage(me.x - R, me.z - R);
+        blitWindow(ctx, baked.base, tl.ix, tl.iy, br.ix - tl.ix, br.iy - tl.iy, MM, baked.px);
+        const toPx = (x: number, z: number): { x: number; y: number } => ({
+          x: (((me.x + R) - x) / (2 * R)) * MM,
+          y: (((me.z + R) - z) / (2 * R)) * MM,
+        });
+        const explored = clientWorld.explored;
+        if (clientWorld.config.map.reveal === "explored" && explored)
+          drawFog(ctx, explored, toPx);
+        drawDynamicLayer(ctx, toPx, 1);
+        ctx.restore();
+        drawFacingCone(ctx, MM);
+      }
+      ctx.restore();
 
-        const draw = (): void => {
-          ctx.clearRect(0, 0, MM, MM);
-          ctx.save();
-          // Circular viewport — hides the rotated-window corners (CSS rounds the
-          // element to match).
-          ctx.beginPath();
-          ctx.arc(MM / 2, MM / 2, MM / 2, 0, Math.PI * 2);
-          ctx.clip();
-          ctx.fillStyle = "#1d3a52"; // deep-water bg shows through off-island edges
-          ctx.fillRect(0, 0, MM, MM);
-          const baked = getBakedMap();
-          const me = clientWorld.me;
-          if (baked) {
-            // Rotate-to-heading: spin the whole view so the player's facing points UP.
-            // The baked base is a true overhead projection (projection.ts: +Z up, +X
-            // left), so heading-up is a PLAIN rotation of it — by (yaw − π), which
-            // sends the forward dir (−sin,−cos) to screen-up. Terrain, fog, entities,
-            // and the you-arrow all ride this one rotation (the arrow derives its own
-            // heading from toPx, so it nets to straight up). No mirroring and no
-            // per-marker counter-rotation — that asymmetry was the old left/right flip.
-            ctx.save();
-            ctx.translate(MM / 2, MM / 2);
-            ctx.rotate(me.yaw - Math.PI);
-            ctx.translate(-MM / 2, -MM / 2);
-            // Window corners in image space: +Z up & +X left ⇒ top-left = (me.x+R, me.z+R).
-            const tl = baked.proj.worldToImage(me.x + R, me.z + R);
-            const br = baked.proj.worldToImage(me.x - R, me.z - R);
-            blitWindow(ctx, baked.base, tl.ix, tl.iy, br.ix - tl.ix, br.iy - tl.iy, MM, baked.px);
-            const toPx = (x: number, z: number): { x: number; y: number } => ({
-              x: (((me.x + R) - x) / (2 * R)) * MM,
-              y: (((me.z + R) - z) / (2 * R)) * MM,
-            });
-            const explored = clientWorld.explored;
-            if (clientWorld.config.map.reveal === "explored" && explored)
-              drawFog(ctx, explored, toPx);
-            drawDynamicLayer(ctx, toPx, 1);
-            ctx.restore();
-            drawFacingCone(ctx, MM);
-          }
-          ctx.restore();
-
-          // Compass rose. The map spins under a fixed frame, so the letters have to
-          // orbit with it or they would name the heading, not the bearing: north is
-          // image-up (+Z), which the (yaw − π) rotation sends to (−sin yaw, cos yaw)
-          // in screen space; E/S/W follow at 90° steps clockwise (screen y is down).
-          if (cards.length === 4) {
-            const rPx = canvas.clientWidth / 2 + CARDINAL_GAP;
-            const nx = -Math.sin(me.yaw);
-            const ny = Math.cos(me.yaw);
-            const dirs = [
-              [nx, ny],
-              [-ny, nx],
-              [-nx, -ny],
-              [ny, -nx],
-            ];
-            for (let i = 0; i < 4; i++) {
-              const [dx, dy] = dirs[i];
-              cards[i].style.transform = `translate(-50%, -50%) translate(${dx * rPx}px, ${dy * rPx}px)`;
-            }
-          }
-        };
-
-        draw();
-        id = window.setInterval(draw, 66); // ~15 Hz, snapshot cadence
-      },
-      (err: unknown) => {
-        // A stale deploy or a network blip fails the chunk fetch. Say so — a
-        // silently blank minimap reads as a rendering bug, not a load failure.
-        console.error("minimap: mapBake chunk failed to load", err);
-      },
-    );
-
-    return () => {
-      live = false;
-      window.clearInterval(id);
+      // Compass rose. The map spins under a fixed frame, so the letters have to
+      // orbit with it or they would name the heading, not the bearing: north is
+      // image-up (+Z), which the (yaw − π) rotation sends to (−sin yaw, cos yaw)
+      // in screen space; E/S/W follow at 90° steps clockwise (screen y is down).
+      if (cards.length === 4) {
+        const rPx = canvas.clientWidth / 2 + CARDINAL_GAP;
+        const nx = -Math.sin(me.yaw);
+        const ny = Math.cos(me.yaw);
+        const dirs = [
+          [nx, ny],
+          [-ny, nx],
+          [-nx, -ny],
+          [ny, -nx],
+        ];
+        for (let i = 0; i < 4; i++) {
+          const [dx, dy] = dirs[i];
+          cards[i].style.transform = `translate(-50%, -50%) translate(${dx * rPx}px, ${dy * rPx}px)`;
+        }
+      }
     };
-  }, [enabled, covered]);
+  });
 
   if (!enabled || covered) return null;
   return (
