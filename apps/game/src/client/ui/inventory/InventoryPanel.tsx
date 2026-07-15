@@ -72,9 +72,12 @@ interface CellProps {
   equipped: boolean;
   inspected: boolean;
   onInspect: (slot: number) => void;
+  /** Desktop anchored-card layout: the detail popover opens on HOVER. Off on
+   *  touch and narrow (where the popover is a tapped bottom sheet). */
+  hover: boolean;
 }
 
-function Cell({ slot, stack, equipped, inspected, onInspect }: CellProps): ReactElement {
+function Cell({ slot, stack, equipped, inspected, onInspect, hover }: CellProps): ReactElement {
   // Pack slots (8+) are storage-only: the hotbar digit keys bind 0–7, so their
   // index is informational and reads back.
   const index = (
@@ -100,6 +103,11 @@ function Cell({ slot, stack, equipped, inspected, onInspect }: CellProps): React
       // a ref map would have to survive every re-render of the grid.
       data-slot={slot}
       title={def.name}
+      // Hover opens the detail popover on desktop; click still opens it (and is
+      // the only opener on touch, where onMouseEnter never fires). The popover
+      // persists while the pointer is anywhere in .inv-body, so its action
+      // buttons stay reachable — the body's onMouseLeave is what closes it.
+      onMouseEnter={hover ? () => onInspect(slot) : undefined}
       onClick={() => onInspect(slot)}
       // Same predicate as the popover's hero button, and it has to be: the
       // popover prints "double-click the cell to {verb}", so a cell that acts on
@@ -131,6 +139,7 @@ interface StorageProps {
   inspectedSlot: number | null;
   packName: string | null;
   onInspect: (slot: number) => void;
+  hover: boolean;
 }
 
 function Storage({
@@ -139,6 +148,7 @@ function Storage({
   inspectedSlot,
   packName,
   onInspect,
+  hover,
 }: StorageProps): ReactElement {
   return (
     <section className="inv-sec inv-storage">
@@ -158,6 +168,7 @@ function Storage({
             equipped={i === selectedSlot}
             inspected={i === inspectedSlot}
             onInspect={onInspect}
+            hover={hover}
           />
         ))}
       </div>
@@ -430,6 +441,21 @@ export function InventoryPanel(): ReactElement | null {
   const [resizeTick, setResizeTick] = useState(0);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // Hover-to-inspect only where the popover is the anchored card beside the grid.
+  // That layout is exactly the negation of the bottom-sheet's media query
+  // (`(pointer: coarse), (max-width: 1000px)` in inventory.css), so gate on its
+  // complement — a real hover pointer AND the wide layout. On touch / narrow the
+  // popover is a tapped sheet and hover must stay off (a synthesized mouseleave
+  // would otherwise snap it shut). Tracked live: a resize across 1000px flips it.
+  const [hoverInspect, setHoverInspect] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 1001px)");
+    const sync = (): void => setHoverInspect(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   // Module read of the session's mode, same as HUD's. A mode with no InvSlot has
   // no tab of its own — `tab` can then never be "mode".
   const modeInv = modeHud(clientWorld.config.mode)?.InvSlot;
@@ -581,7 +607,14 @@ export function InventoryPanel(): ReactElement | null {
           </button>
         </header>
 
-        <div className="inv-body" ref={bodyRef}>
+        <div
+          className="inv-body"
+          ref={bodyRef}
+          // Hover-inspect keeps the popover up while the pointer is anywhere in the
+          // body (so its buttons are reachable); leaving the body is what closes it.
+          // No-op on touch/narrow, where the sheet is dismissed by its own control.
+          onMouseLeave={hoverInspect ? () => setInspected(null) : undefined}
+        >
           {tab === "carry" && (
             <>
               <div className="inv-col inv-col--store">
@@ -591,6 +624,7 @@ export function InventoryPanel(): ReactElement | null {
                   inspectedSlot={inspectedSlot}
                   packName={packName}
                   onInspect={setInspected}
+                  hover={hoverInspect}
                 />
                 {container !== null && <Nearby container={container} inventory={inventory} />}
               </div>

@@ -33,3 +33,29 @@ test("the item card can be opened and dismissed", async ({ page }) => {
   await close.click();
   await expect(card, "the close control must actually dismiss the card").toBeHidden();
 });
+
+test("on desktop the item card opens on HOVER, and its buttons stay reachable", async ({ page }) => {
+  await joinGame(page, "hover");
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".hud-inv")).toBeVisible();
+
+  const firstCell = page.locator(".inv-grid .ui-cell--filled").first();
+  await expect(firstCell).toBeVisible();
+
+  // The design opens the detail popover on hover, not click. The desktop project is
+  // a fine, hovering pointer at 1440px, so this is the anchored-card layout.
+  const card = page.locator(".inv-pop");
+  await expect(card, "the card must not be up before hovering").toBeHidden();
+  await firstCell.hover();
+  await expect(card, "hovering a filled cell must open the detail card").toBeVisible();
+
+  // The whole point of the hover fix: the card survives the pointer travelling from
+  // the cell to the card, so its action buttons are actually clickable. If closing
+  // were wired to the cell's mouseleave, moving onto the card would snap it shut.
+  await card.getByRole("button").first().hover();
+  await expect(card, "the card must persist while the pointer is over it").toBeVisible();
+
+  // Leaving the workspace body closes it.
+  await page.mouse.move(4, 4);
+  await expect(card, "moving off the body must dismiss the hover card").toBeHidden();
+});
