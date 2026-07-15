@@ -869,13 +869,13 @@
   letter-spacing: 0.12em;
 }
 
-/* The ONLY control wired to onClose, so it cannot be touch-only: it used to be
-   `display: none` here and `flex` under (pointer: coarse), on the theory that a
-   mouse user "closes with the cell". They can't — the cell's onClick is
-   onInspect(slot), which re-selects the same slot rather than toggling it off, and
-   there is no Esc or click-outside handler for the card either. On a desktop that
-   left the popover with no way to dismiss it at all short of changing tabs or
-   closing the whole workspace. It is shown for every pointer now. */
+/* The tap-to-dismiss X — for the touch/narrow bottom-sheet ONLY. On the desktop
+   hover card there is no X (a popover shouldn't need one): it closes by itself
+   when the pointer is over neither a cell nor the card. So this is HIDDEN in
+   exactly the layout the hover card owns — the same media the JS gates hover on
+   (`(hover: hover) and (pointer: fine) and (min-width: 1001px)`) — and shown
+   everywhere else, where there is no hover to close it and the sheet needs a
+   dismiss control. */
 .inv-pop-close {
   display: flex;
   align-items: center;
@@ -886,6 +886,12 @@
   background: transparent;
   border: none;
   color: var(--ui-dim);
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 1001px) {
+  .inv-pop-close {
+    display: none;
+  }
 }
 
 .inv-pop-close-glyph {

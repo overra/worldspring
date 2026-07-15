@@ -75,9 +75,11 @@ interface CellProps {
   /** Desktop anchored-card layout: the detail popover opens on HOVER. Off on
    *  touch and narrow (where the popover is a tapped bottom sheet). */
   hover: boolean;
+  /** Arm the hover-card's delayed close when the pointer leaves this cell. */
+  onHoverOut: () => void;
 }
 
-function Cell({ slot, stack, equipped, inspected, onInspect, hover }: CellProps): ReactElement {
+function Cell({ slot, stack, equipped, inspected, onInspect, hover, onHoverOut }: CellProps): ReactElement {
   // Pack slots (8+) are storage-only: the hotbar digit keys bind 0–7, so their
   // index is informational and reads back.
   const index = (
@@ -104,10 +106,11 @@ function Cell({ slot, stack, equipped, inspected, onInspect, hover }: CellProps)
       data-slot={slot}
       title={def.name}
       // Hover opens the detail popover on desktop; click still opens it (and is
-      // the only opener on touch, where onMouseEnter never fires). The popover
-      // persists while the pointer is anywhere in .inv-body, so its action
-      // buttons stay reachable — the body's onMouseLeave is what closes it.
+      // the only opener on touch, where onMouseEnter never fires). Leaving the
+      // cell arms a delayed close — moving onto the card cancels it, so the
+      // buttons stay reachable; moving to empty space lets it fire.
       onMouseEnter={hover ? () => onInspect(slot) : undefined}
+      onMouseLeave={hover ? onHoverOut : undefined}
       onClick={() => onInspect(slot)}
       // Same predicate as the popover's hero button, and it has to be: the
       // popover prints "double-click the cell to {verb}", so a cell that acts on
@@ -140,6 +143,7 @@ interface StorageProps {
   packName: string | null;
   onInspect: (slot: number) => void;
   hover: boolean;
+  onHoverOut: () => void;
 }
 
 function Storage({
@@ -149,6 +153,7 @@ function Storage({
   packName,
   onInspect,
   hover,
+  onHoverOut,
 }: StorageProps): ReactElement {
   return (
     <section className="inv-sec inv-storage">
@@ -169,6 +174,7 @@ function Storage({
             inspected={i === inspectedSlot}
             onInspect={onInspect}
             hover={hover}
+            onHoverOut={onHoverOut}
           />
         ))}
       </div>
@@ -349,6 +355,11 @@ interface PopoverProps {
   anchor: Anchor | null;
   onDropped: () => void;
   onClose: () => void;
+  /** Hover-card bridge: keep the card open while the pointer is over IT (so its
+   *  buttons are reachable), and re-arm the close when the pointer leaves. Both
+   *  undefined on touch, where the card is a tapped sheet dismissed by its X. */
+  onHoverIn?: () => void;
+  onHoverOut?: () => void;
 }
 
 function ItemPopover({
@@ -358,6 +369,8 @@ function ItemPopover({
   anchor,
   onDropped,
   onClose,
+  onHoverIn,
+  onHoverOut,
 }: PopoverProps): ReactElement {
   const def = defOf(stack.type);
   const verb = primaryVerb(def, equipped);
@@ -370,7 +383,7 @@ function ItemPopover({
     "--inv-pop-y": `${anchor?.y ?? 0}px`,
   } as CSSProperties;
   return (
-    <div className={classes.join(" ")} style={style}>
+    <div className={classes.join(" ")} style={style} onMouseEnter={onHoverIn} onMouseLeave={onHoverOut}>
       <span className="inv-pop-tail" aria-hidden />
       <div className="inv-pop-head">
         <span className="inv-pop-icon">
@@ -455,6 +468,30 @@ export function InventoryPanel(): ReactElement | null {
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
+
+  // Hover-card intent. The card must close whenever the pointer is over NEITHER a
+  // cell NOR the card — even while still inside the workspace, so it never has to
+  // be chased off-window or dismissed with an X (touch keeps the X; desktop hides
+  // it). But the pointer has to cross a small gap from cell to card to reach the
+  // buttons, and a bare mouseleave→close would snap it shut in that gap. So a
+  // cell/card mouseleave ARMS a short-delay close, and entering the card (or
+  // another cell) CANCELS it — the delay is the only thing bridging the gap.
+  const closeTimer = useRef<number | null>(null);
+  const cancelClose = (): void => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const openInspect = (slot: number): void => {
+    cancelClose();
+    setInspected(slot);
+  };
+  const armClose = (): void => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => setInspected(null), 140);
+  };
+  useEffect(() => cancelClose, []); // never fire a close after unmount
 
   // Module read of the session's mode, same as HUD's. A mode with no InvSlot has
   // no tab of its own — `tab` can then never be "mode".
@@ -607,14 +644,7 @@ export function InventoryPanel(): ReactElement | null {
           </button>
         </header>
 
-        <div
-          className="inv-body"
-          ref={bodyRef}
-          // Hover-inspect keeps the popover up while the pointer is anywhere in the
-          // body (so its buttons are reachable); leaving the body is what closes it.
-          // No-op on touch/narrow, where the sheet is dismissed by its own control.
-          onMouseLeave={hoverInspect ? () => setInspected(null) : undefined}
-        >
+        <div className="inv-body" ref={bodyRef}>
           {tab === "carry" && (
             <>
               <div className="inv-col inv-col--store">
@@ -623,8 +653,9 @@ export function InventoryPanel(): ReactElement | null {
                   selectedSlot={selectedSlot}
                   inspectedSlot={inspectedSlot}
                   packName={packName}
-                  onInspect={setInspected}
+                  onInspect={hoverInspect ? openInspect : setInspected}
                   hover={hoverInspect}
+                  onHoverOut={armClose}
                 />
                 {container !== null && <Nearby container={container} inventory={inventory} />}
               </div>
@@ -676,6 +707,8 @@ export function InventoryPanel(): ReactElement | null {
               anchor={anchor}
               onDropped={() => setInspected(null)}
               onClose={() => setInspected(null)}
+              onHoverIn={hoverInspect ? cancelClose : undefined}
+              onHoverOut={hoverInspect ? armClose : undefined}
             />
           )}
         </div>
