@@ -1,5 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
+  // Consumed by `vite build` (which emits dist/worldspring/wrangler.json — what CI and
+  // preview.yml deploy). The repo-root wrangler.jsonc is the SAME worker described for
+  // the Deploy-to-Cloudflare button; bindings and migrations here must be mirrored there.
   "name": "worldspring",
   "main": "src/server/worker.ts",
   "compatibility_date": "2026-06-01",

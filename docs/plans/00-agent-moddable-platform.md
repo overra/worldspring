@@ -19,11 +19,16 @@ Why it's achievable and cheap: the hard 90% — netcode, world, physics — is d
 5. **Determinism is the trust layer.** It makes the netcode special and is what an agent is most likely to break invisibly (a stray `Math.random`/`Date.now`, map-iteration order → the known macOS↔Linux worldgen divergence). A one-command **`mod:check`** suite (determinism fingerprint + protocol round-trip + sim smoke + quick loadtest) turns silent breakage into fast feedback the agent self-corrects against. This is the single most important thing we provide that a bare agent + a random repo can't.
 6. **Per-server clients; the directory links out.** The "zero sync" property holds *because* each server serves its own client — the directory is a **catalog, not a client**. A unified launcher (one client → any listed server) would reintroduce cross-server protocol coupling and lose it. Avoid it if mod-freedom is the priority.
 7. **Example modes are executable documentation.** 2–3 modes built on the seam (build/creative + arena) prove breadth, force the seam to be real, and act as few-shot templates an agent pattern-matches against ("make it like this existing mode" >> "invent from scratch").
+8. **The deploy on-ramp is Cloudflare's "Deploy to Cloudflare" button — it REPLACES doc 01's Deployer arc** (resolved 2026-07-14, below).
 
 ## Distribution & deploy
 
 - **Source / fork layer:** GitHub forks today. **Cloudflare Artifacts** — Git-compatible versioned storage built for AI agents ("tens of millions of repos," "create 10,000 forks from a known-good starting point"; private beta 2026-04, public beta ~May, cheap) — is a strikingly on-point future home for the fork layer. Track it; don't build on it until GA. It is **not** a package registry.
-- **Deploy layer:** the host's fork CI → their own Cloudflare (the `01-create-server-deploy` Deployer arc). **OPEN:** does the GitHub-fork route *extend* or *replace* that arc? Decide before building the fork loop.
+- **Deploy layer: the Deploy-to-Cloudflare button, pointed at the repo root.** One click clones the repo into the visitor's **own** GitHub account, provisions the `GameRoom` DO from the root `wrangler.jsonc`, prompts for the `.dev.vars.example` secrets, and wires Workers Builds so *their* pushes redeploy *their* server. Cost: `wrangler.jsonc` + `.dev.vars.example` + a link.
+
+  **RESOLVED: the button REPLACES doc 01's Deployer arc (M4–M8), it does not extend it.** The Deployer would custody deploy-capable OAuth tokens for every creator — doc 01 itself calls that "the single worst risk this feature can take on" — and it ships a *prebuilt artifact*: an opaque copy the user cannot mod, which is the exact opposite of the north star. The button inverts every term: Cloudflare holds the credential, the user gets a source fork they can point an agent at, and their fork's CI (not our Deployer DO) owns updates. It is also strictly less work. What survives from doc 01: the version/release discipline (M2), the env surface (M3, shipped), and the register-an-existing-server flow — the button cannot inject a `DIRECTORY_TOKEN`, so directory listing stays a post-deploy claim, which it already was for CLI deploys.
+
+  The trade we accept: no push-button updates ("v0.5 available → one click"). A fork is a copy with no upstream link. That is the *correct* default here — a modded fork does not want our updates applied over it. Upstream changes are `git remote add upstream && git merge` (or an agent doing it), and decision 1 ("zero sync") says correctness never demands it.
 
 ### A server is a DEPLOY, not a route (the mode/subdomain model)
 
@@ -40,7 +45,7 @@ The worker routes every request to a single Durable Object named `"main"`, confi
 3. ✅ **Build one example mode** — **arena** (round-based frag deathmatch) shipped as the second consumer: proof the seam is real + an agent template. Its `arena-probe.mjs` doubles as executable documentation.
 4. **Harden + version the directory contract** (`03`) — the one canonical surface.
 5. ✅ **`mod:check`** — shipped as `pnpm mod:check` (`scripts/mod-check.mjs`): types → worldgen determinism (self-consistency: generate twice + assert identical, so it's platform-independent; the byte-exact Linux reference stays CI's gate) → protocol round-trip + sim smoke (`pnpm test`, incl. every GameMode probe) → build, with a modder-facing pass/fail summary.
-6. **Fork/deploy loop** — GitHub connect → fork template → CI guardrails → deploy to their Cloudflare (extends `01`).
+6. **Fork/deploy loop** — a **Deploy to Cloudflare** button (repo root `wrangler.jsonc` + `.dev.vars.example` + `docs/SELF_HOSTING.md`, wired from `/host` and the README) is the whole loop: click → their GitHub fork → their Cloudflare → Workers Builds redeploys on their pushes. Then: point an agent at the fork, `pnpm mod:check` before deploying the mod. Supersedes doc `01`'s Deployer arc. **Not yet click-tested end-to-end against a virgin account** — the monorepo build under Workers Builds is the open risk.
 
 ## Deferred / not now
 
