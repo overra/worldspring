@@ -237,7 +237,18 @@ export function handlePlace(
   game.structureMeta.set(id, meta);
   touchPiece(game, piece);
   game.physics.addStructure(id, pieceAabbs(piece));
+  navDirtyPiece(game, piece);
   broadcast(game, { t: "sAdd", piece: toWirePiece(piece, meta) });
+}
+
+/** doc 14 — re-carve the navmesh tile(s) a piece touches after it is placed,
+ *  removed, or its door/gate opens (open pieces change walkability). Uses the
+ *  piece CENTER + a footprint radius so it works even when an opened piece
+ *  derives zero AABBs. Null-safe for harness GameStates without a nav. */
+function navDirtyPiece(game: GameState, piece: StructurePiece): void {
+  const [cx, cz] = pieceCenter(piece);
+  const r = 4; // covers any single piece's footprint → its covering tile(s)
+  game.nav?.dirtyTile(cx - r, cz - r, cx + r, cz + r);
 }
 
 /** The four edges bordering cell (gx,gz) in canonical form. */
@@ -407,7 +418,10 @@ export function removePiece(game: GameState, id: number, spillContents: boolean)
         if (stack) spillStack(game, cx, cz, stack);
       }
     }
-    if (p) touchPiece(game, p);
+    if (p) {
+      touchPiece(game, p);
+      navDirtyPiece(game, p); // before index.remove — needs the piece's position
+    }
     index.remove(rid);
     game.structureMeta.delete(rid);
     game.doorBackoff.delete(rid);
@@ -446,6 +460,7 @@ function setDoorOpen(game: GameState, piece: StructurePiece, open: boolean): voi
   // Collision swap on the physics side too, or a trunk rolls up against an
   // invisible box in an open doorway (doc 06 §physics interaction).
   game.physics.setStructureOpen(piece.id, pieceAabbs(piece));
+  navDirtyPiece(game, piece);
   broadcast(game, { t: "sState", id: piece.id, open });
 }
 

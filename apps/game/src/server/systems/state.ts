@@ -24,6 +24,7 @@ import { pieceAabbs } from "@worldspring/shared/structures";
 import type { World } from "@worldspring/shared/world";
 import type { PlantedTreeDelta } from "@worldspring/shared/trees";
 import type { GameMode } from "../mode/GameMode";
+import { NavSystem } from "../nav/navMesh";
 import { PhysicsSystem } from "../physics/PhysicsSystem";
 
 /**
@@ -437,6 +438,9 @@ export interface GameState {
   /** Server-auth dynamic physics (doc 13) — engine attaches async in the DO;
    * a no-op shell in harnesses/tests that never attach one. */
   physics: PhysicsSystem;
+  /** doc 14 — engine-owned tiled navmesh for AI pathfinding. Pure-JS (navcat),
+   * built lazily around live entities; server-only, never persisted/wired. */
+  nav: NavSystem;
   /** doc 06 — server-only piece meta (ownership/locks/contents) beside
    * world.structures, same id space. Every mutation path keeps the two maps
    * in lockstep. */
@@ -540,6 +544,8 @@ export function createGameState(
     // for restored structures without PhysicsSystem value-importing shared
     // non-leaf modules (strip-types harness constraint).
     physics: new PhysicsSystem(world, config.physics, pieceAabbs),
+    // doc 14 — the World satisfies NavStaticsSource (size/heightAt/queryStatics).
+    nav: new NavSystem(world),
     structureMeta: new Map(),
     doorBackoff: new Map(),
     codeTryAt: new Map(),
