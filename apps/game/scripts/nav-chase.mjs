@@ -118,17 +118,21 @@ console.log("chase routing (path around a wall):");
   state.players.set("p", makePlayer("p", 0, 4));
   run(state, 4); // let the chase plan a path (nav pre-built)
   check(Array.isArray(z.path) && z.path.length > 0, "chasing zombie has a nav path");
-  check(!!z.path && z.path.some((w) => Math.abs(w.x) > 6), "path routes around the wall end (|x|>6), not straight through");
-  // Progress: run until near the player (but stop short of melee) — it must
-  // have gone AROUND (max |x| exceeds the wall half) and closed the distance.
+  // Must route BEYOND the wall end (|x| > WALL.maxX), not merely off the centerline
+  // — a point inside the wall's x-extent doesn't prove it cleared the end.
+  check(!!z.path && z.path.some((w) => Math.abs(w.x) > WALL.maxX), "path routes beyond the wall end, not straight through");
+  // Progress: run until the zombie reaches the player side (stop short of melee).
+  // It must have CLEARED the wall end AND completed the route — not just wedged
+  // somewhere closer than it started.
   let maxAbsX = 0;
   const start = dist2(z.x, z.z, 0, 4);
   run(state, 200, () => {
     maxAbsX = Math.max(maxAbsX, Math.abs(z.x));
     return dist2(z.x, z.z, 0, 4) > ZOMBIE_ATTACK_RANGE + 0.8; // stop before melee
   });
-  check(maxAbsX > 6, `zombie detoured around the wall end (max |x| = ${maxAbsX.toFixed(1)})`);
-  check(dist2(z.x, z.z, 0, 4) < start, `zombie closed the distance to the player (${start.toFixed(1)} → ${dist2(z.x, z.z, 0, 4).toFixed(1)} m)`);
+  const end = dist2(z.x, z.z, 0, 4);
+  check(maxAbsX > WALL.maxX, `zombie cleared the wall end (max |x| = ${maxAbsX.toFixed(1)} > ${WALL.maxX})`);
+  check(end <= ZOMBIE_ATTACK_RANGE + 0.8, `zombie completed the route to the player (${start.toFixed(1)} → ${end.toFixed(1)} m)`);
   check(z.state === "chase", "state stays 'chase' while routing (no new wire enum)");
 }
 
