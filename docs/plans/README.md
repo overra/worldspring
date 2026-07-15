@@ -28,7 +28,70 @@ choice, not a fork — and docs 05/06/07 grow the game itself: a real scavenge�
 arc, bases that persist and get raided, bigger islands with rivers, wolves, and fishing.
 A directory full of servers with *personalities* is the product.
 
+## Status re-baseline — 2026-07-14
+
+**This is the current truth; it supersedes the 2026-07-07 section below (kept for
+provenance).** In the week since that re-baseline the platform track — which 07-07
+called "stalled at Wave 0" — largely *closed*, and the product's north star moved.
+
+**North star moved (doc 00, 2026-07-13):** Worldspring is now framed as an
+**agent-moddable platform** — fork it, point a coding agent at the fork, deploy the
+result to your own Cloudflare; survival is the flagship game and first `GameMode`,
+not the ceiling. Read [00-agent-moddable-platform](00-agent-moddable-platform.md)
+first — it reframes every numbered doc below it. Determinism is the trust layer;
+the directory listing is the one canonical external contract.
+
+**Platform / distribution — the loop closed:**
+- **Create-server = a Deploy-to-Cloudflare button** (#120), live on
+  `worldspring.games/host`. It **replaces doc 01's OAuth + Deployer-DO arc** (M4–M8):
+  one click clones the repo into the visitor's GitHub and provisions the DO in
+  *their* account, so they get a fork they own that auto-redeploys on push. Doc 01's
+  M1 spike, M2 release pipeline (#59), and M4 OAuth skeleton (#72) shipped along the
+  way; M4–M8 are marked SUPERSEDED in that doc. **Open:** the pnpm-monorepo build
+  under Workers Builds is not yet validated against a virgin account.
+- **The directory is real** (docs 02/03): registration, heartbeat sender, intake,
+  prober, browse, ranking, detail, join interstitial, reports, moderation (#68, #75,
+  #80). `/servers` is no longer empty.
+- **Modder guardrails:** `mod:check` (#115), the asset-size fingerprint (#118), and
+  wrangler-parity (#120) — determinism + protocol + config-drift, all gated in CI.
+
+**Engine ⟷ game seam (doc 00 first-moves):** survival re-expressed as a `GameMode`
+that owns per-tick composition, world seeding, and the player lifecycle (#105, #110,
+#111, #112); **arena** shipped as the first non-survival mode + few-shot template
+(#114). Not a package split — an internal legibility boundary, deferred until a real
+need for shared updates.
+
+**Gameplay — the parked big-builds all landed:**
+- doc 06 base-building: core loop → doors, code locks, storage crates, raiding,
+  decay (#77, #79, #83).
+- doc 07 world: size tiers, chunked terrain, rivers & ponds (#74, #78, #84).
+- doc 13 shared physics (a new track): server-auth substrate → falling trees →
+  props → **vehicles** (#61, #64, #67, #81, #82).
+- Tree lifecycle: planting, growth, seeds, chopping, stumps, breakable trunks,
+  variants (#86, #87, #93). doc 05 M6 wear slots (#73). doc 11 M3 reload (#70).
+- **The launch gate is met:** doc 08 M2–M3 device auto-tier + mobile render tier
+  (#69), plus the full render-perf audit (Tier-1 frame wins through pooling, chunked
+  culling, join-hitch fixes).
+
+**Design + client:** the storefront and Starlight docs reskinned onto the shared
+"field-manual" system (#103, #104); the game HUD reskinned to the **Field Kit**
+language with a per-mode HUD seam and a real-browser **Playwright e2e harness**
+(#119, and see [design/field-kit.md](design/field-kit.md)). Two days-old render bugs
+fixed: the night-join blackout (#117) and GLB-transform/trim scaling (#116).
+
+**What's actually next (open):**
+- Validate the Deploy button against a live Cloudflare account (the one unverified
+  step in the fork loop) + the human visual-QA pass on the Field Kit reskin.
+- Harden + version the directory contract (doc 00 item 4 / doc 03) — the one
+  canonical external surface.
+- **Cloudflare Artifacts** as the future fork-storage layer — track, don't build
+  until GA (doc 00).
+- Remaining gameplay: pathfinding (navcat spike GO), wildlife expansion (doc 07 back
+  half), scavenging tails & balance (doc 05).
+
 ## Status re-baseline — 2026-07-07
+
+> **Superseded by the 2026-07-14 section above.** Kept for provenance.
 
 One month in, the wave plan below (§Recommended build order) ran **asymmetrically**:
 the gameplay track sprinted two waves ahead while the platform track stalled at
