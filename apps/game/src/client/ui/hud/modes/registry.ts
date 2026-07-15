@@ -10,6 +10,9 @@ import type { ModeHud } from "./types";
 const MODE_HUDS: Record<GameModeId, ModeHud | null> = {
   survival: SURVIVAL_HUD,
   arena: null,
+  // Deferred like arena: the horde seam exists (server mode + waves), the skin
+  // does not yet — a wave-state HUD is a follow-up. Notices carry the feedback.
+  horde: null,
 };
 
 /** null = this mode has no HUD module; the shared chrome renders alone. The

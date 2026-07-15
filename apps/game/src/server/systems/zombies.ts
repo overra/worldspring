@@ -47,9 +47,12 @@ const WANDER_ARRIVE_DIST = 0.5;
  * radius of the compound center — inside the walls (half-extent 40). */
 const MILITARY_SPAWN_RADIUS = 30;
 
-function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void {
+// Exported for the horde GameMode (docs/plans/00), which spawns waves and then
+// post-scales the returned zombie's hp. Survival's callers below invoke it as a
+// statement and ignore the return, so their behaviour is byte-identical.
+export function spawnZombie(state: GameState, x: number, z: number, mil: boolean): Zombie {
   const id = state.nextEntityId++;
-  state.zombies.set(id, {
+  const zombie: Zombie = {
     id,
     x,
     y: state.world.groundHeight(x, z),
@@ -65,7 +68,9 @@ function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void
     wanderZ: z,
     wanderWait: WANDER_WAIT_MIN_S + Math.random() * (WANDER_WAIT_MAX_S - WANDER_WAIT_MIN_S),
     attackCooldown: 0,
-  });
+  };
+  state.zombies.set(id, zombie);
+  return zombie;
 }
 
 /** Random dry-land point within `radius` of (cx, cz), or null after attempts. */

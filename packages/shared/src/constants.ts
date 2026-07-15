@@ -6,6 +6,7 @@
 // — a pure reorg, values byte-identical.
 export * from "./constants/survival.ts";
 export * from "./constants/arena.ts";
+export * from "./constants/horde.ts";
 
 export const WORLD_SEED = 1337;
 
