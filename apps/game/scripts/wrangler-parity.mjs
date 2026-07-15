@@ -81,12 +81,16 @@ check("durable_objects.bindings", root.durable_objects?.bindings, game.durable_o
 check("migrations", root.migrations, game.migrations);
 check("assets.not_found_handling", root.assets?.not_found_handling, game.assets?.not_found_handling);
 
-// A stranger's deploy must never contend for our production hostname.
-if (root.routes !== undefined) {
-  problems.push(
-    "  root/wrangler.jsonc declares `routes` — a self-hosted fork would fight for OUR domain.\n" +
-      "      The button deploy must land on <worker>.<their-subdomain>.workers.dev.",
-  );
+// A stranger's deploy must never contend for our production hostname. Wrangler
+// accepts BOTH keys — `route` (a single string/object) and `routes` (an array) —
+// so guarding only one leaves the other as an open door onto our domain.
+for (const key of ["route", "routes"]) {
+  if (root[key] !== undefined) {
+    problems.push(
+      `  root/wrangler.jsonc declares \`${key}\` — a self-hosted fork would fight for OUR domain.\n` +
+        "      The button deploy must land on <worker>.<their-subdomain>.workers.dev.",
+    );
+  }
 }
 if (root.account_id !== undefined) {
   problems.push("  root/wrangler.jsonc declares `account_id` — that pins a stranger's deploy to OUR account.");

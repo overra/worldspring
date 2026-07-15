@@ -39,7 +39,7 @@ give your friends.
   `pnpm build`, which builds the site and the prober as well as the game. That works, it
   is just slow. Narrow it in the setup page's **Build command** field to:
 
-  ```
+  ```bash
   pnpm --filter @worldspring/game build
   ```
 
