@@ -1,0 +1,10 @@
+{
+  // Doc 14 M0 — throwaway scratch DO proving navcat runs in workerd. Not deployed.
+  "name": "navcat-m0-probe",
+  "main": "worker.ts",
+  "compatibility_date": "2026-06-01",
+  "durable_objects": {
+    "bindings": [{ "name": "NAV_PROBE", "class_name": "NavProbe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_classes": ["NavProbe"] }]
+}

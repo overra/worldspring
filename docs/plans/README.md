@@ -86,7 +86,8 @@ fixed: the night-join blackout (#117) and GLB-transform/trim scaling (#116).
   canonical external surface.
 - **Cloudflare Artifacts** as the future fork-storage layer — track, don't build
   until GA (doc 00).
-- Remaining gameplay: pathfinding (navcat spike GO), wildlife expansion (doc 07 back
+- Remaining gameplay: pathfinding ([doc 14](14-navmesh-pathfinding.md) — navcat spike GO,
+  workerd-execution M0 **GO** 2026-07-15; M1 substrate next), wildlife expansion (doc 07 back
   half), scavenging tails & balance (doc 05).
 
 ## Status re-baseline — 2026-07-07
@@ -162,6 +163,7 @@ are now made physics-aware.
 | [11-channeled-timed-actions.md](11-channeled-timed-actions.md) | The channeled-action primitive: a shared `ActiveAction` on `ServerPlayer` (durationS + cancel-on-move/damage/slot-swap/leave-fire), zero new ClientMsg (server-driven cancel) + an additive `you.action` snapshot/`welcome` field + a HUD cast bar, server-authoritative game-time countdown that fires the existing completion path (cook/boil, use, craft, reload, deer-harvest, fishing cast) on finish — turning doc 05's instant `use`/`craft` and combat's instant ranged fire into interruptible casts (forcing the net-new reload + magazine model), with one `PROTOCOL_VERSION` bump owned by doc 03. |
 | [12-map-and-cartography.md](12-map-and-cartography.md) | In-game map + minimap + offline `pnpm map:render`, all from a shared three.js-free raster core over the deterministic `createWorld(seed)` (zero new wire for a full map); a `MapConfig` server dial (minimap on/off, map item `spawn`/`loot`/`none`, reveal `full`/`explored`) + a `map` `ItemType`; and server-authoritative, persisted **fog-of-war** (per-character `ExploredGrid`, additive `CharacterState` JSON + additive `welcome`/`snap` wire) for the `explored` mode — honest that fog can't hide terrain (public seed). |
 | [13-shared-dynamic-physics.md](13-shared-dynamic-physics.md) | Shared rigid-body dynamics on a deterministic WASM engine (Rapier now, Box3D tracked): server-auth stepping in the DO tick + client interpolation (players stay kinematic, `movement.ts` untouched), `WireBody` snapshot sync, bodies in the world snapshot, CI replay harness; features in tracer order — falling trees → props → vehicles (after doc 07 tiers). M0 is a determinism+cost GO/NO-GO spike. |
+| [14-navmesh-pathfinding.md](14-navmesh-pathfinding.md) | Server-side navmesh pathfinding (navcat, pure-JS) so zombies/wildlife route around obstacles instead of straight-line aggro: an engine-owned `NavSystem` behind a swappable `Pathfinder` seam, built from the same worldgen heightfield + static AABBs the sim collides with, tiled + activity-scoped + never persisted/fingerprinted/client-shared (zero wire change — clients still interpolate positions). Fixes doc 06's three-wall base-immunity cheese. M0 is a workerd-execution GO/NO-GO gate on the existing GO-with-conditions spike (`spike/navcat`). |
 | `research/` | Ground truth the docs cite: `cf-costs.md` (billing math — read this one regardless), `cf-deploy.md`, `cf-oauth.md`, `codebase-server.md`, `codebase-sim.md`, `directory-prior-art.md`. |
 
 ### Canonical vocabulary (who owns what)
@@ -180,6 +182,7 @@ Parallel-written docs share these names; the owner's definition is binding:
 | Client render tiers: `QualityConfig` knobs, `detectTier`, `mobile` profile, baked-AO vertex pass, the `?debug=1` frame profiler | doc 08 | Doc 04's presets dial *server* entity counts; doc 08 owns *client* render quality. The two meet only at doc 08 M6's worst-case test scene (doc 04 `zombieDensity:2` + doc 07 species ceilings). |
 | `ActiveAction` (the channeled-action primitive), the server-driven cast + cancel rules, the `you.action` snapshot/`welcome` field, `*_CHANNEL_S` durations | doc 11 | docs 05 (use/craft), combat (reload/magazine), 07 (fishing cast) delegate their completion to it but keep their own data + balance. |
 | `MapConfig` group, the `map` `ItemType`, the `ExploredGrid` fog primitive (+ `FOG_CELL_M`), the shared `packages/shared/src/map/` raster core | doc 12 | Extends doc 04's `ServerConfig` (LIVE-class, never in `worldFingerprintOf`), doc 05's items + `LOOT_TABLES` + `startingInventory` grant, doc 03's `RulesSummary` badge; the `explored` wire fields are additive-optional; the bump-vs-additive call for the `map` item is doc 03's (doc 12 Open Q1). |
+| The `Pathfinder` seam + engine-owned `NavSystem`, the server-side navmesh, `dirtyTile`/`stepBuild`, `navTileCap`/`NAV_BUILD_BUDGET_MS`, the three walkability reconciliations (water/slope/vertical) | doc 14 | Server-private derived data — never persisted, fingerprinted, or client-shared (AI is outside the determinism contract); consumes doc 06's `StructureIndex` + doc 05's planted trees as dirty-tile triggers and PhysicsSystem's `PhysicsStaticsSource`; consumed by zombie/wildlife AI via the `stepZombie` target only (no wire change); LIVE-class on/off dial. |
 
 ## Dependency graph
 
