@@ -126,9 +126,10 @@ function run(): unknown {
   }
 
   // A straight line from start to end passes through the block footprint
-  // (x,z in [-6,6]); a routed path must have an intermediate waypoint that
-  // detours outside it.
-  const routed = path.length > 2 && path.some((p) => Math.abs(p.x) > 6 || Math.abs(p.z) > 6);
+  // (x,z in [-6,6]); a routed path must have an INTERMEDIATE waypoint that
+  // detours outside it. Exclude start/end — those are trivially outside the block.
+  const routed =
+    path.length > 2 && path.slice(1, -1).some((p) => Math.abs(p.x) > 6 || Math.abs(p.z) > 6);
   notes.push(routed ? "path detours around the block (routed, not straight)" : "path is ~straight (check obstacle)");
 
   const p = (a: number[], q: number) => {
