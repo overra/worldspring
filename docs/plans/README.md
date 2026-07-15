@@ -87,8 +87,9 @@ fixed: the night-join blackout (#117) and GLB-transform/trim scaling (#116).
 - **Cloudflare Artifacts** as the future fork-storage layer — track, don't build
   until GA (doc 00).
 - Remaining gameplay: pathfinding ([doc 14](14-navmesh-pathfinding.md) — navcat spike + M0
-  workerd GO; M1 NavSystem substrate **built** 2026-07-15; M2 zombie chase next), wildlife
-  expansion (doc 07 back half), scavenging tails & balance (doc 05).
+  workerd GO; M1 substrate + **M2 zombie chase built** 2026-07-15 (zombies route around bases —
+  the doc-06 cheese fix); M3 wildlife + M4 config-dial remain), wildlife expansion (doc 07 back
+  half), scavenging tails & balance (doc 05).
 
 ## Status re-baseline — 2026-07-07
 

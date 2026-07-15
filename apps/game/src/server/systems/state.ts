@@ -25,6 +25,7 @@ import type { World } from "@worldspring/shared/world";
 import type { PlantedTreeDelta } from "@worldspring/shared/trees";
 import type { GameMode } from "../mode/GameMode";
 import { NavSystem } from "../nav/navMesh";
+import type { Waypoint } from "../nav/pathfinder";
 import { PhysicsSystem } from "../physics/PhysicsSystem";
 
 /**
@@ -193,6 +194,17 @@ export interface Zombie {
   /** Seconds until a new wander target is rolled. */
   wanderWait: number;
   attackCooldown: number;
+  // doc 14 M2 — transient nav path for chase (server-only: never persisted,
+  // never on the wire). `null` = straight-line fallback (target unreachable or
+  // the tiles aren't built yet).
+  path: Waypoint[] | null;
+  /** Current target-waypoint index in `path` (path[0] is the start point). */
+  pathIndex: number;
+  /** Seconds until the next allowed repath (cadence throttle). */
+  repathT: number;
+  /** Target position the current path was planned toward (goal-drift check). */
+  pathGoalX: number;
+  pathGoalZ: number;
 }
 
 export interface LootEntity {
