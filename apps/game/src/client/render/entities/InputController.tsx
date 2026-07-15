@@ -162,10 +162,14 @@ export function InputController(): null {
             doExitVehicle();
             return;
           }
-          // doc 06 M6 — an open crate panel closes on E (desktop's explicit
-          // close; touch walks away instead).
+          // doc 06 M6 — an open crate closes on E (desktop's explicit close;
+          // touch walks away instead). The crate is a section of the inventory
+          // workspace now, not a panel of its own, so E dismisses BOTH: the
+          // container alone has no surface, and leaving it set would block the
+          // re-lock gate in the subscription below.
           if (ui.container !== null) {
             ui.setContainer(null);
+            ui.setInvOpen(false);
             return;
           }
           const lootId = clientWorld.promptLootId;
@@ -421,15 +425,27 @@ export function InputController(): null {
         clearMovementKeys();
         exitLock();
       }
-      // doc 06 — code pad + crate panel both need clicks (the pad's digits,
-      // the panel's move buttons). The crate panel deliberately does NOT
-      // clear movement: on touch, walking away is its close gesture.
+      // doc 06 — code pad + crate both need clicks (the pad's digits, the
+      // crate's take/store cells). The crate deliberately does NOT clear
+      // movement: on touch, walking away is its close gesture.
       if (state.codePad !== null && prev.codePad === null) {
         clearMovementKeys();
         exitLock();
       }
       if (state.container !== null && prev.container === null) exitLock();
       if (state.phase === "dead" && prev.phase !== "dead") exitLock();
+
+      // The crate renders as a section of the inventory workspace, so it must
+      // not outlive it. Every other close path (the workspace's ×, its
+      // backdrop, Tab, the touch bag/chat buttons) writes invOpen alone and
+      // knows nothing about containers — an open container with no workspace
+      // over it would show no UI at all AND wedge the pointer unlocked, since
+      // the re-lock gate below requires container === null. Clearing it here
+      // re-enters this subscriber synchronously, which is what performs the
+      // re-lock (this still runs inside the closing gesture).
+      if (!state.invOpen && prev.invOpen && state.container !== null) {
+        useUIStore.getState().setContainer(null);
+      }
 
       // Re-lock when a blocking UI closes mid-play. Zustand notifies
       // synchronously, so this still runs inside the user gesture that

@@ -1,0 +1,1320 @@
+/* The Tab workspace — the biggest surface in the game — plus the code pad, the
+   one overlay that still reuses its older idiom and still lives in HUD.tsx.
+
+   Field Kit (docs/design/field-kit.md): the workspace is ONE slab of glass held
+   over the world, and the sections inside it are tinted cards ON that slab.
+   That is the one place this sheet deliberately does not compose .ui-panel:
+   .ui-panel carries `backdrop-filter: var(--ui-blur)`, and nesting six of them
+   inside an already-blurred parent makes the GPU re-blur the same backdrop six
+   times per frame — over a live 3D canvas that is not free. So the workspace
+   root takes .ui-panel--xl (one blur, one lift) and the cards inside it are
+   .inv-sec / .inv-card: same fill language, same radii, no second blur.
+
+   Everything else composes the primitives in ui.css (.ui-grid, .ui-cell*,
+   .ui-btn*, .ui-chip, .ui-key, .bar*, .ui-eyebrow/.ui-title/.ui-num/.ui-hint).
+   Rules that restyle a .ui-* primitive are scoped under an .inv-/.hud-inv
+   ancestor, so they win on specificity rather than on sheet order — this sheet
+   makes no assumption about where it lands relative to ui.css. */
+
+/* ============================ the workspace shell ============================ */
+
+.inv-backdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ui-edge);
+}
+
+/* Sized in clamp/%, never fixed px: this same panel serves a 390px phone and an
+   ultrawide. The caps are what stop it stretching into a billboard. */
+.hud-inv {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1280px, 100%);
+  height: min(880px, 100%);
+  overflow: hidden; /* the workspace clips its own cards, popover included */
+  pointer-events: auto;
+}
+
+/* ------------------------------- top bar --------------------------------
+   Identity · tabs · CARRY · clock · TAB-close. The only place carry is read. */
+
+.inv-bar {
+  display: flex;
+  align-items: center;
+  gap: clamp(var(--ui-sp-4), 2vw, var(--ui-sp-8));
+  flex: none;
+  padding: var(--ui-sp-5) clamp(var(--ui-sp-5), 2vw, var(--ui-sp-9));
+  border-bottom: var(--ui-hairline-rule);
+}
+
+.inv-who {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-5);
+  min-width: 0;
+}
+
+/* The monogram tile — the only "avatar" the game has data for. */
+.inv-mono {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  background: linear-gradient(140deg, #3a4a2c, #222c17);
+  border: 1px solid rgba(125, 160, 107, 0.4);
+  border-radius: var(--ui-r-md);
+  font-family: var(--ui-font-cond);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ui-accent);
+}
+
+.inv-who-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.inv-who .inv-kicker {
+  font-size: 10px;
+  color: var(--ui-accent);
+}
+
+.inv-who-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- tabs. One control, two shapes: a centered row of labels on a pointer,
+   a left icon RAIL under a coarse one (design frames 01 / 04). --- */
+
+.inv-tabs {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+  gap: var(--ui-sp-1);
+  min-width: 0;
+}
+
+.inv-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-4) clamp(var(--ui-sp-5), 1.6vw, var(--ui-sp-8));
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r);
+  color: var(--ui-dim);
+  font-family: var(--ui-font-cond);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.inv-tab:hover {
+  color: var(--ui-text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.inv-tab--on,
+.inv-tab--on:hover {
+  background: var(--ui-accent-soft);
+  color: var(--ui-text);
+  box-shadow: inset 0 -2px 0 var(--ui-accent);
+}
+
+.inv-tab:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+/* The glyph is the tab only on the rail; the row shows words. */
+.inv-tab-icon {
+  display: none;
+  width: 23px;
+  height: 23px;
+}
+
+.inv-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-6);
+  flex: none;
+}
+
+/* --- CARRY. The design reads a weight (`4.7 / 18.0 kg`); the server has no
+   weight model, so the readout keeps its shape and counts SLOTS. --- */
+
+.inv-carry {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-3);
+}
+
+.inv-carry-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--ui-dim);
+}
+
+.inv-carry .inv-carry-num {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.inv-num-of {
+  color: var(--ui-dim);
+  font-weight: 400;
+}
+
+.inv-carry-track {
+  width: 118px;
+  height: 4px;
+  margin-top: var(--ui-sp-1);
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--ui-pill);
+  overflow: hidden;
+}
+
+.inv-carry-fill {
+  display: block;
+  height: 100%;
+  background: var(--ui-accent);
+  border-radius: var(--ui-pill);
+  transition: var(--ui-bar-transition);
+}
+
+.inv-meta .inv-clock {
+  padding-left: var(--ui-sp-6);
+  border-left: var(--ui-hairline-rule);
+  color: var(--ui-dim);
+  /* No DAY counter: the store mirrors clockHours only — there is no day index
+     on the wire to print beside it. */
+}
+
+.inv-tab-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
+  padding: var(--ui-sp-2) var(--ui-sp-4);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r);
+}
+
+/* Desktop closes with Tab; the × is the rail's job under a coarse pointer. */
+.inv-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r-md);
+  color: var(--ui-dim);
+}
+
+.inv-close:hover {
+  color: var(--ui-text);
+  border-color: var(--ui-dim);
+}
+
+.inv-close-glyph {
+  width: 18px;
+  height: 18px;
+}
+
+/* ------------------------------ body / tabs ------------------------------
+   Two columns and two rows: storage runs full height on the left, equipment
+   takes the right, and the mode's strip sits under it. The mode's own tab and
+   the map each take the whole field. `position: relative` is the item popover's
+   containing block AND the origin its anchor math measures against. */
+
+.inv-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--ui-sp-6);
+  padding: var(--ui-sp-6) clamp(var(--ui-sp-5), 2vw, var(--ui-sp-9)) clamp(var(--ui-sp-5), 2vw, var(--ui-sp-7));
+}
+
+.inv-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-6);
+  min-width: 0;
+  min-height: 0;
+}
+
+.inv-col--store {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.inv-col--gear {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* The mode's seam. One mount, placed by whichever tab is up — the strip under
+   EQUIPMENT on the storage tab, the whole field on the mode's own. */
+.inv-slot {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.inv-panel--carry .inv-slot {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.inv-panel--mode .inv-slot,
+.inv-panel--map .inv-map {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+}
+
+/* The reveal. The mode section renders both halves; the tab decides which one
+   is on screen, keyed on the class names the mode's sections carry (the
+   contract InvSections.tsx names in its header). */
+.inv-panel--carry .inv-craft,
+.inv-panel--mode .inv-cond {
+  display: none;
+}
+
+/* --- the cards on the glass. Same fill/hairline/radius language as .ui-panel,
+   deliberately without its backdrop-filter (see the sheet header). --- */
+
+.inv-sec,
+.inv-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--ui-r-lg);
+  box-shadow: var(--ui-lift-1);
+}
+
+.inv-cond {
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.inv-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+  min-height: 26px;
+  flex: none;
+  padding: var(--ui-sp-5) var(--ui-sp-6) var(--ui-sp-4);
+}
+
+/* ------------------------------ storage grid ------------------------------ */
+
+.inv-storage {
+  flex: 1;
+}
+
+.inv-panel .inv-grid {
+  grid-template-columns: repeat(6, 1fr);
+  padding: 0 var(--ui-sp-6) var(--ui-sp-6);
+  overflow-y: auto;
+  align-content: start;
+}
+
+/* ui.css draws .ui-cell-index and .ui-cell-stripe at the same top-left corner:
+   the hotbar has a digit and no stripe, the design's storage cell (frame 01) has
+   a stripe and no digit, so nothing there collides. This grid is the one place
+   that renders BOTH — so the digit drops below the 3px stripe rather than under
+   it. The stripe keeps the corner: it is the design's, and it is what makes a
+   grid of icons scannable. */
+.inv-panel .inv-grid .ui-cell-index {
+  top: calc(var(--ui-sp-2) + 7px);
+}
+
+/* Pack slots carry no hotbar key — the number is informational, so it reads
+   back. */
+.inv-cell-index--pack {
+  opacity: 0.6;
+}
+
+/* An empty cell is a <div>, not a target — it must not take the .ui-cell hover. */
+.inv-panel div.ui-cell:hover {
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+/* Double-click is the cell's primary verb; it must not select the slot digit. */
+.inv-panel .ui-cell {
+  user-select: none;
+}
+
+/* ------------------------------- nearby crate ------------------------------ */
+
+.inv-nearby {
+  flex: none;
+}
+
+.inv-nearby .inv-grid {
+  grid-auto-rows: 60px;
+}
+
+/* TAKE ALL is a pill (design frame 01) — the section's verb, not the panel's. */
+.inv-nearby .inv-takeall {
+  padding: var(--ui-sp-2) 13px;
+  border-radius: var(--ui-pill);
+  font-size: var(--ui-fs-micro);
+  letter-spacing: 0.1em;
+}
+
+/* --------------------------------- equipment ------------------------------- */
+
+.inv-equip {
+  flex: 1;
+}
+
+.inv-equip-body {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ui-sp-5);
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--ui-sp-6) var(--ui-sp-6);
+}
+
+.inv-eq-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--ui-sp-4);
+  width: clamp(140px, 15vw, 176px);
+  flex: none;
+}
+
+.inv-eq {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-4);
+  padding: 9px 10px;
+  background: var(--ui-cell);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--ui-r-md);
+}
+
+.inv-eq--worn {
+  background: var(--ui-accent-soft);
+  border-color: rgba(125, 160, 107, 0.4);
+  box-shadow: var(--ui-lift-1), var(--ui-glow);
+}
+
+/* Read-only mirror of the equipped hotbar slot — no verb of its own. */
+.inv-eq--held {
+  background: transparent;
+  border-style: dashed;
+}
+
+.inv-eq-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--ui-r);
+}
+
+.inv-eq-img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.inv-eq-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.inv-eq .inv-eq-slot {
+  font-size: 10px;
+  letter-spacing: var(--ui-track-btn);
+}
+
+.inv-eq-name {
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  font-weight: 500;
+  color: var(--ui-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-eq-name--empty {
+  color: var(--ui-dim);
+  opacity: 0.6;
+}
+
+/* The unwear verb. The design's slot card carries no button — but UNWEAR is a
+   real server message (doc 05 M6) and a card with no way to take the coat off
+   is a picture, not a control. */
+.inv-eq-remove {
+  position: absolute;
+  top: 50%;
+  right: var(--ui-sp-2);
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(0, 0, 0, 0.3);
+  border: none;
+  border-radius: var(--ui-r-sm);
+  color: var(--ui-dim);
+  opacity: 0;
+}
+
+.inv-eq:hover .inv-eq-remove,
+.inv-eq-remove:focus-visible {
+  opacity: 1;
+}
+
+.inv-eq-remove:hover {
+  color: var(--ui-text);
+}
+
+.inv-eq-remove-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+.inv-doll {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  border-radius: var(--ui-r-md);
+  background: radial-gradient(58% 54% at 50% 42%, rgba(125, 160, 107, 0.14), transparent 70%);
+  color: rgba(160, 180, 140, 0.42);
+}
+
+.inv-doll-svg {
+  height: min(82%, 300px);
+  width: auto;
+}
+
+/* ------------------------------ condition strip ---------------------------- */
+
+.inv-cond {
+  flex-direction: row;
+  gap: var(--ui-sp-6);
+}
+
+.inv-cond-vitals {
+  flex: 1;
+  min-width: 0;
+  gap: var(--ui-sp-3);
+  padding-bottom: var(--ui-sp-5);
+}
+
+.inv-cond-vitals .bar {
+  padding: 0 var(--ui-sp-6);
+}
+
+.inv-cond-temp {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-3);
+  margin-top: var(--ui-sp-2);
+  padding: var(--ui-sp-4) var(--ui-sp-6) 0;
+  border-top: var(--ui-hairline-rule);
+  color: var(--ui-dim);
+}
+
+.inv-cond-temp-label {
+  flex: 1;
+}
+
+.inv-cond-temp .inv-cond-temp-value {
+  font-weight: 700;
+}
+
+/* survival.css pins .bar-icon--temp to --ui-dim, so the thermometer needs the
+   cold state said explicitly — inheritance alone cannot out-specify it. */
+.inv-cond-temp--cold,
+.inv-cond-temp--cold .inv-cond-temp-value,
+.inv-cond-temp--cold .bar-icon--temp {
+  color: var(--ui-cold);
+}
+
+.inv-cond-temp .inv-cond-shiver {
+  flex: none;
+  color: var(--ui-cold);
+}
+
+.inv-cond-stats {
+  width: clamp(160px, 18%, 210px);
+  flex: none;
+  justify-content: center;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-5) var(--ui-sp-6);
+}
+
+.inv-cond-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+}
+
+.inv-cond-stat .ui-num {
+  font-size: var(--ui-fs-data-lg);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.inv-cond-note {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.inv-cond-stats .inv-stat--cold {
+  color: var(--ui-cold);
+}
+
+.inv-cond-stats .inv-stat--off {
+  color: var(--ui-dim);
+  opacity: 0.6;
+}
+
+/* -------------------------------- crafting -------------------------------- */
+
+.inv-craft {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Two up on a wide workspace, one up when the column narrows — the list is the
+   whole tab, so it gets the whole tab. */
+.inv-craft-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  align-content: start;
+  gap: var(--ui-sp-4);
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--ui-sp-6) var(--ui-sp-6);
+  overflow-y: auto;
+}
+
+.inv-craft-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-4);
+  padding: var(--ui-sp-5);
+  background: var(--ui-cell);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--ui-r-md);
+}
+
+/* Every gate is real: inputs, tool, campfire station. Crafting is instant — no
+   hold-to-craft bar, because there is nothing to hold. */
+.inv-craft-row--off {
+  opacity: 0.45;
+}
+
+.inv-craft-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--ui-r);
+}
+
+.inv-craft-img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.inv-craft-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.inv-craft-out {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-sp-2);
+  min-width: 0;
+}
+
+.inv-craft-out .inv-craft-name {
+  font-size: 15px;
+  /* A recipe's OUTPUT is a name, not a label: the design sets item names in
+     mixed case and reserves uppercase for labels. .ui-title carries the
+     condensed face and the weight; only the caps come off. */
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-craft-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-sp-1);
+}
+
+.inv-craft-chip {
+  padding: 2px 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--ui-r-sm);
+  color: var(--ui-dim);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  letter-spacing: var(--ui-track-data);
+  white-space: nowrap;
+}
+
+/* Short of an ingredient — the one red in the tab. */
+.inv-craft-chip--short {
+  background: var(--ui-danger-fill);
+  color: #d98a7e;
+}
+
+.inv-craft-gate {
+  padding: 3px 7px;
+  background: rgba(200, 134, 46, 0.14);
+  border-radius: var(--ui-r-sm);
+  font-family: var(--ui-font-cond);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ui-warn);
+}
+
+.inv-craft-row .ui-btn {
+  flex: none;
+  padding: var(--ui-sp-3) var(--ui-sp-5);
+  font-size: var(--ui-fs-micro);
+  letter-spacing: 0.12em;
+}
+
+/* ---------------------------------- map tab -------------------------------- */
+
+.inv-map {
+  min-height: 0;
+}
+
+.inv-map-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  padding: 0 var(--ui-sp-6);
+}
+
+/* Square, and never taller than the room the tab actually has. */
+.inv-map-canvas {
+  display: block;
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 1 / 1;
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r-md);
+  background: #1d3a52; /* deep water — matches the canvas clear color */
+}
+
+.inv-map-note {
+  text-align: center;
+}
+
+.inv-map-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: var(--ui-sp-5) var(--ui-sp-6);
+}
+
+/* ------------------------------- item popover ------------------------------
+   Anchored to the cell you clicked. The position arrives as custom properties,
+   NOT as inline left/top: an inline declaration would out-specify the coarse-
+   pointer rules that turn this card into a bottom sheet. --inv-pop-w must stay
+   in step with POP_W in InventoryPanel.tsx — the anchor math needs the width in
+   JS and the box needs it in CSS. */
+
+.inv-panel .inv-pop {
+  --inv-pop-w: 290px;
+
+  position: absolute;
+  left: var(--inv-pop-x, 0);
+  top: var(--inv-pop-y, 0);
+  z-index: 8;
+  width: var(--inv-pop-w);
+  padding: var(--ui-sp-6);
+  border-radius: var(--ui-r-lg);
+}
+
+/* The tail. Sits on the side the card is NOT hanging toward. */
+.inv-pop-tail {
+  position: absolute;
+  top: 18px;
+  left: -7px;
+  width: 14px;
+  height: 14px;
+  background: var(--ui-bg-deep);
+  border-left: 1px solid rgba(255, 255, 255, 0.13);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.13);
+  transform: rotate(45deg);
+}
+
+.inv-pop--flip .inv-pop-tail {
+  left: auto;
+  right: -7px;
+  transform: rotate(-135deg);
+}
+
+.inv-pop-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-5);
+  min-width: 0;
+}
+
+.inv-pop-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  flex: none;
+  background: linear-gradient(180deg, #242c18, #141a0d);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--ui-r-md);
+}
+
+.inv-pop-img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.inv-pop-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.inv-pop-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+  min-width: 0;
+}
+
+.inv-pop-name .ui-title {
+  font-size: 18px;
+  /* The item's NAME, in the design's mixed case ("Canned Beans"). Uppercase is
+     this kit's register for labels — the kind chip beside it is the label. */
+  text-transform: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inv-pop-name .ui-chip {
+  flex: none;
+  padding: 3px var(--ui-sp-3);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+/* The ONLY control wired to onClose, so it cannot be touch-only: it used to be
+   `display: none` here and `flex` under (pointer: coarse), on the theory that a
+   mouse user "closes with the cell". They can't — the cell's onClick is
+   onInspect(slot), which re-selects the same slot rather than toggling it off, and
+   there is no Esc or click-outside handler for the card either. On a desktop that
+   left the popover with no way to dismiss it at all short of changing tabs or
+   closing the whole workspace. It is shown for every pointer now. */
+.inv-pop-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  background: transparent;
+  border: none;
+  color: var(--ui-dim);
+}
+
+.inv-pop-close-glyph {
+  width: 16px;
+  height: 16px;
+}
+
+.inv-pop-actions {
+  display: flex;
+  gap: var(--ui-sp-3);
+  margin-top: 13px;
+}
+
+/* The one hero on this surface. DROP stays a hairline beside it — a card with
+   two solid buttons has no hero. */
+.inv-pop-verb {
+  flex: 1;
+}
+
+.inv-pop-hint {
+  display: block;
+  margin-top: var(--ui-sp-4);
+  color: var(--ui-dim);
+  opacity: 0.75;
+}
+
+/* ====================== code pad (doc 06 M5 — in HUD.tsx) ===================
+   The last overlay on the older idiom. Restyled to Field Kit but NOT
+   restructured: its markup lives in HUD.tsx, so it inlines the .ui-panel recipe
+   (fill + lift) rather than composing the class.
+
+   The crate panel that used to share this section is gone: the workspace hosts
+   the open crate itself now (NEARBY · STORAGE CRATE, with TAKE ALL), so
+   .hud-crate / .inv-row / .inv-slot-num / .inv-name / .inv-count / .inv-actions
+   / .inv-empty / .inv-subtitle went with it. .hud-inv-backdrop, .inv-title,
+   .inv-btn and .inv-hint stay — the code pad still renders all four. */
+
+/* Invisible full-screen catcher: tap/click outside closes (the pad's own clicks
+   land on children). The workspace uses .ui-backdrop--scrim instead. */
+.hud-inv-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
+
+.hud-codepad {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(260px, calc(100vw - 32px));
+  padding: var(--ui-sp-6) 18px var(--ui-sp-5);
+  background: var(--ui-bg-deep);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--ui-r-lg);
+  box-shadow: var(--ui-lift-3);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.inv-title {
+  margin-bottom: var(--ui-sp-4);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-eyebrow);
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+.inv-btn {
+  padding: var(--ui-sp-1) var(--ui-sp-4);
+  background: transparent;
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r);
+  color: var(--ui-text);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.inv-btn:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-fill);
+}
+
+.inv-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: var(--ui-border);
+  background: transparent;
+}
+
+.inv-hint {
+  margin-top: var(--ui-sp-4);
+  text-align: center;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-micro);
+  letter-spacing: var(--ui-track-micro);
+  color: var(--ui-dim);
+}
+
+.codepad-display {
+  display: flex;
+  justify-content: center;
+  gap: var(--ui-sp-4);
+  margin: var(--ui-sp-2) 0 var(--ui-sp-5);
+  font-family: var(--ui-mono);
+  font-size: 22px;
+}
+
+.codepad-cell {
+  width: 28px;
+  height: 34px;
+  line-height: 34px;
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r);
+  color: var(--ui-dim);
+}
+
+.codepad-cell--set {
+  color: var(--ui-text);
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-glow);
+}
+
+.codepad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--ui-sp-2);
+}
+
+.codepad-btn {
+  padding: var(--ui-sp-4) 0;
+  font-family: var(--ui-mono);
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r);
+  color: var(--ui-text);
+  pointer-events: auto;
+}
+
+.codepad-btn:hover:not(:disabled) {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-fill);
+}
+
+.codepad-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.codepad-btn--ok {
+  border-color: var(--ui-accent);
+}
+
+.codepad-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--ui-sp-3);
+  margin-top: var(--ui-sp-4);
+}
+
+/* ============================== Responsive ==============================
+   Order is load-bearing: the coarse/narrow block below rewrites the workspace
+   into rail + one pane, and the 640px block narrows the grid inside it. Later
+   wins at equal specificity — do not re-sort. */
+
+/* The tabbed workspace collapses to a LEFT ICON RAIL + one pane (design frame
+   04). Keyed on EITHER a coarse pointer or a narrow viewport: a phone gets it
+   for the hit targets, a small window gets it for the room. */
+@media (pointer: coarse), (max-width: 1000px) {
+  .inv-backdrop {
+    padding: 0;
+  }
+
+  /* Full-bleed: the sheet IS the screen, so it has no corners to soften and no
+     world beside it to float above. */
+  .hud-inv {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* The rail. Lifted out of the header row and stood up the left edge; the bar
+     and the body keep clear of it. */
+  .inv-tabs {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 9; /* over the popover sheet's own stacking */
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    width: 58px;
+    padding: 13px 0;
+    gap: var(--ui-sp-3);
+    background: rgba(12, 15, 9, 0.5);
+    border-right: var(--ui-hairline-rule);
+  }
+
+  .inv-tab {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: var(--ui-r-md);
+  }
+
+  .inv-tab--on,
+  .inv-tab--on:hover {
+    border: 1px solid rgba(125, 160, 107, 0.5);
+    box-shadow: var(--ui-glow);
+  }
+
+  .inv-tab-icon {
+    display: block;
+  }
+
+  .inv-tab-label {
+    display: none;
+  }
+
+  .inv-bar,
+  .inv-body {
+    padding-left: calc(58px + var(--ui-sp-5));
+  }
+
+  .inv-bar {
+    padding-top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
+    padding-right: var(--ui-sp-5);
+  }
+
+  /* × sits at the foot of the rail (design frame 04) — the rail is the panel's
+     one persistent chrome, and Tab does not exist here. */
+  .inv-close {
+    display: flex;
+    position: absolute;
+    left: 7px;
+    bottom: calc(13px + env(safe-area-inset-bottom, 0px));
+    z-index: 10;
+  }
+
+  /* No keyboard: no TAB hint, and the clock is chrome the HUD already carries. */
+  .inv-tab-hint,
+  .inv-clock {
+    display: none;
+  }
+
+  .inv-meta {
+    gap: var(--ui-sp-5);
+  }
+
+  /* ONE pane: the columns stack and the pane scrolls. */
+  .inv-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ui-sp-5);
+    padding-bottom: calc(var(--ui-sp-5) + env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+  }
+
+  .inv-col--store,
+  .inv-col--gear,
+  .inv-panel--carry .inv-slot,
+  .inv-panel--mode .inv-slot,
+  .inv-panel--map .inv-map {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  /* The PANE scrolls, so nothing inside it may claim a flex basis and then
+     overflow it. Every card that stretches to fill a column on the desktop grid
+     goes back to its content height here — without this, storage runs under
+     NEARBY and the HELD slot runs under CONDITION. */
+  .inv-col,
+  .inv-slot,
+  .inv-storage,
+  .inv-nearby,
+  .inv-equip,
+  .inv-craft,
+  .inv-craft-list,
+  .inv-map,
+  .inv-map-body {
+    flex: none;
+  }
+
+  .inv-storage .inv-grid,
+  .inv-craft-list {
+    overflow: visible; /* the pane scrolls, not the box inside it */
+  }
+
+  /* Room for the action sheet — reserved only while one is up, so an unselected
+     pane does not carry a dead 240px of padding. Covers the card (~150px) plus
+     the 56px it now floats above the bottom edge; without it the pane's last row
+     sits under the sheet with no way to scroll it out. */
+  .inv-panel--picked .inv-body {
+    padding-bottom: calc(240px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* The doll is decoration, and it is the first thing to go: three slot cards
+     side by side is the whole point of the panel. */
+  .inv-doll {
+    display: none;
+  }
+
+  .inv-equip-body {
+    flex-wrap: wrap;
+  }
+
+  .inv-eq-col {
+    flex: 1;
+    width: auto;
+    min-width: 150px;
+  }
+
+  /* Finger-sized: the hover-reveal has no hover to key on. */
+  .inv-eq-remove {
+    position: static;
+    transform: none;
+    width: 44px;
+    height: 44px;
+    margin-left: auto;
+    opacity: 1;
+  }
+
+  .inv-map-canvas {
+    width: 100%;
+    height: auto;
+  }
+
+  /* The popover becomes the action sheet: full width beside the rail, low enough
+     to be thumb-reachable — but NOT pinned to the screen edge. The bottom band
+     is where the thumbs rest (it is where the stick and the ATTACK button live
+     during play, and where the home indicator lives always), and the sheet's
+     right-hand button is DROP, which destroys an item. So it floats one touch
+     target (44px) plus a gutter clear of that edge, and takes all four corners
+     because it no longer meets one. The anchor custom properties are simply not
+     read here. */
+  .inv-panel .inv-pop {
+    position: fixed;
+    left: calc(58px + var(--ui-sp-5)); /* clear the rail: its × sits at the foot of it */
+    right: var(--ui-sp-5);
+    top: auto;
+    bottom: calc(44px + var(--ui-sp-5) + env(safe-area-inset-bottom, 0px));
+    width: auto;
+    border-radius: var(--ui-r-xl);
+  }
+
+  .inv-pop-tail {
+    display: none;
+  }
+
+  .inv-pop-actions .ui-btn {
+    flex: 1;
+  }
+
+  .inv-pop-hint {
+    display: none; /* there is no double-click on a touchscreen */
+  }
+}
+
+@media (max-width: 640px) {
+  /* Four up — the design's phone grid. Six 72px cells do not fit 390px. */
+  .inv-panel .inv-grid {
+    grid-template-columns: repeat(4, 1fr);
+    padding-inline: var(--ui-sp-5);
+  }
+
+  .inv-sec-head,
+  .inv-equip-body,
+  .inv-craft-list,
+  .inv-map-body,
+  .inv-map-foot {
+    padding-inline: var(--ui-sp-5);
+  }
+
+  .inv-bar {
+    gap: var(--ui-sp-4);
+  }
+
+  /* The name block gives way first: CARRY is the readout you opened this for. */
+  .inv-who-text {
+    display: none;
+  }
+
+  .inv-carry-track {
+    width: 84px;
+  }
+
+  /* Stacked, not side by side — the stats card has nowhere to sit at 390px.
+     `flex: none` on the vitals card is load-bearing: in a column it would
+     otherwise keep `flex: 1`'s zero basis and collapse to nothing. */
+  .inv-cond {
+    flex-direction: column;
+    gap: var(--ui-sp-5);
+  }
+
+  .inv-cond-vitals {
+    flex: none;
+  }
+
+  .inv-cond-stats {
+    width: auto;
+  }
+
+  .inv-craft-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The code pad is a declared touch-parity surface — TouchControls opens it from
+   INTERACT and LOCK, so a finger is the ONLY way in on a phone. ui.css puts the
+   floor at 44px but enforces it on .ui-btn alone, and neither of these is one:
+   .inv-btn (CANCEL / REMOVE LOCK) renders ~21px and .codepad-btn ~41px. Keyed on
+   the pointer, not the width: this is about fingers, not room. */
+@media (pointer: coarse) {
+  .inv-btn {
+    min-height: 44px;
+    padding-inline: 14px;
+  }
+
+  .codepad-btn {
+    min-height: 48px;
+  }
+}

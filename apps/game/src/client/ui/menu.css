@@ -1,7 +1,251 @@
-/* Worldspring escape menu — pause/settings overlay. Same spare, minimal language
-   as ui.css; base tokens (--ui-*) come from styles.css. Sits above the HUD
-   (z 5) but below the death screen (z 10) so dying with the menu open still
-   shows YOU DIED. */
+/* Worldspring menus — the main menu, the escape/pause overlay, the death screen
+   and proximity chat's LOOK. Tokens come from tokens.css (pulled in by ui.css,
+   the first sheet any UI surface imports); the primitives these compose
+   (.ui-panel, .ui-btn, .ui-key, .ui-eyebrow …) live in ui.css.
+
+   Field Kit (docs/design/field-kit.md): a menu is a slab of glass held over the
+   world, so it is soft-cornered, translucent and LIFTED. The escape menu in
+   particular is window-CONTAINED (design frame 03) — the world stays visible
+   behind it, dimmed but alive. It is not a full-bleed takeover, and a takeover
+   is what it becomes the moment the panel loses its glass.
+
+   Radius tracks the size of the surface: the esc/main window is --ui-r-xl, a
+   full-width control inside it --ui-r-md, a segment or a key cap --ui-r.
+
+   The escape panel sits above the HUD (z 5) but below the death screen (z 10)
+   so dying with the menu open still shows YOU DIED. */
+
+/* =============================== Main menu ==============================
+   The first surface anyone sees. No 3D canvas is mounted yet, so the "world"
+   behind the glass is the CSS gradient below — the panel is still translucent
+   over it, which is what makes the title screen read as the same material as
+   the in-game HUD. */
+
+.menu-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ui-edge);
+  background:
+    radial-gradient(ellipse at 50% 115%, rgba(28, 38, 33, 0.55), transparent 60%),
+    linear-gradient(180deg, #0c1013 0%, #121a1d 45%, #090c0a 100%);
+}
+
+.menu-root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.72) 100%);
+}
+
+/* Composes .ui-panel .ui-panel--xl — glass, --ui-r-xl, --ui-lift-3. */
+.menu-panel {
+  position: relative;
+  width: min(440px, 100%);
+  /* Padding shrinks with the viewport so the panel (and the clamp()-sized
+     wordmark below) still fits a 360px screen. */
+  padding: clamp(28px, 7vw, 44px) clamp(20px, 6vw, 40px) clamp(24px, 5vw, 36px);
+  text-align: center;
+}
+
+/* The olive tick above the wordmark: the design's section marker, reused as the
+   title screen's only ornament. */
+.menu-mark {
+  width: 22px;
+  height: 2px;
+  margin: 0 auto var(--ui-sp-5);
+  border-radius: var(--ui-r-sm);
+  background: var(--ui-accent);
+}
+
+.menu-title {
+  margin: 0;
+  /* 11 letterspaced caps ≈ 12em — clamp keeps the wordmark inside the panel
+     from 360px phones up (a fixed 42px overflowed even the 440px panel). */
+  font-family: var(--ui-font-cond);
+  font-size: clamp(20px, calc(10vw - 12px), 34px);
+  font-weight: 700;
+  letter-spacing: var(--ui-track-hero);
+  text-indent: var(--ui-track-hero); /* balance trailing letterspace */
+  text-transform: uppercase;
+  color: var(--ui-text);
+}
+
+.menu-subtitle {
+  margin: var(--ui-sp-4) 0 0;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  letter-spacing: 0.06em;
+  color: var(--ui-dim);
+}
+
+.menu-form {
+  display: flex;
+  gap: var(--ui-sp-3);
+  margin-top: var(--ui-sp-9);
+}
+
+/* The one text field in the game. Recessed (the well) rather than lifted — the
+   panel is the thing that floats; the field is cut into it. */
+.menu-input {
+  flex: 1;
+  min-width: 0;
+  height: 48px; /* matches the JOIN button's .ui-btn--lg row */
+  padding: 0 var(--ui-sp-5);
+  background: rgba(0, 0, 0, 0.35);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r-md);
+  color: var(--ui-text);
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  letter-spacing: 0.04em;
+  outline: none;
+}
+
+.menu-input::placeholder {
+  color: var(--ui-dim);
+  opacity: 0.7;
+}
+
+/* Focus is STATE, so it is the glow — same channel as a held hotbar slot. */
+.menu-input:focus {
+  border-color: var(--ui-accent);
+  box-shadow: var(--ui-glow);
+}
+
+/* Composes .ui-btn .ui-btn--primary .ui-btn--lg: the hero CTA of the screen.
+   Compound with .ui-btn so the primitive it modifies cannot out-order it,
+   whichever sheet the bundler emits first. */
+.ui-btn.menu-join {
+  flex: none;
+}
+
+.menu-error {
+  margin: var(--ui-sp-5) 0 0;
+  padding: var(--ui-sp-3) var(--ui-sp-4);
+  background: var(--ui-danger-fill);
+  border: 1px solid rgba(192, 57, 43, 0.35);
+  border-radius: var(--ui-r);
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  color: var(--ui-danger);
+}
+
+/* --- key cap: [F3], [TAB], [E] — used by both menus.
+   Inline in a sentence, so it stays smaller than the boxed .ui-key primitive. */
+
+.menu-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.04);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r);
+  color: var(--ui-text);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: none;
+}
+
+/* --- main menu: controls legend along the bottom edge --- */
+
+.menu-controls {
+  position: absolute;
+  bottom: calc(var(--ui-sp-8) + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  padding: 0 var(--ui-edge);
+  text-align: center;
+}
+
+.menu-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ui-sp-2) 14px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.menu-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ui-dim);
+}
+
+/* --- main menu: longest-lives board --- */
+
+.menu-leaderboard {
+  margin-top: 26px;
+  padding-top: var(--ui-sp-6);
+  border-top: var(--ui-hairline-rule);
+}
+
+/* Composes .ui-eyebrow. */
+.lb-title {
+  margin-bottom: var(--ui-sp-4);
+  text-indent: var(--ui-track-eyebrow); /* balance trailing letterspace on a centered line */
+}
+
+.lb-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-sp-4);
+  padding: 3px 0;
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data);
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-dim);
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-rank {
+  width: 14px;
+  flex: none;
+  opacity: 0.7;
+}
+
+.lb-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-text);
+}
+
+.lb-days {
+  width: 44px;
+  flex: none;
+  text-align: right;
+}
+
+.lb-kills {
+  width: 60px;
+  flex: none;
+  text-align: right;
+}
+
+/* ============================== Escape menu ==============================
+   Design frame 03: a glass window centred over the STILL-VISIBLE world. The
+   scrim below dims the world; it does not replace it. */
 
 .esc-root {
   position: absolute;
@@ -10,165 +254,285 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: var(--ui-edge);
   pointer-events: auto;
   user-select: none;
-  background: rgba(4, 6, 5, 0.62);
+  background: radial-gradient(120% 100% at 50% 42%, rgba(6, 9, 4, 0.6), rgba(3, 5, 2, 0.85));
 }
 
+/* Composes .ui-panel .ui-panel--xl. overflow-y is what makes the window survive
+   a 500px-tall laptop in landscape; dvh keeps mobile browser chrome out of it. */
 .esc-panel {
-  width: min(460px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  width: min(668px, 100%);
+  max-height: calc(100vh - 2 * var(--ui-edge));
+  max-height: calc(100dvh - 2 * var(--ui-edge));
   overflow-y: auto;
-  padding: 30px 32px 26px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  font-size: 13px;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+}
+
+/* --- header strip: composes .ui-panel-head --- */
+
+.esc-close {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
+  /* Padding, not height: the strip it sits in is a 48px .ui-panel-head, and a
+     44px box inside it would push the head to 68px. The negative margin buys the
+     hit area back on the inline axis; the 44px touch floor is in the coarse block
+     at the bottom of this sheet, where the head may grow. */
+  margin: 0 calc(-1 * var(--ui-sp-4));
+  padding: var(--ui-sp-5) var(--ui-sp-4);
+  background: transparent;
+  border: none;
+  border-radius: var(--ui-r);
+  color: var(--ui-dim);
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-eyebrow);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-btn);
+  text-transform: uppercase;
+}
+
+.esc-close:hover {
+  color: var(--ui-text);
+}
+
+.esc-close:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+.esc-close-glyph {
+  width: 12px;
+  height: 12px;
+}
+
+/* --- headline --- */
+
+.esc-body {
+  padding: clamp(20px, 4vw, 30px) clamp(18px, 5vw, 38px) clamp(22px, 4vw, 34px);
+}
+
+.esc-headline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-sp-6);
+}
+
+.esc-headline-text {
+  min-width: 0;
 }
 
 .esc-title {
   margin: 0;
-  text-align: center;
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: 0.32em;
-  text-indent: 0.32em; /* balance trailing letterspace */
+  font-family: var(--ui-font-cond);
+  font-size: clamp(28px, 6vw, 46px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em; /* balance trailing letterspace */
+  text-transform: uppercase;
   color: var(--ui-text);
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
 }
 
 .esc-subtitle {
-  margin: 8px 0 0;
-  text-align: center;
-  font-size: 12px;
-  letter-spacing: 0.1em;
+  margin: var(--ui-sp-2) 0 0;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  letter-spacing: 0.02em;
   color: var(--ui-dim);
 }
 
-/* --- primary actions --- */
+.esc-meta {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding-top: var(--ui-sp-2);
+}
 
-.esc-btn {
-  display: block;
+.esc-meta-row {
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.esc-meta-row--cold {
+  color: var(--ui-cold);
+}
+
+/* --- buttons: composed from .ui-btn (+ --primary / --warn / --danger) ---
+   The primitive is inline-flex and sized by its label; these give it the row.
+   Compound with .ui-btn so they beat the primitive on specificity rather than
+   on sheet order. */
+
+.ui-btn.esc-resume {
   width: 100%;
-  padding: 10px 0;
-  background: rgba(125, 160, 107, 0.14);
-  border: 1px solid var(--ui-accent);
-  color: var(--ui-text);
-  font-size: 13px;
-  letter-spacing: 0.24em;
-  text-indent: 0.24em;
+  min-height: 54px;
+  margin-top: var(--ui-sp-8);
+  letter-spacing: 0.18em;
 }
 
-.esc-btn:hover {
-  background: rgba(125, 160, 107, 0.28);
+.esc-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ui-sp-5);
+  margin-top: var(--ui-sp-8);
+  padding-top: var(--ui-sp-7);
+  border-top: var(--ui-hairline-rule);
 }
 
-.esc-btn--resume {
-  margin-top: 24px;
+.ui-btn.esc-footer-btn {
+  width: 100%;
+  min-height: 48px;
+  border-radius: var(--ui-r-md); /* a full-width control inside a --ui-r-xl window */
+  line-height: 1.3;
 }
 
-.esc-btn--leave {
-  margin-top: 20px;
-  background: transparent;
-  border-color: var(--ui-border);
-  color: var(--ui-dim);
+/* The parenthetical qualifier stays sentence-case prose — it is a consequence,
+   not a label. */
+.esc-btn-note {
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-micro);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  opacity: 0.75;
 }
 
-.esc-btn--leave:hover {
-  background: rgba(192, 57, 43, 0.12);
-  border-color: var(--ui-danger);
-  color: var(--ui-text);
+/* Armed confirm: the label roughly doubles in length and still has to fit the
+   footer's half-width column. */
+.ui-btn.esc-footer-btn--armed {
+  font-size: var(--ui-fs-micro);
+  letter-spacing: 0.08em;
 }
 
 /* --- settings section (inline, no sub-navigation) --- */
 
 .esc-settings {
-  margin-top: 22px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: var(--ui-sp-8);
+  padding-top: var(--ui-sp-6);
+  border-top: var(--ui-hairline-rule);
 }
 
+/* Composes .ui-eyebrow. */
 .esc-section-label {
-  margin-bottom: 4px;
-  font-size: 11px;
-  letter-spacing: 0.28em;
-  color: var(--ui-dim);
+  display: block;
+  margin-bottom: var(--ui-sp-6);
 }
 
 .esc-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 0;
+  gap: var(--ui-sp-6);
+  padding: var(--ui-sp-2) 0;
 }
 
+/* The label column: fixed enough to align four rows, elastic enough that
+   MASTER VOLUME does not eat a 380px window. .esc-hint tracks the same width. */
 .esc-label {
-  width: 118px;
+  width: clamp(96px, 30%, 158px);
   flex: none;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
   color: var(--ui-dim);
 }
 
 .esc-value {
-  width: 46px;
+  width: 52px;
   flex: none;
   text-align: right;
   font-family: var(--ui-mono);
-  font-size: 12px;
+  font-size: var(--ui-fs-data);
+  font-weight: 700;
+  letter-spacing: var(--ui-track-data);
   color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
 }
 
-/* aligns hint text under the control column (label 118px + gap 10px) */
 .esc-hint {
-  margin: -4px 0 4px 128px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  margin: 0 0 var(--ui-sp-2) calc(clamp(96px, 30%, 158px) + var(--ui-sp-6));
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-micro);
+  letter-spacing: var(--ui-track-micro);
   color: var(--ui-dim);
   opacity: 0.85;
 }
 
-/* --- sliders --- */
+/* --- sliders: pill track, round knob, olive fill ---
+   WebKit paints no progress element, so the filled part is a hard gradient stop
+   at --esc-fill, which EscapeMenu sets inline from the value. Firefox has
+   ::-moz-range-progress and uses it. #c1d6a6 is the light end of the olive
+   ramp (same stop the design uses for the knob), not a second accent hue. */
 
 .esc-slider {
   -webkit-appearance: none;
   appearance: none;
   flex: 1;
   min-width: 0;
-  height: 16px;
+  height: 20px; /* hit area — the track is 5px inside it */
   margin: 0;
   background: transparent;
   outline: none;
+  cursor: ew-resize;
 }
 
 .esc-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.14);
+  height: 5px;
+  border-radius: var(--ui-pill);
+  background: linear-gradient(
+    90deg,
+    var(--ui-accent) var(--esc-fill, 0%),
+    rgba(255, 255, 255, 0.12) var(--esc-fill, 0%)
+  );
 }
 
 .esc-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 9px;
-  height: 14px;
-  margin-top: -5px;
-  background: var(--ui-accent);
+  width: 16px;
+  height: 16px;
+  margin-top: -6px; /* centre the 16px knob on the 5px track */
+  background: #c1d6a6;
   border: none;
-  border-radius: 0;
-  cursor: ew-resize;
+  border-radius: var(--ui-round);
+  box-shadow: var(--ui-lift-1);
 }
 
 .esc-slider::-moz-range-track {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.14);
+  height: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: var(--ui-pill);
+}
+
+.esc-slider::-moz-range-progress {
+  height: 5px;
+  background: var(--ui-accent);
+  border-radius: var(--ui-pill);
 }
 
 .esc-slider::-moz-range-thumb {
-  width: 9px;
-  height: 14px;
-  background: var(--ui-accent);
+  width: 16px;
+  height: 16px;
+  background: #c1d6a6;
   border: none;
-  border-radius: 0;
-  cursor: ew-resize;
+  border-radius: var(--ui-round);
+  box-shadow: var(--ui-lift-1);
+}
+
+.esc-slider:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
 /* --- quality segmented buttons --- */
@@ -177,56 +541,352 @@
   display: flex;
   flex: 1;
   min-width: 0;
+  gap: var(--ui-sp-2);
 }
 
 .esc-seg-btn {
   flex: 1;
-  padding: 6px 0;
+  min-width: 0;
+  padding: var(--ui-sp-2) 0;
   background: transparent;
-  border: 1px solid var(--ui-border);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-r);
   color: var(--ui-dim);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-}
-
-.esc-seg-btn + .esc-seg-btn {
-  margin-left: -1px;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-label);
+  font-weight: 600;
+  letter-spacing: var(--ui-track-label);
+  text-transform: uppercase;
 }
 
 .esc-seg-btn:hover {
   color: var(--ui-text);
 }
 
-.esc-seg-btn--active {
-  position: relative;
-  z-index: 1;
-  background: rgba(125, 160, 107, 0.16);
-  border-color: var(--ui-accent);
-  color: var(--ui-text);
+.esc-seg-btn:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
 }
 
-/* --- debug checkbox --- */
+/* Active is state: the olive wash plus the glow, the same pair a held hotbar
+   slot carries. */
+.esc-seg-btn--active {
+  background: var(--ui-accent-soft);
+  border-color: var(--ui-accent);
+  color: var(--ui-text);
+  box-shadow: var(--ui-glow);
+}
+
+/* --- debug toggle ---
+   The design draws this as a switch, not a checkbox. It stays an
+   <input type="checkbox"> for keyboard and a11y; only the box is redrawn. */
 
 .esc-check {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ui-sp-4);
   flex: 1;
   min-width: 0;
   cursor: pointer;
-  color: var(--ui-text);
-}
-
-.esc-check input {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--ui-accent);
-  cursor: pointer;
-}
-
-.esc-check-hint {
-  font-size: 11px;
-  font-family: var(--ui-mono);
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
   color: var(--ui-dim);
+}
+
+.esc-toggle {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 42px;
+  height: 23px;
+  margin: 0;
+  background: rgba(255, 255, 255, 0.08);
+  border: var(--ui-hairline);
+  border-radius: var(--ui-pill);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.esc-toggle::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 19px;
+  height: 19px;
+  border-radius: var(--ui-round);
+  background: var(--ui-dim);
+  transition: transform 0.14s ease, background 0.14s ease;
+}
+
+.esc-toggle:checked {
+  background: rgba(125, 160, 107, 0.4);
+  border-color: var(--ui-accent);
+}
+
+.esc-toggle:checked::after {
+  transform: translateX(17px);
+  background: #c1d6a6;
+}
+
+.esc-toggle:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 2px;
+}
+
+/* ============================= Death screen =============================
+   The shell is engine-level — you died, something killed you, you can go again.
+   What a life is worth counting in is the mode's: RecapStats (.recap-*) comes
+   from the survival HUD module and is styled in hud/modes/survival/.
+
+   The one surface with NO glass: you are not looking through a window at the
+   world any more, you are out of it. */
+
+.death-root {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ui-edge);
+  pointer-events: auto;
+  font-family: var(--ui-font);
+  background: radial-gradient(
+    ellipse at center,
+    rgba(42, 5, 2, 0.84) 0%,
+    rgba(12, 2, 1, 0.96) 100%
+  );
+  animation: death-fade-in 1.2s ease forwards;
+}
+
+@keyframes death-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.death-title {
+  margin: 0;
+  font-family: var(--ui-font-cond);
+  font-size: var(--ui-fs-hero);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: var(--ui-track-hero);
+  text-indent: var(--ui-track-hero);
+  color: var(--ui-hp);
+  text-shadow: 0 0 28px rgba(179, 58, 46, 0.45);
+}
+
+.death-cause {
+  margin: 14px 0 40px;
+  font-family: var(--ui-font);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  color: var(--ui-dim);
+}
+
+/* The hero CTA of the screen, in the death hue rather than olive — the only
+   place the accent yields, because on this screen red IS the subject. Same
+   recipe as .ui-btn--primary otherwise: solid gradient, lifted.
+
+   The hue is --ui-hp, the same one .death-title above it is set in, and the same
+   one touch.css builds its FIRE button from: "solid red hero" is ONE recipe, and
+   it may not resolve to two different reds depending on which surface you are on.
+   Only the gradient's dark stop is a literal — it is a shade of the token, not a
+   hue of its own. */
+.death-respawn {
+  min-height: 52px;
+  padding: var(--ui-sp-5) clamp(24px, 8vw, 40px);
+  background: linear-gradient(180deg, var(--ui-hp), #8f3329);
+  border: none;
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-lift-1);
+  color: #fff;
+  font-family: var(--ui-font-cond);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-indent: 0.26em;
+  text-transform: uppercase;
+}
+
+.death-respawn:hover {
+  background: linear-gradient(180deg, #d2564a, var(--ui-hp));
+  box-shadow: var(--ui-lift-1), 0 0 16px rgba(179, 58, 46, 0.4);
+}
+
+.death-respawn:focus-visible {
+  outline: 2px solid var(--ui-hp);
+  outline-offset: 3px;
+}
+
+/* ============================ Proximity chat ============================
+   The LOOK only. Chat's LAYOUT — where the log sits, how it clears the vitals
+   and the hotbar at every viewport — belongs to the HUD and stays in
+   hud/chrome.css, which owns that geometry. These rules are compound
+   (.hud-chat .chat-*) so they beat that sheet's single-class rules on
+   specificity rather than on load order, whichever sheet the bundler emits
+   first. ChatPanel.tsx imports this file for exactly that reason.
+
+   Closed, the log is bare text over the world (design frame 02). Open, the
+   input row is the only glass: .ui-panel .ui-panel--hud on the ROW, and the
+   field inside it is stripped back to a caret. */
+
+.hud-chat .chat-log {
+  gap: var(--ui-sp-1);
+}
+
+.hud-chat .chat-line {
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+}
+
+/* The speaker tag. Proximity chat has no channels and no per-speaker colors —
+   olive is simply "someone said this". The LIGHT end of the olive ramp, not
+   --ui-accent itself: the log sits on bare terrain, and mid-olive text on lit
+   grass is the one place the accent loses its contrast. */
+.hud-chat .chat-name {
+  font-weight: 600;
+  color: #c1d6a6;
+}
+
+.hud-chat .chat-input-row {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  border-color: rgba(125, 160, 107, 0.4); /* open = armed: the olive edge */
+}
+
+.chat-input-row .chat-input {
+  padding: var(--ui-sp-3) 56px var(--ui-sp-3) var(--ui-sp-4);
+  background: transparent;
+  border: none;
+  border-radius: inherit;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+}
+
+/* ============================== Responsive ============================== */
+
+@media (pointer: coarse) {
+  /* A keyboard legend is noise on a touch device. */
+  .menu-controls {
+    display: none;
+  }
+
+  /* Finger-sized: a 16px knob is not draggable with a thumb. */
+  .esc-slider {
+    height: 34px;
+  }
+
+  .esc-slider::-webkit-slider-thumb {
+    width: 22px;
+    height: 22px;
+    margin-top: -9px;
+  }
+
+  .esc-slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+  }
+
+  .esc-seg-btn {
+    min-height: 44px;
+  }
+
+  /* The escape menu IS the settings screen on touch, so every control on it has
+     to clear the 44px floor — these two were the ones the block missed. The
+     toggle itself stays 23px (the switch is drawn at its own size); the <label>
+     wrapping it is what takes the hit area, and a click anywhere on it flips the
+     input. */
+  .esc-check {
+    min-height: 44px;
+  }
+
+  .esc-close {
+    min-height: 44px;
+  }
+}
+
+/* Death screen, scaled down. */
+@media (max-width: 768px) {
+  .death-title {
+    font-size: clamp(30px, 11vw, 52px);
+  }
+
+  .death-cause {
+    font-size: var(--ui-fs-body);
+    margin: 12px 0 30px;
+  }
+
+  .death-respawn {
+    min-height: 48px;
+    padding: 11px 26px;
+    font-size: var(--ui-fs-body);
+  }
+}
+
+/* Narrow: the settings rows and the two footer buttons no longer fit side by
+   side, and the label column has run out of elasticity. */
+@media (max-width: 560px) {
+  .esc-headline {
+    flex-direction: column;
+    gap: var(--ui-sp-4);
+  }
+
+  .esc-meta {
+    align-items: flex-start;
+    padding-top: 0;
+  }
+
+  .esc-row {
+    gap: var(--ui-sp-4);
+  }
+
+  /* Wide enough that MASTER VOLUME — the longest label — still sets on one
+     line at 375px, and the slider keeps the rest of the row. */
+  .esc-label {
+    width: 104px;
+  }
+
+  .esc-hint {
+    margin-left: 0;
+  }
+
+  .esc-footer {
+    grid-template-columns: 1fr;
+    gap: var(--ui-sp-4);
+  }
+
+  .ui-btn.esc-footer-btn--armed {
+    font-size: var(--ui-fs-btn);
+    letter-spacing: var(--ui-track-btn);
+  }
+}
+
+/* The quality row is four segments plus a 96px label — under ~430px they stop
+   being readable side by side, so the segments take the whole row. */
+@media (max-width: 430px) {
+  .esc-row--stack {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--ui-sp-2);
+  }
+
+  /* The name field and JOIN stop fitting side by side. In a column the field's
+     `flex: 1` would resolve against the MAIN axis and collapse its height to
+     the 0 basis — the height below is only respected once it is flex: none. */
+  .menu-form {
+    flex-direction: column;
+  }
+
+  .menu-input {
+    flex: none;
+  }
+
+  .ui-btn.menu-join {
+    width: 100%;
+  }
 }

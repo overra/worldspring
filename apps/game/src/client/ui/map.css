@@ -1,5 +1,7 @@
 /* doc 12 M4 — full-screen map + corner minimap. 2D-canvas overlays, no three.js.
-   Base tokens (--ui-bg/border/dim) come from styles.css (frozen). */
+   Tokens come from tokens.css and the primitives (.ui-panel / .ui-panel-head /
+   .ui-eyebrow / .ui-label / .ui-chip / .ui-key) from ui.css — both are loaded by
+   the HUD, which is always mounted alongside these overlays. */
 
 .map-backdrop {
   position: fixed;
@@ -12,43 +14,138 @@
   pointer-events: auto;
 }
 
+/* Carries .ui-panel for the surface (fill + hairline + zero radius + blur). */
 .map-panel {
   position: relative;
-  padding: 10px 10px 6px;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 24px);
+}
+
+.map-body {
+  padding: var(--ui-sp-5);
 }
 
 .map-canvas {
   display: block;
-  width: min(80vmin, calc(100vh - 96px));
+  /* Fits the panel chrome (48px head + ~62px foot + padding) inside the viewport
+     at every height; 80vmin is what keeps it square-ish on wide screens. */
+  width: min(80vmin, calc(100vh - 200px), calc(100vw - 48px));
   height: auto;
   aspect-ratio: 1 / 1;
   image-rendering: auto;
-  border: 1px solid var(--ui-border);
-  background: #1d3a52;
+  border: var(--ui-hairline);
+  background: #1d3a52; /* deep water — matches the canvas clear color */
+}
+
+.map-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-sp-3);
+  padding: var(--ui-sp-4) var(--ui-sp-5);
+  border-top: var(--ui-hairline-rule);
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-sp-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.map-legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
+}
+
+/* Swatch fills mirror drawDynamicLayer (render/map/mapBake.ts) exactly — a
+   legend that drifts from the markers is worse than none. */
+.map-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+}
+
+.map-swatch--you {
+  width: 0;
+  height: 0;
+  border-right: 5px solid transparent;
+  border-bottom: 9px solid #ffd23f;
+  border-left: 5px solid transparent;
+}
+
+.map-swatch--player {
+  border-radius: 50%;
+  background: #e6e6e6;
+}
+
+.map-swatch--zombie {
+  border-radius: 50%;
+  background: rgba(120, 170, 90, 0.9);
+}
+
+.map-swatch--drop {
+  background: #e8c04a;
 }
 
 .map-hint {
-  margin-top: 6px;
-  text-align: center;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--ui-dim);
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-2);
 }
+
+/* ================================ Minimap ================================ */
 
 .hud-minimap {
   position: fixed;
-  top: 14px;
-  right: 14px;
+  /* the compass letters orbit ~17px outside the ring — this is their room */
+  top: calc(24px + env(safe-area-inset-top, 0px));
+  right: calc(26px + env(safe-area-inset-right, 0px));
   z-index: 5; /* HUD layer; pointer-events:none so it never blocks input */
   width: 188px;
   height: 188px;
   pointer-events: none;
-  border: 1px solid var(--ui-border);
-  border-radius: 50%; /* circular — matches the rotate-to-heading viewport */
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45);
+}
+
+/* The one round thing in the UI, and the only place a 2px border earns its
+   weight: it is the porthole the world is seen through. The lift is what puts
+   it ABOVE the terrain instead of printed on it (field-kit trait 2). */
+.hud-minimap-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 2px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--ui-round); /* circular — matches the rotate-to-heading viewport */
+  box-shadow: var(--ui-lift-2);
+  background: #1d3a52; /* deep water — matches the canvas clear color, so the
+                          ring is never an empty hole before the bake lands */
+}
+
+/* The rose orbits: Minimap.tsx writes each letter's transform every tick so N
+   tracks true north under the heading-up rotation. */
+.hud-minimap-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  font-family: var(--ui-font-cond);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--ui-track-label);
+  line-height: 1;
+  color: var(--ui-dim);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* North is the only bearing you navigate by; the other three are context. */
+.hud-minimap-card--n {
+  font-size: 12px;
+  color: var(--ui-accent);
 }
 
 /* When the minimap is shown, drop the clock/online/ping stack below it so the
@@ -56,18 +153,88 @@
    class is added by the HUD only when cfg.map.minimap is true — the same gate
    that mounts the minimap (and loads this stylesheet). */
 .hud-status.has-minimap {
-  top: 210px; /* clears the 188px minimap (top 14 + 188 + ~8 gap) */
+  /* clears the 188px minimap + its S letter (24 + 188 + 17 + gap) */
+  top: calc(238px + env(safe-area-inset-top, 0px));
 }
 
 @media (max-width: 720px) {
   .hud-minimap {
     width: 132px;
     height: 132px;
-    top: 10px;
-    right: 10px;
+    top: calc(20px + env(safe-area-inset-top, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
   }
 
   .hud-status.has-minimap {
-    top: 152px; /* clears the 132px mobile minimap (top 10 + 132 + 10) */
+    /* clears the 132px mobile minimap + its S letter */
+    top: calc(178px + env(safe-area-inset-top, 0px));
+  }
+
+  .map-body {
+    padding: var(--ui-sp-3);
+  }
+
+  .map-foot {
+    gap: var(--ui-sp-2);
+    padding: var(--ui-sp-3);
+  }
+
+  .map-legend {
+    gap: var(--ui-sp-3);
+  }
+}
+
+/* The ring is sized by the POINTER, not the width — the width query above misses
+   both ends of touch. An iPad portrait (768px) and an 800px Android tablet are
+   wide enough to take the 188px desktop ring, and a phone in LANDSCAPE (844px
+   wide, 390px tall) takes it on a viewport that has no room for it.
+
+   Placed after the width block on purpose: on a coarse phone both match, and the
+   pointer is the one that has to win. Height is what these devices are short of,
+   so `top` — not `right` — is the number doing the work: touch.css parks the menu
+   button at top 10px / 46px tall, and the design (frames 04/06) stacks the ring
+   UNDER it. `right` stays at 22px: the rose's letters orbit ~17px outside the
+   ring (Minimap.tsx, CARDINAL_GAP), and a smaller inset clips the E. */
+@media (pointer: coarse) {
+  .hud-minimap {
+    width: 132px;
+    height: 132px;
+    top: calc(66px + env(safe-area-inset-top, 0px));
+    right: calc(22px + env(safe-area-inset-right, 0px));
+  }
+
+  .hud-status.has-minimap {
+    /* 66 + 132 ring + its S letter + a gap */
+    top: calc(224px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* A landscape phone is ~390px tall: a 132px ring under a 66px inset already eats
+   half of it, and the clock stack has to fit under that. 104px is the budget. */
+@media (pointer: coarse) and (orientation: landscape) and (max-height: 480px) {
+  .hud-minimap {
+    width: 104px;
+    height: 104px;
+  }
+
+  .hud-status.has-minimap {
+    top: calc(196px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* HEIGHT, not pointer, is what a 188px ring actually runs out of — and the rules
+   above all gate on the pointer, so a SHORT MOUSE WINDOW (a landscape phone in
+   desktop mode, a half-height browser window) kept the full desktop ring. Below
+   ~560px the hotbar lifts to clear the vitals card and rises into exactly the band
+   the big ring occupies. Last in the sheet so it wins at equal specificity; it sets
+   only the size, leaving each pointer's `top` intact. */
+@media (max-height: 560px) {
+  .hud-minimap {
+    width: 104px;
+    height: 104px;
+  }
+
+  .hud-status.has-minimap {
+    top: calc(196px + env(safe-area-inset-top, 0px));
   }
 }

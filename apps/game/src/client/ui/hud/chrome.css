@@ -1,0 +1,1000 @@
+/* Shared HUD chrome — what EVERY GameMode gets, mode or no mode: the overlay
+   root, aim, the compass, the item bar, the pickup prompt, the generic cast bar,
+   the world clock/ping corner, notices, chat, the key hints, and the damage
+   flash.
+
+   A mode's own skin (survival's vitals, its build panel) lives in
+   hud/modes/<mode>/. The primitives these rules compose (.ui-panel, .ui-btn,
+   .ui-cell, .bar, .ui-num …) live in ui.css — do not re-declare them here.
+
+   Field Kit (docs/design/field-kit.md): every surface here is a slab of glass
+   held over bright, MOVING terrain. Soft corners, a real lift, a translucent
+   fill. Two things deliberately carry NO panel — the crosshair and the cast bar
+   — because the design puts them dead centre in the player's aim, where a card
+   would be a lump in the middle of the screen.
+
+   Top-centre is the compass's band (0 → ~70px), and the toast band starts at
+   96px. A mode putting anything else top-centre has to clear both.
+
+   Rule order inside this sheet is load-bearing: the responsive blocks at the
+   bottom override each other at equal specificity ("later wins"), so keep them
+   in the order they appear. */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  user-select: none;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* --- damage vignette flash --- */
+
+.hud-damage-flash {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(160, 20, 12, 0) 38%,
+    rgba(160, 20, 12, 0.55) 100%
+  );
+  animation: hud-damage-fade 250ms ease-out forwards;
+}
+
+@keyframes hud-damage-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* --- compass strip (top-centre) --- */
+
+.hud-compass {
+  position: absolute;
+  top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: clamp(240px, 34vw, 560px);
+}
+
+.hud-compass-heading {
+  margin-bottom: var(--ui-sp-3);
+  text-align: center;
+  font-family: var(--ui-mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--ui-text);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.hud-compass-card {
+  color: var(--ui-accent);
+}
+
+/* The window onto the rose. The mask is what sells it as a strip cut out of a
+   ring rather than a ruler with two ends. */
+.hud-compass-strip {
+  position: relative;
+  height: 26px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 15%, #000 85%, transparent);
+}
+
+/* The track holds THREE copies of the 360° rose (−360 / 0 / +360), so crossing
+   north is a plain translate with no seam and no per-mark wrap math — Compass.tsx
+   writes ONE transform per frame instead of touching 24 marks. Width is
+   1080° / 120° visible = 9 windows = 900%; the % offsets below are fractions of
+   that same 1080°, so the whole strip stays resolution-independent and the
+   clamp()ed width above needs no JS.
+
+   NEVER give this a transition. The translate is linear in the bearing, so it
+   steps by exactly one 360° period each time the player turns through north.
+   Untransitioned that is invisible (the rose repeats — the pixels are
+   identical); transitioned, the compass visibly spins a full turn every time
+   you cross N. */
+.hud-compass-track {
+  position: absolute;
+  inset: 0;
+  width: 900%;
+  will-change: transform;
+  /* The ticks are boxes, not glyphs, so .hud's text-shadow does not reach them —
+     and a 1px hairline over a bright noon sky is invisible without one. One
+     filter on the track shadows every tick and label at once. */
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.65));
+}
+
+.hud-compass-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  color: var(--ui-dim);
+}
+
+/* Tick and label both ride the mark's `color`, so a mark recolors in one line. */
+.hud-compass-tick {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: var(--ui-r-sm);
+  background: currentColor;
+  opacity: 0.75;
+}
+
+/* Tick height is the hierarchy: 5° fill → 15° beat → intercardinal → N/E/S/W. */
+.hud-compass-mark--minor .hud-compass-tick { height: 6px; }
+.hud-compass-mark--mid .hud-compass-tick { height: 8px; }
+.hud-compass-mark--major .hud-compass-tick { height: 12px; }
+
+.hud-compass-mark--major {
+  color: var(--ui-text);
+}
+
+.hud-compass-label {
+  position: absolute;
+  top: -2px;
+  left: 0;
+  transform: translateX(-50%);
+  font-family: var(--ui-font-cond);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  color: currentColor;
+}
+
+/* Reads the strip: whatever sits under this triangle is your heading. */
+.hud-compass-pointer {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid var(--ui-accent);
+  border-left: 5px solid transparent;
+}
+
+/* --- hotbar (bottom-centre) --- */
+
+.hud-hotbar {
+  position: absolute;
+  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: var(--ui-sp-3);
+  pointer-events: auto;
+}
+
+/* The slot IS an item cell (.ui-cell + --filled/--equipped from ui.css); this
+   only gives it its size and the rounder corner its scale earns — a 56px slot
+   sits a step above the 8px cell radius. */
+.hotbar-slot {
+  width: var(--ui-slot);
+  height: var(--ui-slot);
+  border-radius: var(--ui-r-md);
+  transition: transform 0.12s ease;
+}
+
+/* The ONE place a hotbar cell must not be a plain .ui-cell: an inventory cell is
+   a well cut into a glass panel, so a 3% wash is enough to read it. The hotbar
+   has no panel behind it — it hangs straight over the world, and at noon over
+   grass a 3% wash is nothing at all. Empty slots therefore bring their own
+   glass. Scoped past --filled/--equipped (which own the other two fills) so this
+   can never fight ui.css over sheet order, only over state. */
+.hud-hotbar .ui-cell:not(.ui-cell--filled):not(.ui-cell--equipped) {
+  background: linear-gradient(180deg, rgba(20, 24, 15, 0.72), rgba(10, 13, 7, 0.78));
+  border-color: rgba(255, 255, 255, 0.1);
+  backdrop-filter: var(--ui-blur-soft);
+}
+
+/* The held slot physically rises out of the row: lift-2 is the elevation, the
+   glow is the state, and they are separate channels (field-kit trait 2).
+   The fill is opaque olive, NOT ui.css's --ui-accent-soft: that 16% tint is
+   built to colour a cell inside a glass panel, and out here on the grass it
+   turns the one slot that matters into the most transparent thing on the bar.
+   The ring and the glow carry "held" — the fill only has to hold the icon. */
+.hud-hotbar .ui-cell--equipped {
+  background: linear-gradient(180deg, rgba(52, 66, 40, 0.92), rgba(30, 39, 22, 0.94));
+  transform: translateY(-4px);
+  box-shadow: var(--ui-lift-2), var(--ui-glow-strong);
+}
+
+.hotbar-icon {
+  width: 52%;
+  height: 52%;
+}
+
+/* --- ammo readout for the equipped ranged weapon (doc 11 M3) --- */
+
+.hud-ammo {
+  position: absolute;
+  /* Rendered INSIDE .hud-hotbar and anchored to its top edge, so it follows
+   * every media-query relocation/rescale of the bar (980px lift, coarse-pointer
+   * portrait/landscape moves, 40px slots) for free — no offsets to mirror. */
+  bottom: calc(100% + var(--ui-sp-4));
+  left: 50%;
+  transform: translateX(-50%);
+  /* The hotbar opts into pointer-events; the readout is cosmetic. */
+  pointer-events: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--ui-sp-1);
+  padding: var(--ui-sp-1) var(--ui-sp-4);
+  background: rgba(10, 13, 7, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--ui-pill);
+  box-shadow: var(--ui-lift-1);
+  backdrop-filter: var(--ui-blur-soft);
+  font-family: var(--ui-mono);
+  letter-spacing: var(--ui-track-data);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* An empty mag is the one state you must read without looking — the whole pill
+   goes red-rimmed, not just the digit. */
+.hud-ammo--empty {
+  border-color: rgba(179, 58, 46, 0.5);
+}
+
+.hud-ammo-mag {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ui-text);
+}
+
+.hud-ammo--empty .hud-ammo-mag {
+  color: var(--ui-danger);
+}
+
+.hud-ammo-sep,
+.hud-ammo-reserve {
+  font-size: var(--ui-fs-data);
+  color: var(--ui-dim);
+}
+
+.hud-ammo-hint {
+  margin-left: var(--ui-sp-2);
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-data);
+  color: var(--ui-dim);
+}
+
+/* --- crosshair + pickup prompt (centre) --- */
+
+/* Four ticks + a centre dot. Rounded caps: at 2px a 1px radius is most of the
+   tick, and a hard tick reads as a dead pixel against foliage. */
+.hud-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+}
+
+.hud-crosshair-tick {
+  position: absolute;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.75);
+}
+
+.hud-crosshair-tick--n,
+.hud-crosshair-tick--s {
+  left: 50%;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+}
+
+.hud-crosshair-tick--n { top: 0; }
+.hud-crosshair-tick--s { bottom: 0; }
+
+.hud-crosshair-tick--e,
+.hud-crosshair-tick--w {
+  top: 50%;
+  width: 8px;
+  height: 2px;
+  margin-top: -1px;
+}
+
+.hud-crosshair-tick--w { left: 0; }
+.hud-crosshair-tick--e { right: 0; }
+
+.hud-crosshair::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: var(--ui-round);
+  background: #fff;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+}
+
+.hud-prompt {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 26px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--ui-sp-4);
+  padding: var(--ui-sp-2) var(--ui-sp-5);
+  background: rgba(10, 13, 7, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-lift-1);
+  backdrop-filter: var(--ui-blur-soft);
+  color: var(--ui-text);
+  white-space: nowrap;
+}
+
+.hud-prompt-text {
+  font-family: var(--ui-font);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Inline key in a sentence ([R] reload, [hold X] demolish) — un-boxed by
+   design; the boxed cap is .ui-key. */
+.hud-prompt-key {
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-title);
+  color: var(--ui-accent);
+}
+
+/* --- cast bar for the channeled (timed) action (doc 11 M2) --- */
+
+/* No panel: it sits just under the crosshair, and a card there is a lump in the
+   middle of your aim. The label and the numbers carry .hud's text-shadow, and
+   the track brings its own fill — that is enough over terrain. */
+/* Sits BELOW the pickup prompt (which ends ~50% + 66px), not on it: bandaging
+   while stood at a crate shows both at once, and the old +60px put the cast bar
+   through the prompt's chin. */
+.hud-channel {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 110px);
+  transform: translateX(-50%);
+  width: clamp(240px, 26vw, 380px);
+  text-align: center;
+}
+
+/* The .bar primitive is a row — wrap it so the label caps the track instead of
+   sharing a line with it. */
+.hud-channel .bar {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Deeper shadow than .hud's default: this label has no panel under it and it
+   lands on whatever the player happens to be aiming at, including a noon sky. */
+.hud-channel .bar-label {
+  width: auto;
+  flex: 0 1 auto;
+  margin-bottom: var(--ui-sp-2);
+  font-size: var(--ui-fs-btn);
+  letter-spacing: 0.2em;
+  color: var(--ui-text);
+  white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+
+.hud-channel .bar-track {
+  flex: 1 0 100%;
+  order: 3;
+  height: 10px;
+  background: rgba(10, 13, 7, 0.7);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* The cast bar's "ticks" are the barber-pole hatch — it is what makes a filling
+   bar read as WORK IN PROGRESS rather than a static level (the vitals meters use
+   the same primitive for segment ticks, hence the override rather than a class).
+   The pole has to TURN for that to read, so the hatch translates.
+
+   It is a transform, not a background-position: transform animates on the
+   compositor, background-position repaints the gradient every frame — and this
+   bar sits over the live 3D canvas. The 20px overhang is what the travel eats
+   into; .bar-track's overflow: hidden (ui.css) crops it back to the track.
+
+   19.799px is not a magic number: the gradient's period is 14px measured along
+   its own 45° axis, so one full period is 14 / cos(45°) horizontally. Shift by
+   exactly that and the loop has no seam. Change the 7px/14px stops and this has
+   to change with them. */
+.hud-channel .bar-ticks {
+  inset: 0 -20px;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent 0 7px,
+    rgba(255, 255, 255, 0.08) 7px 14px
+  );
+  animation: hud-channel-hatch 0.6s linear infinite;
+}
+
+@keyframes hud-channel-hatch {
+  to { transform: translateX(19.799px); }
+}
+
+/* Cast-bar readout under the track: elapsed left, total right. */
+.hud-channel-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--ui-sp-2);
+  font-family: var(--ui-mono);
+  font-size: var(--ui-fs-data-sm);
+  font-weight: 500;
+  letter-spacing: var(--ui-track-data);
+  color: var(--ui-dim);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* --- status (top-right, under the minimap when there is one) --- */
+
+.hud-status {
+  position: absolute;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--ui-sp-1);
+  text-align: right;
+}
+
+/* .ui-num--lg carries the size and weight; the clock only claims the colour. */
+.hud-clock {
+  color: var(--ui-text);
+}
+
+.hud-status-meta {
+  display: flex;
+  gap: var(--ui-sp-5);
+}
+
+/* --- notices / toasts (top-centre, under the compass) --- */
+
+.hud-notices {
+  position: absolute;
+  top: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ui-sp-2);
+  max-width: min(340px, calc(100vw - 32px));
+}
+
+/* A confirmation pill, not a log line. Accent hairline: a notice is always the
+   game answering something you just did. */
+.hud-notice {
+  padding: var(--ui-sp-2) var(--ui-sp-5);
+  background: rgba(10, 13, 7, 0.66);
+  border: 1px solid rgba(125, 160, 107, 0.42);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-lift-1);
+  backdrop-filter: var(--ui-blur-soft);
+  font-family: var(--ui-font);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ui-text);
+  text-align: center;
+  animation: hud-notice-fade 0.6s ease 6s forwards;
+}
+
+@keyframes hud-notice-fade {
+  to { opacity: 0; }
+}
+
+/* OS frame-throttle warning — shown when the page is visible but the frame
+   loop is starved (occluded/embedded window). DOM timers outlive rAF.
+   Deliberately parked ON the compass band and above it (z-index): a compass
+   fed by a 2Hz rAF is frozen and meaningless, and this warning is the only
+   thing on screen worth reading. */
+.hud-throttle-warning {
+  position: absolute;
+  top: calc(var(--ui-sp-4) + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: var(--ui-sp-3) var(--ui-sp-6);
+  background: rgba(140, 60, 10, 0.88);
+  border: 1px solid rgba(255, 180, 90, 0.4);
+  border-radius: var(--ui-r-md);
+  box-shadow: var(--ui-lift-2);
+  color: #ffe9d0;
+  font-size: var(--ui-fs-body);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* --- key hints (bottom-right) --- */
+
+.hud-keyhints {
+  position: absolute;
+  right: calc(var(--ui-edge) + env(safe-area-inset-right, 0px));
+  bottom: calc(var(--ui-edge) + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  gap: var(--ui-sp-7);
+  font-family: var(--ui-font-cond);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ui-dim);
+}
+
+.hud-keyhint-key {
+  margin-right: var(--ui-sp-1);
+  color: var(--ui-text);
+  font-weight: 700;
+}
+
+/* ============================ Proximity chat ============================ */
+/* ChatPanel.tsx (rendered by Chrome) — log bottom-left above the vitals; input
+   row while open. Lines fade via the opacity transition once ChatPanel's 1s
+   tick applies .chat-line--faded (8s after receipt). */
+
+/* Full-screen catcher while the input is open: tap/click outside closes
+   without sending (same pattern as .ui-backdrop). */
+.chat-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+}
+
+/* Shares the bottom-left corner with the vitals, which is a ~140px CARD, not the
+   four naked rows it used to be (12px pad + 3 meters + gaps + the temp row) —
+   sitting at bottom: var(--ui-edge), its top edge lands at ~156px. 176px clears
+   it. Anything that changes the vitals' height has to move this with it. */
+.hud-chat {
+  position: absolute;
+  left: calc(var(--ui-edge) + env(safe-area-inset-left, 0px));
+  bottom: calc(176px + env(safe-area-inset-bottom, 0px));
+  width: min(340px, calc(100vw - 200px));
+  display: flex;
+  flex-direction: column;
+}
+
+/* The open panel paints above the backdrop (later sibling), so clicks on the
+   log/input land here instead of close-through. Closed, it stays inert. */
+.hud-chat--open {
+  pointer-events: auto;
+}
+
+/* The log has no surface of its own — it fades UP into the world, which is what
+   keeps a wall of chat from becoming a wall of glass. */
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-sp-1);
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 42%);
+  mask-image: linear-gradient(180deg, transparent, #000 42%);
+}
+
+.chat-line {
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  line-height: 1.35;
+  overflow-wrap: anywhere; /* a 120-char token must wrap, not overflow */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+  opacity: 1;
+  transition: opacity 0.9s ease;
+}
+
+.chat-line--faded {
+  opacity: 0;
+}
+
+/* Proximity chat carries a name and a string — there are no channels and no
+   per-speaker colors. */
+.chat-name {
+  color: var(--ui-dim);
+  font-weight: 600;
+}
+
+.chat-name::after {
+  content: ":";
+}
+
+.chat-text {
+  color: var(--ui-text);
+}
+
+.chat-input-row {
+  position: relative;
+  margin-top: var(--ui-sp-2);
+  pointer-events: auto;
+}
+
+/* The ROW is the panel (ChatPanel.tsx puts .ui-panel .ui-panel--hud on it), so
+   the field carries NO surface of its own — no fill, no border, no radius, no
+   lift, no blur. Two elevations on one surface is the field-kit inversion, and a
+   second backdrop-filter nested inside the row's would recomposite the live 3D
+   canvas twice per frame on desktop (coarse pointers null --ui-blur-soft; fine
+   ones pay for every layer). The row owns the glass; this owns the caret.
+   No :focus ring either — the input is autoFocus, so a "focused" state that is
+   always on is not a state. Open = armed is carried by the row's olive edge
+   (menu.css). */
+.chat-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ui-sp-3) var(--ui-sp-4);
+  padding-right: 56px; /* clear of .chat-send-hint */
+  /* Not styling — UNstyling. A bare <input> brings a white field and a bevel
+     from the UA, so "no surface" has to be said out loud. Everything else that
+     makes a surface (radius, lift, blur) is simply absent above. */
+  background: transparent;
+  border: none;
+  color: var(--ui-text);
+  font: inherit;
+  font-family: var(--ui-font);
+  font-size: var(--ui-fs-body);
+  letter-spacing: 0.03em;
+  outline: none;
+  user-select: text; /* .hud sets user-select: none */
+  -webkit-user-select: text;
+}
+
+.chat-input::placeholder {
+  color: var(--ui-dim);
+  opacity: 0.7;
+}
+
+/* Right-aligned inside the input row, clear of the caret. */
+.chat-send-hint {
+  position: absolute;
+  right: var(--ui-sp-4);
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-family: var(--ui-mono);
+  font-size: 10px;
+  color: var(--ui-dim);
+}
+
+/* ========================= Responsive =========================
+   Keep these blocks in this order — they override one another at equal
+   specificity, so "later in the sheet wins" is the whole mechanism. */
+
+/* The blur opt-out, part 2. ui.css kills --ui-blur under a coarse pointer, but
+   the HUD's own glass (this sheet, and .ui-panel--hud in ui.css) is the SOFT
+   blur — the one layer that is guaranteed to sit over the live 3D canvas, and
+   therefore the one that actually costs a mobile GPU a recomposite every frame.
+   Killing it at the token keeps the opt-out immune to sheet order, exactly as
+   ui.css argues for --ui-blur. Belongs in ui.css beside its sibling; it is here
+   only because that file is another owner's this pass. */
+@media (pointer: coarse) {
+  :root {
+    --ui-blur-soft: none;
+  }
+}
+
+/* The compass needs a clear horizontal band, and a phone does not have one to
+   give in EITHER orientation — in portrait the vitals and the minimap already own
+   that strip, and in landscape there are only ~390px of height for a minimap, a
+   clock, a hotbar, a joystick and an action cluster. The design drops the compass
+   on mobile for exactly this reason (frames 04/06 have no strip): the minimap's
+   cardinal rose is already a heading readout, and two of those is one too many on
+   a screen this size. So: no compass on ANY coarse pointer. */
+@media (max-width: 480px), (pointer: coarse) {
+  .hud-compass {
+    display: none;
+  }
+}
+
+/* Keyboard hints are dropped for two INDEPENDENT reasons, so this is two
+   conditions, not one: a coarse pointer has no keyboard for them to describe, and
+   a narrow viewport has no room for them — they sit bottom-right at the same
+   `bottom` as the vitals card sits bottom-left, and under ~900px the two meet in
+   the middle. Gating only on the pointer (as this did) left them colliding with
+   the vitals in any narrowed DESKTOP window, which is a real thing people do. */
+@media (pointer: coarse), (max-width: 900px) {
+  .hud-keyhints {
+    display: none;
+  }
+}
+
+/* Lift the hotbar clear of the vitals card. Two numbers, both re-derived because
+   this rule predates the card:
+
+   BREAKPOINT 1120px (was 980px). The hotbar is CENTRED and the vitals are
+   LEFT-anchored, so they miss each other only while the viewport is wide enough to
+   keep the centred row out of the left column. The row is ~504px (8 slots + gaps),
+   so its left edge is W/2 − 252; the card's right edge is ~306px. They clear only
+   above ~1116px — which means a 1024px tablet, sitting between the old 980px
+   breakpoint and the real one, overlapped.
+
+   OFFSET 164px (was 140px). The card is ~139px tall over a 16px inset, so its top
+   edge is 155px up; at 140px the hotbar sat 15px INSIDE it. */
+@media (max-width: 1120px) {
+  .hud-hotbar {
+    bottom: calc(164px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* PORTRAIT only: the cast bar crosses the crosshair and goes ABOVE it. On a
+   tall narrow viewport the bottom half is fully spoken for — vitals, hotbar,
+   ammo, chat and (on touch) the joystick all live down there — while the top
+   half is empty once the compass drops out. The cast bar is the one thing here
+   that is both transient and must-read, so it takes the empty half rather than
+   fighting the chat log for the last free band.
+
+   Landscape is the same problem for a different reason — see the height rule
+   below. Only a viewport with real height keeps the design's placement. */
+@media (max-width: 980px) and (orientation: portrait) {
+  .hud-channel {
+    top: calc(50% - 104px);
+  }
+}
+
+/* SHORT viewports (every phone in landscape, and any squat desktop window). The
+   trigger is height, not orientation: the bar's readout ends ~163px below the
+   50% line, and the hotbar's top edge is ~54px above the bottom, so the two
+   collide whenever H/2 + 163 > H − 54, i.e. below 434px. "Nothing in the HUD may
+   overlap the hotbar" (docs/design/field-kit.md) — so on those viewports the bar
+   crosses the crosshair and takes the emptier half, exactly as portrait does.
+   Must stay AFTER the portrait rule: same specificity, later wins. */
+@media (max-height: 480px) {
+  .hud-channel {
+    top: calc(50% - 104px);
+  }
+}
+
+@media (pointer: coarse) {
+  /* Clear the ⚙ button in the top-right corner. */
+  .hud-status {
+    right: calc(78px + env(safe-area-inset-right, 0px));
+  }
+
+  /* "[R] reload" is a keyboard prompt — meaningless on touch. Touch reloads via
+     the inv-panel RELOAD button or the server auto-reload on an empty trigger
+     pull. */
+  .hud-ammo-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .hud {
+    font-size: var(--ui-fs-data);
+  }
+
+  /* Hotbar: 40px slots, tighter gap (8 slots = 348px, fits 360px screens).
+     40px is a MOUSE size — a coarse pointer floors the slot at 44px further
+     down this sheet, and re-fits the row's gap to match. */
+  .hud-hotbar {
+    gap: var(--ui-sp-1);
+  }
+
+  /* Sub-56px slots drop a radius step with their size, and the numerals shrink
+     with them — an 11px index in a 40px cell is a label, not a hint. */
+  .hotbar-slot {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--ui-r);
+  }
+
+  .hud-hotbar .ui-cell-index {
+    top: var(--ui-sp-1);
+    left: var(--ui-sp-1);
+    font-size: 9px;
+  }
+
+  .hud-hotbar .ui-cell-count {
+    right: var(--ui-sp-1);
+    font-size: 10px;
+  }
+
+  .hud-notice {
+    font-size: var(--ui-fs-body);
+    padding: var(--ui-sp-1) var(--ui-sp-4);
+  }
+
+  /* Top-right meta stack, smaller. */
+  .hud-clock {
+    font-size: 15px;
+  }
+
+  .hud-status-meta {
+    gap: var(--ui-sp-3);
+  }
+}
+
+/* Portrait phones (and portrait windows that narrow): the top-centre band is
+   pinched between the vitals and the minimap, so the toasts drop BELOW both
+   rather than squeezing between them. 240px clears the 188px desktop minimap
+   (ends ~229px) and the 132px mobile one. */
+@media (orientation: portrait) and (max-width: 768px) {
+  .hud-notices {
+    top: calc(240px + env(safe-area-inset-top, 0px));
+    max-width: min(300px, calc(100vw - 24px));
+  }
+}
+
+/* Touch phones: stack the bottom HUD clear of the joystick and the button
+   cluster — joystick (to ~172px) < hotbar < vitals. Must follow the generic
+   980px/coarse rules above so it wins the cascade. */
+@media (pointer: coarse) and (max-width: 768px) {
+  .hud-hotbar {
+    bottom: calc(226px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Re-fit the row to the 44px floor below. Eight 44px slots are 352px of cell,
+     so the gap is whatever the viewport has left over: 4px at 390px (→ 380px,
+     the design's row), collapsing to a hairline by 360px (→ 359px) rather than
+     overflowing the screen — which a fixed 4px gap would do on every phone
+     narrower than 380px. Must follow the 768px block: same selector, later wins. */
+  .hud-hotbar {
+    gap: clamp(1px, calc((100vw - 356px) / 7), var(--ui-sp-1));
+  }
+}
+
+/* Touch layout v2: use the screen edges. Overrides the earlier coarse-pointer
+   lift rules (later in file wins at equal specificity). The bottom belongs to
+   thumbs; the hotbar hugs whatever free strip the orientation offers. */
+@media (pointer: coarse) {
+  /* Portrait: the joystick/buttons own the bottom ~210px; the hotbar sits
+     immediately above them instead of floating mid-screen. (44px slots ⇒ top
+     edge 260px, ammo pill to ~296px — .hud-chat's 300px below still clears it.) */
+  .hud-hotbar {
+    bottom: calc(216px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* ui.css: "44px is the floor for anything tappable." It enforces that on
+     .ui-btn, which a slot is not — but every slot here is a live <button>
+     (Hotbar.tsx), and it is the most-tapped control in the game.
+     min-* rather than width so the floor only ever RAISES: it lifts the 40px
+     narrow-screen slot to 44 and leaves a coarse tablet's 56px alone. */
+  .hotbar-slot {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Landscape: the hotbar lives in the strip between the joystick (left, ends
+   ~170px) and the button cluster (right, ~208px incl. margin) — at the bottom,
+   where thumbs expect it. But that strip is ~290px on a 667px phone and a row of
+   eight 44px slots needs 380px, so ONE ROW OF EIGHT DOES NOT FIT. The three ways
+   out, and why this is the one:
+     - shrink the slot: that is what shipped (down to 31px), and it is the defect
+       — ui.css floors a tappable control at 44px and these are <button>s;
+     - hide slots: there is no keyboard here, so whatever is in slots 7–8 becomes
+       unreachable, not just unshown;
+     - scroll the row: it hides slots behind an offset, adds a horizontal drag on
+       a surface the look-drag also wants, and an overflow container on .hud-hotbar
+       would clip .hud-ammo, which is anchored ABOVE it.
+   So the row wraps: 2 × 4, every slot on screen and every slot 44px. 190px holds
+   exactly four 44px cells with 4px gaps — a fifth needs 48px more, so the wrap
+   point cannot drift with rounding. */
+@media (pointer: coarse) and (orientation: landscape) {
+  .hud-hotbar {
+    bottom: calc(var(--ui-sp-4) + env(safe-area-inset-bottom, 0px));
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--ui-sp-1);
+    width: 190px;
+  }
+
+  .hotbar-slot {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--ui-r);
+  }
+
+  /* The held slot cannot rise out of the top row without landing in the bottom
+     one — the lift is 4px and so is the row gap. Keep the glow, drop the lift. */
+  .hud-hotbar .ui-cell--equipped {
+    transform: none;
+  }
+}
+
+/* ≤980px lifts the hotbar to bottom 140px (top edge 196px) and the ammo pill
+   rides above THAT (to ~232px) — so 196 put the chat input straight under the
+   ammo readout. Clear the whole stack, not just the bar. */
+@media (max-width: 980px) {
+  .hud-chat {
+    bottom: calc(244px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Bound the log's upward growth: it is anchored at the bottom and grows up,
+     so without a cap a busy channel walks straight through the cast bar and the
+     crosshair. nth-last-child keeps the NEWEST three and drops the rest. */
+  .chat-line:nth-last-child(n + 4) {
+    display: none;
+  }
+}
+
+/* Touch layout: the bottom-left belongs to the joystick and the portrait hotbar
+   sits at ~216px (40px slots ⇒ top edge 256px, ammo pill to ~292px) — park the
+   log above the whole stack. Lines grow upward. */
+@media (pointer: coarse) {
+  .hud-chat {
+    left: calc(12px + env(safe-area-inset-left, 0px));
+    bottom: calc(300px + env(safe-area-inset-bottom, 0px));
+    width: min(300px, calc(100vw - 230px));
+  }
+
+  .chat-line {
+    font-size: var(--ui-fs-micro);
+  }
+}
+
+/* Portrait touch: the chat input is the only text field in the game, and it was
+   the narrowest thing on the screen — min(300px, 100vw − 230px) is 160px on a
+   390px phone, and the ENTER hint's 56px of padding took it to 94px of visible
+   field for a message that can run to CHAT_MAX_LENGTH. The 230px bought nothing:
+   the chat sits at bottom 300px and the button cluster's top edge is ~340px
+   below that, so the right half of the screen is empty at this height. Take the
+   width. The hint goes with it — there is no ENTER key to legend on a phone, and
+   the soft keyboard's return sends (ChatPanel's onKeyDown). That frees the right
+   padding, and the field takes the 44px floor like any other touch control.
+   The padding needs three classes to outrank menu.css's `.chat-input-row
+   .chat-input`; the sheets' load order is the bundler's business, so this wins
+   on specificity instead. */
+@media (pointer: coarse) and (orientation: portrait) {
+  .hud-chat {
+    width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
+
+  .chat-send-hint {
+    display: none;
+  }
+
+  .hud-chat .chat-input-row .chat-input {
+    padding: var(--ui-sp-3) var(--ui-sp-4);
+    min-height: 44px;
+  }
+}
+
+/* Landscape: the hotbar drops to the bottom strip, so the log can sit just
+   above the joystick zone (ends ~172px). */
+@media (pointer: coarse) and (orientation: landscape) {
+  .hud-chat {
+    bottom: calc(186px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* A ~390px-tall TOUCH LANDSCAPE screen has no right column left to give: the
+   minimap owns the top of it and the action cluster owns the bottom, and the clock
+   stack — pushed down to clear the ring — was landing on the cluster.
+
+   There is no vertical room to find, so stop looking for it. The compass is hidden
+   on a coarse pointer, which leaves the top-CENTRE band completely empty: the clock
+   takes it, laid out as a ROW (width is the one thing this viewport has spare).
+
+   Selectors are `.hud`-prefixed to win on SPECIFICITY, not on sheet order: the
+   `.has-minimap` placements live in map.css, and which of the two sheets lands last
+   in the bundle is an artifact of the import graph, not a thing to rely on. */
+@media (pointer: coarse) and (max-height: 480px) {
+  .hud .hud-status,
+  .hud .hud-status.has-minimap {
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: row;
+    align-items: baseline;
+    gap: var(--ui-sp-4);
+    text-align: center;
+  }
+}

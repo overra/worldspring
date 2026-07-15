@@ -88,8 +88,9 @@ export function NetSystem(): null {
     inputState.jump = false;
     // chatOpen must be here explicitly: on desktop the pointer unlock already
     // blocks, but in touchMode there is no pointer lock to lose. codePad is a
-    // modal like inventory; the crate panel deliberately is NOT — walking
-    // away is its close gesture (checked below).
+    // modal like inventory. A crate needs no entry of its own: it now opens as
+    // the workspace's NEARBY section, so it implies invOpen and blocks through
+    // that — walking away is no longer its close gesture.
     const blocked =
       ui.invOpen ||
       ui.menuOpen ||
@@ -229,10 +230,15 @@ function driveSeated(
 }
 
 /**
- * doc 06 — the crate panel closes on walk-away (client-side; the server just
- * rejects out-of-range moves) and the code pad drops when its door leaves
- * interact range or vanishes. Small slack over the open range so standing at
- * the boundary doesn't flicker the panel.
+ * doc 06 — the code pad drops when its door leaves interact range or vanishes.
+ * Small slack over the open range so standing at the boundary doesn't flicker
+ * the panel.
+ *
+ * The container branch survives but no longer fires on walk-away: an open crate
+ * is the workspace's NEARBY section now, so it sets invOpen and the player cannot
+ * move at all while it is up. What still reaches it is the piece VANISHING out
+ * from under an open crate (destroyed, decayed, or raided) — close on that, or
+ * the workspace keeps offering slots in a container that no longer exists.
  */
 function closeOutOfRangePanels(ui: UIState): void {
   const world = clientWorld.world;

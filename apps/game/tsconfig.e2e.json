@@ -1,0 +1,16 @@
+{
+  // The Playwright suite. It gets its OWN project because it is neither client nor
+  // server: it runs in Node, imports @playwright/test, and its page.evaluate()
+  // bodies are DOM code that never ships.
+  //
+  // Without this it was in no typechecked project at all (tsconfig.json has no
+  // `include`, and the client/server projects scope to src/), so the suite could
+  // rot silently while CI stayed green — exactly the failure it exists to prevent.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // DOM for the page.evaluate() bodies, node for the test runner around them.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["e2e"]
+}

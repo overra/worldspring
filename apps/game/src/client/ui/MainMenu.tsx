@@ -8,15 +8,26 @@ import type { LeaderboardEntry } from "@worldspring/shared/protocol";
 import { connect } from "@/client/net/connection";
 import { useUIStore } from "@/client/state/store";
 import "./ui.css";
+import "./menu.css";
 
 const NAME_STORAGE_KEY = "ws_name";
 // Pre-Worldspring key; read as a fallback so a saved name survives the rename.
 const LEGACY_NAME_KEY = "dc_name";
 const LEADERBOARD_SHOWN = 5;
 
-const CONTROLS_LEGEND =
-  "WASD move · Shift sprint · Mouse look · LMB attack · R reload · " +
-  "E pick up · 1-8 hotbar · Tab inventory · G drop · V camera · Space jump";
+const CONTROLS_LEGEND: readonly (readonly [key: string, action: string])[] = [
+  ["WASD", "move"],
+  ["SHIFT", "sprint"],
+  ["MOUSE", "look"],
+  ["LMB", "attack"],
+  ["R", "reload"],
+  ["E", "pick up"],
+  ["1-8", "hotbar"],
+  ["TAB", "inventory"],
+  ["G", "drop"],
+  ["V", "camera"],
+  ["SPACE", "jump"],
+];
 
 function loadSavedName(): string {
   // localStorage can throw in private browsing / blocked-storage contexts.
@@ -89,7 +100,7 @@ function Leaderboard(): ReactElement | null {
   if (rows.length === 0) return null;
   return (
     <div className="menu-leaderboard">
-      <div className="lb-title">LONGEST LIVES</div>
+      <div className="ui-eyebrow lb-title">LONGEST LIVES</div>
       {rows.map((row, i) => (
         <div key={`${i}-${row.name}`} className="lb-row">
           <span className="lb-rank">{i + 1}</span>
@@ -123,7 +134,11 @@ export function MainMenu(): ReactElement {
 
   return (
     <div className="menu-root">
-      <div className="menu-panel">
+      {/* The glass of the in-game HUD, before there is a world behind it: the
+          title screen is the first thing anyone sees, and it has to read as the
+          same material as everything after it. */}
+      <div className="ui-panel ui-panel--xl menu-panel">
+        <div className="menu-mark" />
         <h1 className="menu-title">Worldspring</h1>
         <p className="menu-subtitle">a web survival experiment</p>
         <div className="menu-form">
@@ -141,7 +156,7 @@ export function MainMenu(): ReactElement {
             }}
           />
           <button
-            className="menu-join"
+            className="ui-btn ui-btn--primary ui-btn--lg menu-join"
             disabled={connecting || name.trim().length === 0}
             onClick={join}
           >
@@ -151,7 +166,16 @@ export function MainMenu(): ReactElement {
         {error !== null && <p className="menu-error">{error}</p>}
         <Leaderboard />
       </div>
-      <div className="menu-controls">{CONTROLS_LEGEND}</div>
+      <div className="menu-controls">
+        <div className="menu-keys">
+          {CONTROLS_LEGEND.map(([key, action]) => (
+            <span key={key} className="menu-control">
+              <kbd className="menu-key">{key}</kbd>
+              {action}
+            </span>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
