@@ -85,6 +85,7 @@ import {
 import type { SaveWorldStats, SchemaBootContext } from "./persistence";
 import type { GameMode } from "./mode/GameMode";
 import { makeMode } from "./mode/registry";
+import { NAV_ACTIVE_RADIUS, NAV_TILES_PER_TICK } from "./nav/navMesh";
 import {
   applyQueuedInputs,
   craftItem,
@@ -1383,6 +1384,14 @@ export class GameRoom extends DurableObject<Env> {
     game.physics.step(dt, game.time);
     tickVehicles(game, dt);
     phase("physics");
+    // doc 14 — engine-owned navmesh: keep tiles resident around live players,
+    // then carve a bounded number of pending/dirty tiles. An ENGINE phase (like
+    // physics), run BEFORE the mode's AI ticks so paths are current this tick.
+    for (const player of game.players.values()) {
+      if (player.alive) game.nav.ensureBuilt(player.core.x, player.core.z, NAV_ACTIVE_RADIUS);
+    }
+    game.nav.stepBuild(NAV_TILES_PER_TICK);
+    phase("nav");
     // Gameplay after the physics step — the mode's post-step ticks (trees,
     // zombies, survival + weather + airdrops, wildlife, fires/loot/corpses).
     this.mode.simAfterPhysics(game, dt, phase);

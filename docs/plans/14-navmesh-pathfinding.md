@@ -365,8 +365,8 @@ sized. Platform spine unaffected.
      (`GameRoom.ts:820-822`); worker-bundle delta recorded; **findings written into this doc's
      Spike/M0 section with an explicit GO/NO-GO line.** *(Opus 4.8 — runtime-compat + the whole
      feature gates on it.)*
-2. **M1 — NavSystem substrate + `Pathfinder` seam** *(the big one)* — engine-owned nav service
-   modeled on `PhysicsSystem`.
+2. **M1 — NavSystem substrate + `Pathfinder` seam** *(the big one)* — **✅ BUILT 2026-07-15**
+   (see M1 findings). Engine-owned nav service modeled on `PhysicsSystem`.
    - **Files:** `apps/game/src/server/nav/` (the `Pathfinder` interface + navcat impl, lifting
      `rebuildTile()` from the spike); `NavSystem` constructed in `createGameState`
      (`state.ts:542`, beside `physics`) and stored on `game.nav` (`state.ts:439` parallel); built
@@ -477,6 +477,43 @@ byte-identity holds and M1 adds the generate-and-compare-to-sim check.
 **GO line: navcat's build pipeline and `findPath` execute inside a real workerd Durable Object,
 pure-JS with no shim, at a per-tile build cost consistent with the spike and a trivial bundle
 delta. The gating unknown is closed — proceed to M1.**
+
+## M1 findings (built 2026-07-15)
+
+Files: `apps/game/src/server/nav/{pathfinder,navMesh}.ts` (the seam + NavSystem), integration in
+`systems/state.ts` (`GameState.nav` + `createGameState`), `GameRoom.ts` (`phase("nav")`),
+`systems/structures.ts` + `trees.ts` (dirty hooks); harness `apps/game/scripts/nav.mjs` (19
+checks, wired into `pnpm test`). Server typecheck + full build pass; navcat lands **only** in the
+server worker bundle (`dist/worldspring/index.js`), client clean. Reviewed adversarially (3
+dimensions × verify pass); one finding fixed (below), the rest confirmed non-issues or M2/M4 work.
+
+- **No `SCHEMA_VERSION` / `PROTOCOL_VERSION` bump** — as predicted. Derived, server-internal.
+- **Per-tile geometry is sourced LOCALLY**, not as a whole-world triangle soup: each tile samples
+  its own terrain (world-grid-aligned 4 m points, `Math.fround` — PhysicsSystem parity) + a
+  `queryStatics` walls/trees pull for the expanded tile bounds. Generation is activity-scoped *by
+  construction* — a full-world soup never exists — and the spike's `chunkyTriMesh` intermediate is
+  dropped entirely.
+- **`walkableHeight` is `floor`, not `ceil`** (§2 update): `ceil(1.8/0.25)=8` voxels = 2.0 m
+  over-restricts and, after voxelization, blocks a `DOOR_HEIGHT` (2.2 m) doorway the sim allows
+  (the sim's overhead rule is `wall.y0 >= y + 1.8`). `floor` → 7 voxels (1.75 m ≤ 1.8) keeps nav
+  reachability ⊇ sim; the 1.1 m window opening still yields no walkable span. Validated by a
+  **generate-and-compare-to-sim** check (open doorway passable, window blocked).
+- **Hollow boxes have walkable interiors** — a building (walls+roof surface mesh) isn't solid, so
+  its interior floor stays walkable and its perimeter seals it (entered only via a doorway). This
+  is *correct* (buildings get walkable interiors), and is why `isWalkable` gained a ground-level
+  Y guard — a solid obstacle's **roof** is a real poly but not ground-walkable.
+- **Tile cap is scale-aware**: `min(tilesPerSide², 512)` (~64 MB ceiling). Standard stays
+  near-fully resident so eviction never thrashes the 40-player active set; large/huge
+  activity-scope and evict cold LRU tiles. (Fixes the review's one real finding — the old fixed
+  192 could thrash at dispersed multi-player.) Exact tuning is an M4/loadtest item.
+- **Deferred to M2** (the consumer): activity-scoping tiles around live *players* this milestone;
+  M2's zombie chase should also `ensureBuilt` around aggroed zombies + path endpoints so a chaser
+  at the edge of a player's radius keeps its own tiles resident. Tiles fill reactively at ≤1/tick,
+  so a just-joined player's area straight-lines for a few seconds until built (no worse than today).
+- **Deferred to M4**: the `ServerConfig` on/off dial + a `navTileCap` field (the module already
+  takes a `tileCap` option). The water reconciliation is a per-4 m-cell centroid cut — a bounded
+  sub-cell shoreline approximation (erosion already relaxes the boundary ~0.5 m); a per-voxel cut
+  is a build-cost tradeoff parked unless a shoreline chase proves it matters.
 
 ## Open questions
 

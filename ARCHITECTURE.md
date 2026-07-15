@@ -208,9 +208,12 @@ in sync when adding a preset: the union, `QUALITY_CONFIGS`, and `EscapeMenu`'s
   Map keyed by WebSocket (in-memory is fine since we never hibernate while
   players are connected — document it).
 - Each tick: apply queued input cmds (clamp per `MAX_INPUT_DT`,
-  `MAX_TICK_INPUT_DT`), zombie AI, combat cooldowns, survival vitals,
-  campfire/loot/time systems, then per-player interest-filtered `snap`
-  (include `you`, `ack`, events near the player, `hurt` only to victim).
+  `MAX_TICK_INPUT_DT`), the engine-owned **navmesh** step (doc 14 — a server-side
+  tiled navmesh, `server/nav/`, built lazily around live players and queried by
+  AI pathfinding; server-private, never persisted or wired), zombie AI, combat
+  cooldowns, survival vitals, campfire/loot/time systems, then per-player
+  interest-filtered `snap` (include `you`, `ack`, events near the player, `hurt`
+  only to victim).
 - `systems/` split as pure-ish functions over a `GameState` you define:
   `zombies.ts`, `combat.ts`, `survival.ts`, `loot.ts` (tables from
   `@/shared/items`, spawn points from world, respawn timers, death bags),
