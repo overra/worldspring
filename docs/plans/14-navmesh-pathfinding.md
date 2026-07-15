@@ -322,9 +322,9 @@ stays straight-line. The config dial can fold into M1 or trail as its own small 
   unchanged. A fork with the dial off behaves exactly as today.
 
 **Threatens**
-- **workerd execution is asserted-by-inspection, not proven.** navcat is pure JS (only dep
-  `mathcat`), which is why it *should* run in the DO where doc 13's Rapier WASM needed a shim —
-  but the spike ran under Node. M0 gates the whole feature on running it in real workerd.
+- ~~**workerd execution is asserted-by-inspection, not proven.**~~ **RESOLVED by M0 (2026-07-15):**
+  navcat's build pipeline + `findPath` ran inside a real workerd Durable Object, pure-JS with no
+  shim — see M0 findings. A deployed-prod smoke remains a cheap M1 add.
 - **Memory at large/huge scale.** ~75–80 MB for a full standard mesh is close enough to 128 MB
   that the bigger tiers cannot bake fully — the eviction policy is load-bearing, not polish.
 - **Scope gravity.** "make zombies dig through walls," "avoid the barrels," "predict paths
@@ -350,13 +350,14 @@ Ordering: **M0 → M1 → M2 → {M3, M4}**. M0 is a contained Wave-1.5 weekly s
 is the anchored big build if M0 passes. M2 delivers the headline fix. M3/M4 are weekly-slice
 sized. Platform spine unaffected.
 
-1. **M0 — workerd execution + cost confirmation** *(one session; GO/NO-GO)* — the biggest
-   unknown, isolated. The 2026-07-10 spike proved feasibility **under Node**; this proves it
-   **inside the DO**.
-   - **Files:** promote `apps/game/scripts/navcat-spike.mjs` (branch `spike/navcat`) into a
-     reproducible harness that runs navcat's per-tile build + `findPath` inside real workerd —
-     a `vitest` Workers-pool test and/or a `wrangler dev` scratch DO — not just Node. Add
-     `navcat@0.4.1` to `apps/game`.
+1. **M0 — workerd execution + cost confirmation** *(one session; GO/NO-GO)* — **✅ RAN 2026-07-15
+   — GO** (see M0 findings). The biggest unknown, isolated. The 2026-07-10 spike proved feasibility
+   **under Node**; this proved it **inside the DO**.
+   - **Files:** a reproducible harness that runs navcat's build + `findPath` inside real workerd,
+     not just Node. *Shipped as* `apps/game/scripts/navcat-m0/` — a `wrangler dev` scratch DO (the
+     repo has no vitest Workers pool; `wrangler dev` runs the real workerd binary). navcat is
+     installed in isolation for the run; the real `apps/game` dependency lands in M1 with the
+     first import.
    - **Accept:** navcat imports and `findPath` + per-tile rebuild **execute in workerd without
      throwing** on a missing Node builtin; re-captured p50/p95, per-tile rebuild ms, and
      retained-heap numbers on a Linux/workerd-representative runtime — measured by **wall-clock /
@@ -405,7 +406,7 @@ sized. Platform spine unaffected.
    straight-line fallback so arena/creative/potato servers disable pathfinding. *(Sonnet 4.8 —
    table-driven config.)*
 
-## Spike findings (navcat, run 2026-07-10, Node only) — **GO-with-conditions; workerd unconfirmed**
+## Spike findings (navcat, run 2026-07-10, Node only) — **GO-with-conditions; workerd confirmed by M0 below**
 
 Harness: `apps/game/scripts/navcat-spike.mjs` (branch `spike/navcat`, commit `dcda503`, **not**
 merged/CI-wired). navcat **0.4.1** (only hard dep `mathcat@0.0.12`; `three` optional and
@@ -438,18 +439,59 @@ arm64 — never inside workerd.**
 **Not yet proven (→ M0):** execution inside workerd (pure JS *should* be fine — no WASM-from-bytes
 issue like doc 13's Rapier — but unverified); Linux/workerd cost numbers; a reproducible,
 CI-wireable harness. **GO-with-conditions on feasibility and Node cost; the workerd GO/NO-GO
-line is M0's to write.** When M0 runs, this section is relabeled `## M0 findings (run <date>) —
-**GO/NO-GO**` per doc 13's convention, carrying the re-captured workerd numbers and the verdict.
+line is M0's to write.** M0 ran 2026-07-15 and closed it — see the next section.
+
+## M0 findings (run 2026-07-15) — **GO**
+
+Harness: `apps/game/scripts/navcat-m0/` — a throwaway scratch **Durable Object** (`worker.ts` +
+`wrangler.jsonc`) that imports `navcat` + `navcat/blocks`, builds a solo navmesh from a synthetic
+mesh (a 40 m ground plane + a 12 m building block), and runs `findPath` diagonally across it. Run
+under `wrangler dev` (local workerd) and curled, against an isolated `navcat@0.4.1` install (M1
+adds it as a real `apps/game` dependency when `src/server/nav/` imports it — no unused dep yet).
+
+**navcat executes inside a real workerd Durable Object — the gating unknown is closed.** The DO
+returned `ok: true`; the full build pipeline (`generateSoloNavMesh`: rasterize → filter → compact
+→ erode → regions → contours → polyMesh → detail → `addTile`) and the query (`findPath`) both ran
+with **no thrown Node-builtin error, no runtime shim**. Static confirmation backs it: navcat and
+its sole dep `mathcat` ship **zero** Node builtins, no `process.env`, no wasm (pure JS over typed
+arrays) — so there is no WASM-from-bytes restriction like doc 13's Rapier hit.
+
+| Metric | Result (local workerd DO) |
+| --- | --- |
+| Execution | `ok: true` — build + query ran, no throw |
+| Navmesh | 1 tile, 35 polys, 69 verts (valid) |
+| Query | `findPath` **success**, `COMPLETE_PATH`, 3-point path |
+| Routing | path `[-15,-12] → [-6,7] → [12,15]` **detours around** the block corner (±6), not straight through |
+| Build cost | cold 58 ms (first-call JIT), **warm p50 8 ms** — consistent with the spike's 5–9 ms per-tile rebuild |
+| Query cost | sub-ms — workerd rounds pure-CPU `performance.now` to **0 ms** (the predicted caveat); the spike's Node p50 **0.10 ms** stands as the real figure |
+| Bundle delta | **~285 KiB raw / ~54 KiB gzip** (navcat-dominated) — vs doc 13's ~1.9 MB Rapier wasm |
+
+**Honest boundaries of this run:** it used *local* workerd (`wrangler dev`), not deployed
+production Cloudflare — sufficient for the import/execute question (it is the real workerd binary),
+with a deployed-prod smoke a cheap M1 add (as doc 13 did). The mesh was synthetic, not the real
+256 m worldgen region — the spike already measured real-world build+cost under Node; M0's job was
+runtime compatibility, and M1 marries the two (real `PhysicsStaticsSource` geometry built inside
+the DO). Determinism was not re-tested here (M0 = execute + cost); the spike's same-process
+byte-identity holds and M1 adds the generate-and-compare-to-sim check.
+
+**GO line: navcat's build pipeline and `findPath` execute inside a real workerd Durable Object,
+pure-JS with no shim, at a per-tile build cost consistent with the spike and a trivial bundle
+delta. The gating unknown is closed — proceed to M1.**
 
 ## Open questions
+
+**Resolved 2026-07-15 (Adam): all recommendations below accepted.** Q2 is closed empirically by
+M0 (GO — navcat runs in workerd); Q3–Q6 are the accepted build decisions for M1; Q7's exact
+numbers finalize during M1 against the M0/spike cost curve.
 
 1. **Doc placement.** New doc **14** (standalone, doc-13-shaped) vs folding into doc 07. *Recommendation:
    14 — pathfinding is a multi-consumer engine substrate (zombies have no owning doc; doc 07
    owns wildlife behaviors, not a nav layer), exactly doc 13's situation; one new row each in
    README's doc-index and vocabulary tables, and promote README's "pathfinding (navcat spike
    GO)" bullet to reference it.*
-2. **Does navcat run in workerd at all?** *(the gate)* Spike is Node-only. *Recommendation: make
-   this M0 and block M1 on it; do not trust the Node run.*
+2. ~~**Does navcat run in workerd at all?**~~ *(the gate)* **ANSWERED by M0 (2026-07-15): GO** —
+   navcat's build pipeline + `findPath` execute inside a real workerd Durable Object, pure-JS with
+   no shim, build warm-p50 ~8 ms, ~54 KiB gzip bundle delta. See M0 findings.
 3. **Walkability mask — match the sim or over-constrain?** *Recommendation: add the
    `WATER_WALK_MIN` cut (routing into refused water is a real bug) and over-approximate the
    slope cap so navmesh reachability ⊇ sim reachability — never exclude a cell the sim can
