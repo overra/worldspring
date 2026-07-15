@@ -27,6 +27,7 @@ import { effectiveZombieMax } from "@worldspring/shared/config";
 import { distSq2D } from "@worldspring/shared/math";
 import { resolveStatics, stepZombie } from "@worldspring/shared/movement";
 import type { World } from "@worldspring/shared/world";
+import type { Waypoint } from "../nav/pathfinder";
 import { spawnZombieCorpse } from "./loot";
 import { damagePlayer } from "./survival";
 import { queueEvent, type GameState, type ServerPlayer, type Zombie } from "./state";
@@ -43,6 +44,24 @@ const SPAWN_MIN_TERRAIN_H = 0.3;
 const ROAMER_MIN_TERRAIN_H = 2.5;
 /** Close enough to the wander target to stand idle. */
 const WANDER_ARRIVE_DIST = 0.5;
+
+// doc 14 M2 — nav chase tuning (server-only AI; no wire/fingerprint surface).
+/** Replan cadence — ~6 ticks at 15 Hz. Amortizes findPath (p50 ~0.1 ms). */
+const REPATH_INTERVAL_S = 0.4;
+/** Target moved this far from the planned goal → replan now, not on the timer. */
+const REPATH_GOAL_DRIFT_M = 3;
+/** Within this of the current waypoint → advance to the next. Kept small (just
+ *  under the ~0.5 m navmesh erosion) so the follower actually rounds each corner
+ *  before advancing — a larger radius skips a corner waypoint and then steers
+ *  straight at the next one THROUGH the wall the corner routed around, wedging
+ *  the agent. Above one chase step (~0.36 m) so it registers arrival, not oscillates. */
+const WAYPOINT_ARRIVE_M = 0.4;
+/** Shoved this far off the current path segment (separation / terrain) → replan
+ *  so a displaced zombie can't straight-line its cached waypoint through a wall. */
+const NAV_STRAY_M = 2.5;
+/** Keep the chasing zombie's OWN nav tiles resident (M1 review — activity-scope
+ *  around AI, not just players), covering aggro range + a route bulge. */
+const NAV_CHASE_RADIUS = 40;
 /** Contract gap (spec says "± ~30"): military zombies spawn within this
  * radius of the compound center — inside the walls (half-extent 40). */
 const MILITARY_SPAWN_RADIUS = 30;
@@ -65,6 +84,11 @@ function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void
     wanderZ: z,
     wanderWait: WANDER_WAIT_MIN_S + Math.random() * (WANDER_WAIT_MAX_S - WANDER_WAIT_MIN_S),
     attackCooldown: 0,
+    path: null,
+    pathIndex: 1,
+    repathT: 0,
+    pathGoalX: 0,
+    pathGoalZ: 0,
   });
 }
 
@@ -181,6 +205,84 @@ function attackBlocked(state: GameState, zombie: Zombie, target: ServerPlayer): 
   return t !== null && t < dist - 0.05;
 }
 
+/** Squared distance from (px,pz) to the segment (ax,az)-(bx,bz). */
+function distToSegmentSq(
+  px: number,
+  pz: number,
+  ax: number,
+  az: number,
+  bx: number,
+  bz: number,
+): number {
+  const dx = bx - ax;
+  const dz = bz - az;
+  const len2 = dx * dx + dz * dz;
+  let t = len2 > 1e-9 ? ((px - ax) * dx + (pz - az) * dz) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const ex = px - (ax + t * dx);
+  const ez = pz - (az + t * dz);
+  return ex * ex + ez * ez;
+}
+
+/** True when the zombie has been shoved off its current path segment (post-
+ *  separation drift or a teleport) far enough to need a replan. */
+function zombieStrayed(zombie: Zombie): boolean {
+  const path = zombie.path;
+  if (!path || zombie.pathIndex < 1 || zombie.pathIndex >= path.length) return false;
+  const a = path[zombie.pathIndex - 1];
+  const b = path[zombie.pathIndex];
+  return distToSegmentSq(zombie.x, zombie.z, a.x, a.z, b.x, b.z) > NAV_STRAY_M * NAV_STRAY_M;
+}
+
+/** Advance past reached waypoints; return the current one to steer at, or null
+ *  at the path's end (steer straight at the target that last tick). */
+function nextWaypoint(zombie: Zombie): Waypoint | null {
+  const path = zombie.path;
+  if (!path) return null;
+  while (zombie.pathIndex < path.length) {
+    const wp = path[zombie.pathIndex];
+    if (distSq2D(zombie.x, zombie.z, wp.x, wp.z) > WAYPOINT_ARRIVE_M * WAYPOINT_ARRIVE_M) return wp;
+    zombie.pathIndex++;
+  }
+  return null;
+}
+
+/**
+ * doc 14 M2 — chase via the navmesh. Replan on a cadence / goal-drift / stray,
+ * steer at the current waypoint, and fall back to straight-line steering on a
+ * null path (target unreachable, or the tiles aren't built yet) so the zombie
+ * never stalls. `stepZombie` — with its water/statics/ground rules — is unchanged;
+ * only the (tx,tz) it receives moves from the raw goal to the next waypoint.
+ */
+function chaseStep(
+  state: GameState,
+  zombie: Zombie,
+  tx: number,
+  tz: number,
+  speed: number,
+  dt: number,
+): void {
+  zombie.repathT -= dt;
+  const goalDrift =
+    distSq2D(tx, tz, zombie.pathGoalX, zombie.pathGoalZ) > REPATH_GOAL_DRIFT_M * REPATH_GOAL_DRIFT_M;
+  if (zombie.path === null || zombie.repathT <= 0 || goalDrift || zombieStrayed(zombie)) {
+    // Keep this zombie's own tiles resident, then plan a fresh route. `nav` is
+    // optional so a harness GameState without one degrades to straight-line.
+    state.nav?.ensureBuilt(zombie.x, zombie.z, NAV_CHASE_RADIUS);
+    zombie.path = state.nav?.findPath(zombie.x, zombie.z, tx, tz) ?? null;
+    zombie.pathIndex = 1;
+    // Jitter the cadence per replan so a horde that aggros on the same tick
+    // doesn't sync every replan onto one tick — spreads the A* cost across ticks
+    // (Math.random is fine here: AI is already outside the determinism contract).
+    zombie.repathT = REPATH_INTERVAL_S * (0.8 + 0.4 * Math.random());
+    zombie.pathGoalX = tx;
+    zombie.pathGoalZ = tz;
+  }
+  const wp = nextWaypoint(zombie);
+  if (wp) stepZombie(zombie, wp.x, wp.z, speed, dt, state.world);
+  else stepZombie(zombie, tx, tz, speed, dt, state.world);
+}
+
 export function tickZombies(state: GameState, dt: number): void {
   // Master toggle: threats.zombies=false means no spawn, tick, OR respawn —
   // never advance AI/damage/separation even if the set were somehow non-empty
@@ -194,11 +296,20 @@ export function tickZombies(state: GameState, dt: number): void {
       const tx = target.core.x;
       const tz = target.core.z;
       const dSq = distSq2D(zombie.x, zombie.z, tx, tz);
-      if (dSq <= ZOMBIE_ATTACK_RANGE * ZOMBIE_ATTACK_RANGE) {
+      // Attack ONLY with a clear line to the target. A wall between them (LOS
+      // blocked) keeps the zombie CHASING — routing around to an opening —
+      // instead of freezing in attack-pause against the wall. Without this LOS
+      // gate a player pressed to the inner face is safe behind any wall, which
+      // is the doc 06 §331 base-cheese this milestone fixes (doc 14 §4/M2).
+      if (
+        dSq <= ZOMBIE_ATTACK_RANGE * ZOMBIE_ATTACK_RANGE &&
+        !attackBlocked(state, zombie, target)
+      ) {
         zombie.state = "attack";
+        zombie.path = null;
         zombie.yaw = Math.atan2(-(tx - zombie.x), -(tz - zombie.z));
         zombie.y = state.world.groundHeight(zombie.x, zombie.z);
-        if (zombie.attackCooldown <= 0 && !attackBlocked(state, zombie, target)) {
+        if (zombie.attackCooldown <= 0) {
           zombie.attackCooldown = ZOMBIE_ATTACK_COOLDOWN_S;
           const dmg =
             (zombie.mil ? MILITARY_ZOMBIE_DMG : ZOMBIE_DMG) * state.config.threats.zombieDamage;
@@ -209,7 +320,7 @@ export function tickZombies(state: GameState, dt: number): void {
         const speed =
           (zombie.mil ? MILITARY_ZOMBIE_SPEED : ZOMBIE_CHASE_SPEED) *
           state.config.threats.zombieSpeed;
-        stepZombie(zombie, tx, tz, speed, dt, state.world);
+        chaseStep(state, zombie, tx, tz, speed, dt);
       }
       continue;
     }
@@ -297,9 +408,12 @@ function separateZombies(state: GameState): void {
   for (const zombie of zombies) {
     if (!pushedIds.has(zombie.id)) continue;
     if (state.world.heightAt(zombie.x, zombie.z) < WATER_WALK_MIN) {
-      // Pushed into deep water: pull back toward home instead.
+      // Pushed into deep water: pull back toward home instead. A teleport is a
+      // position discontinuity — drop the cached path so next tick replans from
+      // where the zombie actually is, not from a stale route (doc 14 §4/M2).
       zombie.x = zombie.homeX;
       zombie.z = zombie.homeZ;
+      zombie.path = null;
     }
     const [nx, nz] = resolveStatics(state.world, zombie.x, zombie.z, zombie.y, ZOMBIE_RADIUS);
     zombie.x = nx;

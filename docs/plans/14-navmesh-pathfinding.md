@@ -385,7 +385,8 @@ sized. Platform spine unaffected.
      **and** sampled navmesh walkability agrees with `resolveStatics`/`heightAt` (incl. an open
      doorway passable, a window blocked); retained heap stays under a defined budget at standard
      tier. *(Opus 4.8 — engine seam, memory ceiling, tick budget, determinism module-placement.)*
-3. **M2 — zombie chase path-following** *(the headline fix)* — swap the target, keep the mover.
+3. **M2 — zombie chase path-following** *(the headline fix)* — **✅ BUILT 2026-07-15** (see M2
+   findings). Swap the target, keep the mover.
    - **Files:** `zombies.ts:207-212` (feed `path[pathIndex]` instead of `target.core.x/z`;
      `null` path → straight-line fallback); transient `path/pathIndex/repathT/pathGoal` fields on
      `Zombie` (`state.ts:176-195`); repath on timer / goal-drift / **agent displacement + the
@@ -514,6 +515,39 @@ dimensions × verify pass); one finding fixed (below), the rest confirmed non-is
   takes a `tileCap` option). The water reconciliation is a per-4 m-cell centroid cut — a bounded
   sub-cell shoreline approximation (erosion already relaxes the boundary ~0.5 m); a per-voxel cut
   is a build-cost tradeoff parked unless a shoreline chase proves it matters.
+
+## M2 findings (built 2026-07-15)
+
+Files: `systems/zombies.ts` (the `chaseStep`/`nextWaypoint`/`zombieStrayed` helpers, the
+`tickZombies` chase branch + attack LOS gate, the `separateZombies` teleport path-invalidation),
+`systems/state.ts` (transient `Zombie` path fields). Harness `apps/game/scripts/nav-chase.mjs`
+(12 checks, in `pnpm test`) drives the real `tickZombies` over a fake GameState + real NavSystem +
+a synthetic wall. Full typecheck + build pass; all existing harnesses green. Adversarially reviewed
+(3 dims + verify); one fix — jitter the repath cadence per replan so a horde aggroing on one tick
+doesn't sync every A\* onto the same tick. (Two "null-path perf cliff" findings were high-confidence
+misreads: navcat returns a *non-null partial* path for an unreachable-but-resolvable target, so the
+expensive search is cadence-throttled; `null` only comes from the cheap nearest-poly early-out.)
+
+- **The headline works**: a zombie aggroed on the far side of a wall **routes around** it to reach
+  the player (validated end-to-end), instead of piling against the wall. `stepZombie` is unchanged
+  — only the `(tx,tz)` it receives moves from the raw goal to the current path waypoint.
+- **The attack state is now line-of-sight gated**: `dSq <= RANGE² && !attackBlocked(...)`. A
+  wall-separated in-range target drops to the chase branch and keeps routing to an opening instead
+  of freezing in attack-pause — so a player pressed to the **inner** wall face is no longer safe
+  (the actual doc 06 §331 cheese). The old inner `!attackBlocked` damage guard folded into the
+  outer gate (no behavior lost — damage still can't pass a wall).
+- **`WAYPOINT_ARRIVE_M` must be small** (0.4 m, just under the ~0.5 m navmesh erosion, just over one
+  chase step). A large arrive radius **skips a corner waypoint** and then steers straight at the
+  next one *through* the wall the corner routed around — wedging the agent at the wall end. The
+  progress assertion caught this; the small radius makes the follower round each corner.
+- **Transient path state** (`path`/`pathIndex`/`repathT`/`pathGoalX/Z` on `Zombie`) is in-memory
+  only — never persisted, never on the wire, **no `PROTOCOL_VERSION`/`SCHEMA_VERSION` bump**.
+  Replan on cadence (0.4 s) / goal-drift (3 m) / stray-off-segment (2.5 m); the deep-water
+  teleport-to-home nulls the path (position discontinuity → replan from where the zombie is).
+- **Activity-scope around AI** (the M1-review deferral): each chasing zombie `ensureBuilt`s its own
+  tiles, so a chaser at the edge of a player's radius keeps its route resident.
+- **Null path → straight-line fallback** (unreachable, or tiles not yet built): never a stall. A
+  fully-sealed base yields no path, so the zombie mills at the wall — correct (it's impenetrable).
 
 ## Open questions
 
