@@ -55,7 +55,16 @@ const VIEWPORTS = [
   { name: "ultrawide", width: 2560, height: 1080 },
 ] as const;
 
+// A VIEWPORTS sweep does ~7× the work of a single-viewport test — a slow mobile
+// join, then per viewport a resize, a settle, and a full-DOM pass — and on the
+// Pixel 7 project under a loaded CI runner that legitimately runs long: the
+// overlap sweep clocked 58s and the hit-test sweep timed out at the 90s default.
+// test.slow() triples the budget for exactly this "genuinely does more work" case,
+// which is the honest lever — a blanket global timeout bump would also mask a real
+// hang in the fast tests.
+
 test("no two HUD panels overlap, at any viewport", async ({ page }) => {
+  test.slow();
   await joinGame(page, "layout");
 
   const failures: string[] = [];
@@ -104,6 +113,7 @@ test("no two HUD panels overlap, at any viewport", async ({ page }) => {
 });
 
 test("every visible control is actually clickable, at any viewport", async ({ page }) => {
+  test.slow();
   await joinGame(page, "hittest");
 
   const failures: string[] = [];
@@ -149,6 +159,7 @@ test("every visible control is actually clickable, at any viewport", async ({ pa
 });
 
 test("nothing paints over the open workspace", async ({ page }) => {
+  test.slow();
   await joinGame(page, "workspace");
   await page.keyboard.press("Tab");
   await expect(page.locator(".hud-inv")).toBeVisible();
