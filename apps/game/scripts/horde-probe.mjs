@@ -32,7 +32,8 @@ const bundled = await build({
       "  HORDE_KILL_POINTS, HORDE_BOSS_SCORE, HORDE_WAVE_CLEAR_BONUS, HORDE_START_AMMO_9MM,\n" +
       "  HORDE_AMMO_PER_WAVE, HORDE_SPAWN_RING_MIN, HORDE_SPAWN_RING_MAX, HORDE_BASE_COUNT,\n" +
       "  HORDE_COUNT_GROWTH, HORDE_PLAYER_COUNT_SCALE, HORDE_SPAWN_BATCH_BASE, HORDE_HP_GROWTH,\n" +
-      "  HORDE_MILITARY_STEP, HORDE_MILITARY_MAX_FRAC, HORDE_BOSS_EVERY, HORDE_BOSS_HP_BASE,\n" +
+      "  HORDE_MILITARY_STEP, HORDE_MILITARY_MAX_FRAC, HORDE_MILITARY_START_WAVE, HORDE_BOSS_EVERY,\n" +
+      "  HORDE_BOSS_HP_BASE,\n" +
       "  HORDE_BOSS_HP_PER_TIER, ZOMBIE_HP\n" +
       '} from "@worldspring/shared/constants";\n',
     resolveDir: modeDir,
@@ -68,6 +69,7 @@ const {
   HORDE_HP_GROWTH,
   HORDE_MILITARY_STEP,
   HORDE_MILITARY_MAX_FRAC,
+  HORDE_MILITARY_START_WAVE,
   HORDE_BOSS_EVERY,
   HORDE_BOSS_HP_BASE,
   HORDE_BOSS_HP_PER_TIER,
@@ -89,7 +91,8 @@ function check(cond, msg) {
 const quota = (n, p) =>
   Math.round((HORDE_BASE_COUNT + HORDE_COUNT_GROWTH * (n - 1)) * (0.7 + HORDE_PLAYER_COUNT_SCALE * p));
 const batch = (n) => HORDE_SPAWN_BATCH_BASE + Math.floor(n / 4);
-const milFrac = (n) => Math.min(Math.max(HORDE_MILITARY_STEP * (n - 2), 0), HORDE_MILITARY_MAX_FRAC);
+const milFrac = (n) =>
+  Math.min(Math.max(HORDE_MILITARY_STEP * (n - HORDE_MILITARY_START_WAVE + 1), 0), HORDE_MILITARY_MAX_FRAC);
 const hpScale = (n) => 1 + HORDE_HP_GROWTH * (n - 1);
 const bossHp = (n) => HORDE_BOSS_HP_BASE + HORDE_BOSS_HP_PER_TIER * (Math.floor(n / HORDE_BOSS_EVERY) - 1);
 
@@ -288,6 +291,43 @@ const Q1 = quota(1, P2); // 8
 }
 
 // =====================================================================
+// 7b. Muster fallback — a squad centroid in water musters onto a squadmate
+// =====================================================================
+console.log("[7b] water-centroid muster fallback");
+{
+  const mode = createHordeMode();
+  const game = makeState(mode);
+  // A lake at the origin: water (height -1) within r<50 of (0,0), dry land
+  // (height 5) everywhere else. Two squadmates on opposite shores put their
+  // centroid squarely in the lake — the flat makeWorld island can't reach this.
+  game.world = {
+    size: 800,
+    spawnPoints: [{ x: 200, z: 200 }],
+    groundHeight: () => 1,
+    heightAt: (x, z) => (Math.hypot(x, z) < 50 ? -1 : 5),
+  };
+  mode.onWorldReady(game, true);
+  const a = mode.createPlayer(game, "a", "Ashore", "ta");
+  a.core.x = 100;
+  a.core.z = 0;
+  const b = mode.createPlayer(game, "b", "Bshore", "tb");
+  b.core.x = -100;
+  b.core.z = 0;
+  // Centroid of a+b is (0,0) — in the lake. The joiner must fall back to a living
+  // squadmate's dry tile, not spawn on the seabed at the centroid.
+  const joiner = mode.createPlayer(game, "c", "Cjoiner", "tc");
+  const onCentroid = Math.hypot(joiner.core.x, joiner.core.z) < 1e-6;
+  const onSquadmate =
+    (Math.abs(joiner.core.x - 100) < 1e-6 || Math.abs(joiner.core.x + 100) < 1e-6) &&
+    Math.abs(joiner.core.z) < 1e-6;
+  check(!onCentroid, "a water centroid is not used as the muster point");
+  check(
+    onSquadmate && game.world.heightAt(joiner.core.x, joiner.core.z) >= 5,
+    "the joiner musters onto a living squadmate's dry tile",
+  );
+}
+
+// =====================================================================
 // 8. Escalation — drive to wave 3 (1 player, deterministic mix)
 // =====================================================================
 console.log("[8] escalation to wave 3");
@@ -327,16 +367,23 @@ console.log("[10] boss wave");
   const bhp = bossHp(5);
   const boss = [...game.zombies.values()].find((z) => z.hp === bhp);
   check(!!boss, `wave 5 spawns a boss at hp ${bhp}`);
-  check(notices(game).some((n) => n.includes("A BRUTE emerges")), "boss spawn is announced");
-  // Kill only the boss → next tick books the boss bonus (+ the flat kill).
-  game.zombies.delete(boss.id);
-  game.outbox.length = 0;
-  tick(game);
-  check(notices(game).some((n) => n.includes("Brute down")), "boss death is announced");
-  // The clear notice would also carry the running score; assert the boss bonus via
-  // a fresh wave to isolate it is unnecessary — instead confirm no clear fired (the
-  // wave still has its normal zombies alive) and the announce fired.
-  check(!notices(game).some((n) => n.includes("cleared")), "boss down does not clear the wave (normals remain)");
+  // Guard the deref: a failed spawn must not throw here and mask sections 11–13.
+  if (!boss) {
+    console.error("  boss-dependent checks skipped — no boss spawned");
+  } else {
+    check(notices(game).some((n) => n.includes("A BRUTE emerges")), "boss spawn is announced");
+    // Kill only the boss → next tick books the boss bonus (+ the flat kill).
+    game.zombies.delete(boss.id);
+    game.outbox.length = 0;
+    tick(game);
+    const down = notices(game).find((n) => n.includes("Brute down"));
+    check(!!down, "boss death is announced");
+    // The bonus must flow into the notice with the right constant — a dropped or
+    // wrong HORDE_BOSS_SCORE would otherwise still pass the announce check above.
+    check(!!down && down.includes(`+${HORDE_BOSS_SCORE}`), `boss death books the +${HORDE_BOSS_SCORE} bonus`);
+    // The wave still has its normal zombies alive → the boss kill alone must not clear it.
+    check(!notices(game).some((n) => n.includes("cleared")), "boss down does not clear the wave (normals remain)");
+  }
 }
 
 // =====================================================================

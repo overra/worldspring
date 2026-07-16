@@ -33,6 +33,7 @@ import {
   HORDE_KILL_POINTS,
   HORDE_MAX_CONCURRENT,
   HORDE_MILITARY_MAX_FRAC,
+  HORDE_MILITARY_START_WAVE,
   HORDE_MILITARY_STEP,
   HORDE_PLAYER_COUNT_SCALE,
   HORDE_SPAWN_BATCH_BASE,
@@ -94,7 +95,10 @@ export function createHordeMode(): GameMode {
   };
   const hpScale = (n: number): number => 1 + HORDE_HP_GROWTH * (n - 1);
   const milFrac = (n: number): number =>
-    Math.min(Math.max(HORDE_MILITARY_STEP * (n - 2), 0), HORDE_MILITARY_MAX_FRAC);
+    Math.min(
+      Math.max(HORDE_MILITARY_STEP * (n - HORDE_MILITARY_START_WAVE + 1), 0),
+      HORDE_MILITARY_MAX_FRAC,
+    );
   const isBossWave = (n: number): boolean => n % HORDE_BOSS_EVERY === 0;
   const bossHp = (n: number): number =>
     HORDE_BOSS_HP_BASE + HORDE_BOSS_HP_PER_TIER * (Math.floor(n / HORDE_BOSS_EVERY) - 1);
@@ -283,10 +287,12 @@ export function createHordeMode(): GameMode {
     game.zombieRespawns.length = 0;
 
     // 0-player freeze: an empty room neither drains a wave, spawns, scores, nor
-    // loses; a rejoin resumes in place.
+    // loses; a rejoin resumes in place. game.time advances by dt every tick
+    // (GameRoom), so pushing the deadline by the same dt holds the remaining
+    // intermission/defeat time constant — a full-duration reset each tick would
+    // instead restart the whole timer on rejoin.
     if (onlineCount(game) === 0) {
-      if (phase === "intermission") nextPhaseAt = game.time + HORDE_INTERMISSION_S;
-      else if (phase === "defeat") nextPhaseAt = game.time + HORDE_DEFEAT_S;
+      nextPhaseAt += dt;
       return;
     }
 
