@@ -23,7 +23,7 @@ import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { PlantedTree } from "@worldspring/shared/trees";
 import { clientWorld } from "@/client/runtime";
-import { extractVariant, TREES_MODEL_URL, VARIANT_NODES, type VariantAssets } from "./Trees";
+import { extractVariant, tintOf, TREES_MODEL_URL, VARIANT_NODES, type VariantAssets } from "./Trees";
 import {
   buildChunkedDressing,
   type ChunkedDressing,
@@ -92,7 +92,10 @@ function buildPlanted(variants: VariantTable, trees: Iterable<PlantedTree>): Chu
     dummy.scale.setScalar(s);
     dummy.updateMatrix();
     const matrix = dummy.matrix.clone();
-    for (const bucket of ids) entries.push({ bucket, matrix });
+    // Per-tree tint (seed-stable), matching the natural forest so planted and
+    // wild trees share the same varied look instead of reading as flat clones.
+    const color = tintOf(seed);
+    for (const bucket of ids) entries.push({ bucket, matrix, color });
   }
   return buildChunkedDressing(buckets, entries);
 }

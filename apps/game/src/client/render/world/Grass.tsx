@@ -38,7 +38,15 @@ const HEIGHT_SCALE_MIN = 0.7;
 const HEIGHT_SCALE_MAX = 1.3;
 
 const BASE_COLOR = "#55703f";
-const LIGHTNESS_JITTER = 0.08; // +/-8% lightness per blade
+const LIGHTNESS_JITTER = 0.11; // +/-11% lightness per blade
+const HUE_JITTER = 0.018; // +/-~6.5deg hue per blade (warm/cool green mix)
+const SAT_JITTER = 0.06; // +/-6% saturation per blade
+// Vertical shading baked into the blade geometry (vertex colors, base->tip):
+// bases sit in self/ground shadow, tips catch the light. Multiplies with the
+// per-blade instance color, so every blade reads rounded instead of a flat
+// cutout without any per-frame cost.
+const BLADE_BASE_SHADE = 0.62; // darkening at the blade base
+const BLADE_TIP_SHADE = 1.0; // full brightness at the tip
 // Low ground (just above the beach line) shifts toward yellow.
 const YELLOW_FADE_TOP = 3.2; // fully green at/above this height
 const YELLOW_HUE_SHIFT = 0.035;
@@ -112,10 +120,16 @@ function createBladeGeometry(): THREE.BufferGeometry {
   // Bend weight (== uv.y): 0 at the base verts, 1 at the tip verts. Kept as
   // its own attribute so the shader patch never depends on USE_UV defines.
   const bend = new Float32Array([0, 0, 1, 1]);
+  // Base->tip shading gradient (vertex colors). Multiplies with instanceColor
+  // in the standard color chunks, so each blade darkens toward its root.
+  const b = BLADE_BASE_SHADE;
+  const t = BLADE_TIP_SHADE;
+  const colors = new Float32Array([b, b, b, b, b, b, t, t, t, t, t, t]);
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   geometry.setAttribute("aBend", new THREE.BufferAttribute(bend, 1));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setIndex([0, 1, 2, 0, 2, 3]);
   return geometry;
 }
@@ -126,6 +140,7 @@ function createWindMaterial(timeUniform: THREE.IUniform<number>): THREE.MeshLamb
   const material = new THREE.MeshLambertMaterial({
     color: "#ffffff",
     side: THREE.DoubleSide,
+    vertexColors: true, // base->tip gradient baked into the blade geometry
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = timeUniform;
@@ -189,6 +204,8 @@ function buildChunk(world: World, cx: number, cz: number, mesh: THREE.InstancedM
     const yaw = rng.range(0, Math.PI * 2);
     const heightScale = rng.range(HEIGHT_SCALE_MIN, HEIGHT_SCALE_MAX);
     const lightJitter = rng.range(-LIGHTNESS_JITTER, LIGHTNESS_JITTER);
+    const hueJitter = rng.range(-HUE_JITTER, HUE_JITTER);
+    const satJitter = rng.range(-SAT_JITTER, SAT_JITTER);
 
     const y = world.heightAt(x, z);
     if (y < MIN_GRASS_HEIGHT) continue; // beach / underwater
@@ -222,11 +239,12 @@ function buildChunk(world: World, cx: number, cz: number, mesh: THREE.InstancedM
     dummy.updateMatrix();
     mesh.setMatrixAt(placed, dummy.matrix);
 
-    // Base green, +/-8% lightness, drifting yellower toward the beach line.
+    // Base green with per-blade hue/sat/lightness scatter (so the field reads
+    // as many plants, not one paint color), drifting yellower toward the beach.
     const low = clamp((YELLOW_FADE_TOP - y) / (YELLOW_FADE_TOP - MIN_GRASS_HEIGHT), 0, 1);
     colorScratch.setHSL(
-      baseHsl.h - YELLOW_HUE_SHIFT * low,
-      Math.min(1, baseHsl.s + YELLOW_SAT_BOOST * low),
+      baseHsl.h - YELLOW_HUE_SHIFT * low + hueJitter,
+      clamp(baseHsl.s + YELLOW_SAT_BOOST * low + satJitter, 0, 1),
       baseHsl.l * (1 + lightJitter),
     );
     mesh.setColorAt(placed, colorScratch);
