@@ -85,7 +85,17 @@ console.log("no oscillation after the threat leaves:");
     if (deer.state === "flee") reFled = true;
   }
   check(!reFled, "deer never re-enters 'flee' after the threat is gone (no ping-pong)");
-  check(deer.x < 0, `deer stays on the side it fled to — does NOT march back toward spawn (x = ${deer.x.toFixed(1)})`);
+  // Assert the HOME, not the deer's instantaneous x. The deer lands ~6m from
+  // spawn and then grazes anywhere within WANDER_RADIUS (14m) of home, so
+  // `deer.x < 0` is not an invariant at all — a random wander carries it back
+  // across x=0 in ~5% of runs, which is exactly how this went red in CI. Home
+  // only ever moves in the flee branch, so it IS deterministic here, and it is
+  // the thing the fix buys: pre-fix it stayed pinned at spawn (0,0) and dragged
+  // the deer back for another lap.
+  check(
+    deer.homeX === fledX && deer.homeZ === fledZ,
+    `grazing home stays where it fled — never migrates back toward spawn (home x = ${deer.homeX.toFixed(1)}, fled x = ${fledX.toFixed(1)})`,
+  );
   check(maxDrift < 20, `deer grazes near its NEW home, not back toward the player (max drift ${maxDrift.toFixed(1)} m)`);
 }
 
