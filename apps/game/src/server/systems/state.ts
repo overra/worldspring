@@ -557,7 +557,9 @@ export function createGameState(
     // non-leaf modules (strip-types harness constraint).
     physics: new PhysicsSystem(world, config.physics, pieceAabbs),
     // doc 14 — the World satisfies NavStaticsSource (size/heightAt/queryStatics).
-    nav: new NavSystem(world),
+    // Always constructed; the config.nav.enabled dial gates its per-tick work
+    // (GameRoom's nav phase) and the zombie chase's use of it (doc 14 M4).
+    nav: new NavSystem(world, { tileCap: config.nav.tileCap }),
     structureMeta: new Map(),
     doorBackoff: new Map(),
     codeTryAt: new Map(),
