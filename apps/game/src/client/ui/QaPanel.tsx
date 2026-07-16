@@ -6,7 +6,7 @@
 // so this adds no production surface. The set list + checklists come from a
 // build-time glob of the on-disk sets — no server round-trip, no welcome field.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { reprovision } from "@/client/net/connection";
 
 interface SetInfo {
@@ -38,13 +38,17 @@ function isPreviewOrigin(): boolean {
   );
 }
 
+// Parked top-LEFT, not top-right: the minimap + clock/ping stack own the whole
+// top-right corner (map.css), and a 280px panel there sat squarely on top of the
+// ring. The left corner is clear during play, and the panel is collapsible so it
+// never blocks the view either.
 const wrapStyle: React.CSSProperties = {
   position: "fixed",
   top: 8,
-  right: 8,
+  left: 8,
   zIndex: 9999,
   width: 280,
-  maxHeight: "70vh",
+  maxHeight: "calc(100vh - 16px)",
   overflowY: "auto",
   padding: "8px 10px",
   background: "rgba(12, 14, 18, 0.88)",
@@ -56,9 +60,35 @@ const wrapStyle: React.CSSProperties = {
   userSelect: "none",
 };
 
+const btnStyle: React.CSSProperties = {
+  background: "#2a3340",
+  color: "#e8e4d8",
+  border: "1px solid #555",
+  borderRadius: 4,
+  padding: "2px 8px",
+  cursor: "pointer",
+  font: "inherit",
+};
+
+// The load-bearing keys a tester needs to work any checklist. Pulled straight
+// from InputController (WASD/Shift/Space movement; Tab/F/R/G/E/1-8 actions).
+const CONTROLS: [string, string][] = [
+  ["Move / sprint / jump", "WASD · Shift · Space"],
+  ["Look (click to lock) / release", "Mouse · Esc"],
+  ["Inventory", "Tab"],
+  ["Use / cook / fill selected item", "F"],
+  ["Attack / fire", "Left-click"],
+  ["Reload · refuel a vehicle", "R"],
+  ["Interact · pick up · board", "E"],
+  ["Equip hotbar slot", "1–8"],
+  ["Drop selected", "G"],
+  ["Map (needs a map item) · chat", "M · Enter"],
+];
+
 export function QaPanel(): React.ReactElement | null {
   const [active, setActive] = useState(DEFAULT_SET);
-  // Gate AFTER the hook so hook order is stable (the origin never changes mid-
+  const [open, setOpen] = useState(true);
+  // Gate AFTER the hooks so hook order is stable (the origin never changes mid-
   // session). Off-preview / ?qa=0 / no sets → never renders.
   if (!isPreviewOrigin() || SETS.length === 0) return null;
 
@@ -66,52 +96,91 @@ export function QaPanel(): React.ReactElement | null {
 
   return (
     <div style={wrapStyle}>
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>🧪 Testbed QA</div>
-      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
-        <select
-          value={active}
-          aria-label="Testbed scenario set"
-          onChange={(e) => {
-            const name = e.target.value;
-            setActive(name);
-            reprovision(name); // fresh-token rejoin → server re-provisions this set
-          }}
-          style={{
-            flex: 1,
-            background: "#1b1f27",
-            color: "#e8e4d8",
-            border: "1px solid #444",
-            borderRadius: 4,
-            padding: "2px 4px",
-          }}
-        >
-          {SETS.map((s) => (
-            <option key={s.name} value={s.name}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: open ? 6 : 0 }}>
+        <span style={{ fontWeight: 700, flex: 1 }}>🧪 Testbed QA</span>
         <button
           type="button"
-          onClick={() => reprovision(active)}
-          title="Rejoin a fresh life with the current set (re-seeds loadout/vitals/position/fire)"
-          style={{
-            background: "#2a3340",
-            color: "#e8e4d8",
-            border: "1px solid #555",
-            borderRadius: 4,
-            padding: "2px 8px",
-            cursor: "pointer",
-          }}
+          onClick={() => setOpen((v) => !v)}
+          aria-label={open ? "Collapse testbed panel" : "Expand testbed panel"}
+          title={open ? "Collapse (frees the view)" : "Expand"}
+          style={{ ...btnStyle, padding: "0 8px", lineHeight: "18px" }}
         >
-          Reset
+          {open ? "–" : "+"}
         </button>
       </div>
-      <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 3 }}>
-        {checklist.map((step) => (
-          <li key={step}>{step}</li>
-        ))}
-      </ol>
+
+      {open && (
+        <>
+          <p style={{ margin: "0 0 8px", color: "#b8b3a4" }}>
+            Preview-only test harness. Pick a scenario below to respawn a fresh
+            character seeded for that area, then work its checklist. Reset re-seeds
+            the same scenario.
+          </p>
+
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+            <select
+              value={active}
+              aria-label="Testbed scenario set"
+              onChange={(e) => {
+                const name = e.target.value;
+                setActive(name);
+                reprovision(name); // fresh-token rejoin → server re-provisions this set
+              }}
+              style={{
+                flex: 1,
+                background: "#1b1f27",
+                color: "#e8e4d8",
+                border: "1px solid #444",
+                borderRadius: 4,
+                padding: "2px 4px",
+                font: "inherit",
+              }}
+            >
+              {SETS.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => reprovision(active)}
+              title="Rejoin a fresh life with the current scenario (re-seeds loadout/vitals/position/fire)"
+              style={btnStyle}
+            >
+              Reset
+            </button>
+          </div>
+
+          <ol
+            style={{ margin: "0 0 8px", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 3 }}
+          >
+            {checklist.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+
+          <details style={{ marginTop: 2 }}>
+            <summary style={{ cursor: "pointer", color: "#b8b3a4" }}>Controls</summary>
+            <dl
+              style={{
+                margin: "6px 0 0",
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                columnGap: 8,
+                rowGap: 2,
+              }}
+            >
+              {CONTROLS.map(([label, keys]) => (
+                <Fragment key={label}>
+                  <dt style={{ color: "#b8b3a4" }}>{label}</dt>
+                  <dd style={{ margin: 0, textAlign: "right", whiteSpace: "nowrap" }}>{keys}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          </details>
+        </>
+      )}
     </div>
   );
 }
