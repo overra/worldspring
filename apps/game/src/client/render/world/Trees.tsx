@@ -87,6 +87,32 @@ const dummy = new THREE.Object3D();
 /** All-zero-scale matrix — collapses a felled tree's instance to nothing. */
 const ZERO_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
+/** Deterministic 0..1 hash of a tree index (integer avalanche). */
+function hash01(n: number): number {
+  let h = Math.imul(n + 1, 0x9e3779b1) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  return h / 4294967296;
+}
+
+/**
+ * Per-tree instance tint (multiplies the flat GLB material color). All four
+ * shipped variants of a kind share one color, so without this every instance
+ * of a variant is identical — a forest of clones. A gentle brightness +
+ * warm/cool scatter, seed-stable per index, breaks that up at zero per-frame
+ * cost. Same tint for a tree's branches + leaves so the whole trunk-to-canopy
+ * shifts together.
+ */
+export function tintOf(index: number): THREE.Color {
+  const bright = 0.85 + hash01(index * 2 + 1) * 0.25; // 0.85..1.10
+  const warm = (hash01(index * 2 + 2) - 0.5) * 0.09; // ~+/-0.045 R-vs-B skew
+  return new THREE.Color(
+    Math.min(1.15, bright + warm),
+    bright,
+    Math.max(0, bright - warm),
+  );
+}
+
 function buildForest(scene: THREE.Group, trees: readonly Tree[]): ChunkedDressing {
   // N variants per kind (VARIANT_NODES-driven); a missing node falls back to
   // the next available sibling (skip the kind only if every node is gone).
@@ -134,10 +160,11 @@ function buildForest(scene: THREE.Group, trees: readonly Tree[]): ChunkedDressin
     dummy.rotation.set(tilt, yaw, -tilt);
     dummy.scale.setScalar(s);
     dummy.updateMatrix();
-    // One matrix shared by the tree's branches + leaves entries; ref = the
-    // world.trees index so fells can zero exactly this tree's slots.
+    // One matrix + one tint shared by the tree's branches + leaves entries;
+    // ref = the world.trees index so fells can zero exactly this tree's slots.
     const matrix = dummy.matrix.clone();
-    for (const bucket of ids) entries.push({ bucket, matrix, ref: index });
+    const color = tintOf(index);
+    for (const bucket of ids) entries.push({ bucket, matrix, color, ref: index });
   });
 
   return buildChunkedDressing(buckets, entries);
