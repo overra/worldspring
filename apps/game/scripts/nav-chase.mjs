@@ -86,7 +86,10 @@ const makePlayer = (id, x, z) => ({ id, alive: true, core: { x, y: 0, z } });
 function makeState(walls, withNav = true) {
   const world = fakeWorld(walls);
   return {
-    config: { threats: { zombies: true, zombieSpeed: 1, zombieDamage: 1, militaryZone: false } },
+    config: {
+      threats: { zombies: true, zombieSpeed: 1, zombieDamage: 1, militaryZone: false },
+      nav: { enabled: true, tileCap: 9999 }, // M4 dial (flipped off in a test below)
+    },
     zombies: new Map(),
     players: new Map(),
     world,
@@ -180,6 +183,21 @@ console.log("open-terrain chase (no wall) closes distance normally:");
   run(state, 30, () => dist2(z.x, z.z, 0, 0) > ZOMBIE_ATTACK_RANGE + 0.8);
   const moved = start - dist2(z.x, z.z, 0, 0);
   check(moved > 3, `open chase closes distance at ~chase speed (${moved.toFixed(1)} m; ~${(ZOMBIE_CHASE_SPEED / 15).toFixed(2)} m/tick)`);
+}
+
+// --- 5. M4 dial off → straight-line even WITH a navmesh present -----------
+console.log("config.nav.enabled=false (M4 dial) → straight-line, no nav used:");
+{
+  const state = makeState([WALL]);
+  state.config.nav.enabled = false; // operator disabled pathfinding
+  state.nav.ensureBuilt(0, 0, 60);
+  state.nav.stepBuild(100000);
+  const z = makeZombie(1, 0, -4);
+  state.zombies.set(1, z);
+  state.players.set("p", makePlayer("p", 0, 4));
+  run(state, 6);
+  check(z.path === null, "no path planned when the dial is off (nav present but unused)");
+  check(Math.abs(z.x) < 1, "zombie steers straight at the wall (no detour) — today's behavior");
 }
 
 console.log(failures === 0 ? "\nnav-chase: ALL OK" : `\nnav-chase: ${failures} FAILURE(S)`);

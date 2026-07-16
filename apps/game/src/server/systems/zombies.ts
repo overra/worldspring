@@ -267,6 +267,12 @@ function chaseStep(
   speed: number,
   dt: number,
 ): void {
+  // doc 14 M4 — pathfinding off (LIVE dial) → straight-line steering, and never
+  // queue nav tiles the (skipped) nav phase won't drain.
+  if (!state.config.nav.enabled) {
+    stepZombie(zombie, tx, tz, speed, dt, state.world);
+    return;
+  }
   zombie.repathT -= dt;
   const goalDrift =
     distSq2D(tx, tz, zombie.pathGoalX, zombie.pathGoalZ) > REPATH_GOAL_DRIFT_M * REPATH_GOAL_DRIFT_M;

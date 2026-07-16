@@ -400,11 +400,12 @@ sized. Platform spine unaffected.
      stays within budget with the repath cadence; a zombie shoved off its path or teleported
      home re-routes rather than cutting a wall corner; no regression in open-terrain chase feel.
      *(Opus 4.8 — hot-path tick budget, interacts with separation + attack states.)*
-4. **M3 — wildlife / wolf-pack routing** *(after doc 07's species framework, or against deer
-   today)* — extend the M2 pattern to `wildlife.ts` chase/stalk; deer flee stays straight-line
-   (projected target); decide per-species. *(Sonnet 4.8 — mechanical reuse of M2.)*
-5. **M4 — LIVE-class config dial** *(optional; fold into M1)* — `ServerConfig` on/off +
-   straight-line fallback so arena/creative/potato servers disable pathfinding. *(Sonnet 4.8 —
+4. **M3 — wildlife / wolf-pack routing** — **⏸ DEFERRED to doc 07** (see M3 note). Wildlife is
+   deer-only today, and deer *flee* (a projected target) and *wander* (short hops) — both
+   straight-line by design, so there is no chasing species to route yet. Lands with doc 07's
+   wolves/boars, reusing M2's `chaseStep`. *(Sonnet 4.8 — mechanical reuse of M2.)*
+5. **M4 — LIVE-class config dial** — **✅ BUILT 2026-07-15** (see M4 findings). `ServerConfig`
+   `nav.enabled` on/off + `nav.tileCap`, straight-line fallback when off. *(Sonnet 4.8 —
    table-driven config.)*
 
 ## Spike findings (navcat, run 2026-07-10, Node only) — **GO-with-conditions; workerd confirmed by M0 below**
@@ -548,6 +549,36 @@ expensive search is cadence-throttled; `null` only comes from the cheap nearest-
   tiles, so a chaser at the edge of a player's radius keeps its route resident.
 - **Null path → straight-line fallback** (unreachable, or tiles not yet built): never a stall. A
   fully-sealed base yields no path, so the zombie mills at the wall — correct (it's impenetrable).
+
+## M3 note — deferred to doc 07 (2026-07-15)
+
+M3 (wildlife routing) has **no buildable content today**: `wildlife.ts` is deer-only, and deer
+*flee* (steering at a per-tick projected away-vector — an A\* anti-fit the doc always kept
+straight-line) and *wander* (short grazing hops — not worth a path). There is no chasing/stalking
+species. The consumers M3 targets — wolf packs, boars — are doc 07's back half and don't exist yet.
+When they land, they reuse M2's `chaseStep`/path-follow verbatim (one call, per doc 07's wolf
+behavior). Path-following deer flee would be *wrong*, so nothing changes here now. M4 was built
+ahead of it as the concrete remaining milestone.
+
+## M4 findings (built 2026-07-15)
+
+A LIVE-class `nav` group in `ServerConfig` (`packages/shared/src/config.ts`), mirroring doc 13's
+`physics` dial exactly: `{ enabled: boolean, tileCap: number }`, default `{ true, NAV_TILE_CAP=512 }`,
+clamped `tileCap ∈ [16, 4096]` with the same hostile-`welcome.config` validation the client runs.
+Tested in `config.test.ts` (defaults, clamp, garbage→default, **LIVE-class: nav overrides never
+taint `worldFingerprintOf`**).
+
+- **`enabled:false` → straight-line steering** (today's behavior): `chaseStep` returns early
+  before touching the navmesh, and the engine's `phase("nav")` is skipped — so a
+  pathfinding-off server pays **zero** nav cost. Also skipped when `game.zombies.size === 0`
+  (no consumer — a zombies-off preset like `driftwood`, or arena, auto-pays nothing; widen the
+  guard when a non-zombie pathing species lands).
+- **`tileCap`** flows to the `NavSystem` (the module's scale-aware default remains the no-config
+  fallback for harnesses). LIVE — lowering it evicts cold tiles next tick, never wipes.
+- **No preset changes needed**: the `zombies.size` guard makes zombies-off presets free without
+  touching their config; operators flip `nav.enabled` for a pathfinding-off survival server.
+- Validated by `nav-chase.mjs`'s M4 case: nav present but `enabled:false` → the zombie steers
+  straight at the wall (no detour, no path), exactly as before pathfinding.
 
 ## Open questions
 

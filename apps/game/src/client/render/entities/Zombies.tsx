@@ -98,6 +98,7 @@ export function Zombies(): ReactElement {
 
     for (const z of zombies.values()) {
       let idx = pool.byId.get(z.id);
+      let justAcquired = false;
       if (idx === undefined) {
         // Grow lazily when the free list is exhausted — welcome-time config is
         // an allocation hint, not a render cap. Growth is bounded by real wire
@@ -105,6 +106,7 @@ export function Zombies(): ReactElement {
         if (pool.free.length === 0) growPool(pool);
         idx = pool.free.pop()!;
         pool.byId.set(z.id, idx);
+        justAcquired = true;
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
         // Re-attach (see createPool). Position/rotation are written right
@@ -137,13 +139,17 @@ export function Zombies(): ReactElement {
         }
       }
 
-      // Mixer step — far rigs only every Nth frame, staggered by slot.
+      // Mixer step — far rigs only every Nth frame, staggered by slot. A
+      // just-acquired rig always steps: a freshly cloned skeleton renders in
+      // its bind pose (T-pose) until the mixer runs once, and the throttle
+      // could otherwise skip that first step for a rig acquired far away.
       slot.accumDt += dt;
       const dx = z.x - camPos.x;
       const dy = z.y - camPos.y;
       const dz = z.z - camPos.z;
       const distSq = dx * dx + dy * dy + dz * dz;
-      if (distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0) continue;
+      if (!justAcquired && distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0)
+        continue;
       slot.rig.update(slot.accumDt);
       slot.accumDt = 0;
     }

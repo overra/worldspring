@@ -133,6 +133,11 @@ export const MAP_REVEAL_DEFAULT = "full" as const;
  *  (config.physics.bodyCap); M0 measured <0.3% of tick at this value. */
 export const PHYSICS_BODY_CAP = 64;
 
+/** doc 14 M4 — resident navmesh tile ceiling (~125 KB/tile → ~64 MB at 512).
+ *  LIVE-class dial (config.nav.tileCap). Standard tier stays near-fully resident;
+ *  large/huge activity-scope and evict cold tiles. */
+export const NAV_TILE_CAP = 512;
+
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */
 export const SERVER_INFO_CACHE_TTL_S = 15;

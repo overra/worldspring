@@ -18,6 +18,7 @@ import {
   MAP_ACQUIRE_DEFAULT,
   MAP_MINIMAP_DEFAULT,
   PHYSICS_BODY_CAP,
+  NAV_TILE_CAP,
   MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   NIGHT_END_HOUR,
@@ -189,6 +190,19 @@ export interface PhysicsConfig {
   bodyCap: number;
 }
 
+/**
+ * Server-side navmesh pathfinding dial (doc 14 M4). LIVE-class — the navmesh is
+ * server-private derived data, outside the client determinism contract (clients
+ * never pathfind), so neither field enters worldFingerprintOf or wipes.
+ * `enabled:false` → AI falls back to straight-line steering (today's behavior),
+ * and the per-tick nav phase is skipped entirely (zero cost).
+ */
+export interface NavConfig {
+  enabled: boolean;
+  /** Resident navmesh tile ceiling (memory); over it, cold tiles evict LRU. */
+  tileCap: number;
+}
+
 export interface ServerConfig {
   /** Resolved preset id ("custom" when overrides touch any field). */
   preset: string;
@@ -205,6 +219,7 @@ export interface ServerConfig {
   session: SessionConfig;
   map: MapConfig;
   physics: PhysicsConfig;
+  nav: NavConfig;
 }
 
 // =============================================================================
@@ -281,6 +296,10 @@ export const DEFAULT_CONFIG: ServerConfig = {
   physics: {
     enabled: true,
     bodyCap: PHYSICS_BODY_CAP,
+  },
+  nav: {
+    enabled: true,
+    tileCap: NAV_TILE_CAP,
   },
 };
 
@@ -478,6 +497,9 @@ const RANGES = {
   physics: {
     bodyCap: [0, 256],
   },
+  nav: {
+    tileCap: [16, 4096],
+  },
 } as const;
 
 const WIPE_SCHEDULES: readonly WipeSchedule[] = [
@@ -650,6 +672,7 @@ function clampInto(
   const rsess = isObject(r.session) ? r.session : {};
   const rmap = isObject(r.map) ? r.map : {};
   const rphys = isObject(r.physics) ? r.physics : {};
+  const rnav = isObject(r.nav) ? r.nav : {};
 
   // --- fixedHour: null | number in [0,24] ---
   let fixedHour: number | null = base.time.fixedHour;
@@ -740,6 +763,12 @@ function clampInto(
     physics: {
       enabled: bool(rphys.enabled, base.physics.enabled, "physics.enabled", warnings),
       bodyCap: num(rphys.bodyCap, base.physics.bodyCap, RANGES.physics.bodyCap[0], RANGES.physics.bodyCap[1], "physics.bodyCap", warnings, true),
+    },
+    // LIVE-class (doc 14 M4): server-side navmesh is outside the client
+    // determinism contract — never sets worldCoerced.
+    nav: {
+      enabled: bool(rnav.enabled, base.nav.enabled, "nav.enabled", warnings),
+      tileCap: num(rnav.tileCap, base.nav.tileCap, RANGES.nav.tileCap[0], RANGES.nav.tileCap[1], "nav.tileCap", warnings, true),
     },
   };
 
