@@ -66,9 +66,12 @@ const NAV_CHASE_RADIUS = 40;
  * radius of the compound center — inside the walls (half-extent 40). */
 const MILITARY_SPAWN_RADIUS = 30;
 
-function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void {
+// Exported for the horde GameMode (docs/plans/00), which spawns waves and then
+// post-scales the returned zombie's hp. Survival's callers below invoke it as a
+// statement and ignore the return, so their behaviour is byte-identical.
+export function spawnZombie(state: GameState, x: number, z: number, mil: boolean): Zombie {
   const id = state.nextEntityId++;
-  state.zombies.set(id, {
+  const zombie: Zombie = {
     id,
     x,
     y: state.world.groundHeight(x, z),
@@ -89,7 +92,9 @@ function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void
     repathT: 0,
     pathGoalX: 0,
     pathGoalZ: 0,
-  });
+  };
+  state.zombies.set(id, zombie);
+  return zombie;
 }
 
 /** Random dry-land point within `radius` of (cx, cz), or null after attempts. */
@@ -262,6 +267,12 @@ function chaseStep(
   speed: number,
   dt: number,
 ): void {
+  // doc 14 M4 — pathfinding off (LIVE dial) → straight-line steering, and never
+  // queue nav tiles the (skipped) nav phase won't drain.
+  if (!state.config.nav.enabled) {
+    stepZombie(zombie, tx, tz, speed, dt, state.world);
+    return;
+  }
   zombie.repathT -= dt;
   const goalDrift =
     distSq2D(tx, tz, zombie.pathGoalX, zombie.pathGoalZ) > REPATH_GOAL_DRIFT_M * REPATH_GOAL_DRIFT_M;

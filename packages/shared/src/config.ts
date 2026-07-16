@@ -18,6 +18,7 @@ import {
   MAP_ACQUIRE_DEFAULT,
   MAP_MINIMAP_DEFAULT,
   PHYSICS_BODY_CAP,
+  NAV_TILE_CAP,
   MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   NIGHT_END_HOUR,
@@ -54,7 +55,7 @@ export type WipeSchedule = "never" | "weekly" | "biweekly" | "monthly";
  * (server/mode/registry.ts); the client receives it in `welcome.config` and can
  * skin the HUD per-mode.
  */
-export const GAME_MODES = ["survival", "arena"] as const;
+export const GAME_MODES = ["survival", "arena", "horde"] as const;
 export type GameModeId = (typeof GAME_MODES)[number];
 
 export interface WorldConfig {
@@ -189,6 +190,19 @@ export interface PhysicsConfig {
   bodyCap: number;
 }
 
+/**
+ * Server-side navmesh pathfinding dial (doc 14 M4). LIVE-class — the navmesh is
+ * server-private derived data, outside the client determinism contract (clients
+ * never pathfind), so neither field enters worldFingerprintOf or wipes.
+ * `enabled:false` → AI falls back to straight-line steering (today's behavior),
+ * and the per-tick nav phase is skipped entirely (zero cost).
+ */
+export interface NavConfig {
+  enabled: boolean;
+  /** Resident navmesh tile ceiling (memory); over it, cold tiles evict LRU. */
+  tileCap: number;
+}
+
 export interface ServerConfig {
   /** Resolved preset id ("custom" when overrides touch any field). */
   preset: string;
@@ -205,6 +219,7 @@ export interface ServerConfig {
   session: SessionConfig;
   map: MapConfig;
   physics: PhysicsConfig;
+  nav: NavConfig;
 }
 
 // =============================================================================
@@ -281,6 +296,10 @@ export const DEFAULT_CONFIG: ServerConfig = {
   physics: {
     enabled: true,
     bodyCap: PHYSICS_BODY_CAP,
+  },
+  nav: {
+    enabled: true,
+    tileCap: NAV_TILE_CAP,
   },
 };
 
@@ -378,6 +397,21 @@ export const PRESETS: Record<string, DeepPartial<ServerConfig>> = {
     session: { respawnDelayS: ARENA_RESPAWN_DELAY_S, logoutLingerS: 0 },
   },
 
+  // Cooperative wave defense — the third GameMode (docs/plans/00). `mode:"horde"`
+  // routes to the horde GameMode; the rest is what co-op-vs-zombies needs: zombies
+  // ON (the mode owns spawning via waves, not ambient density), PvP OFF (no
+  // friendly fire — teammates share fate, not bullets), building OFF, no logout
+  // linger. zombieDensity stays 1 so effectiveZombieMax = 60 keeps the client pool
+  // sized above HORDE_MAX_CONCURRENT (56) — do NOT lower it. session.respawnDelayS
+  // is carried but IGNORED: the mode gates revival on the wave clock.
+  horde: {
+    mode: "horde",
+    threats: { zombies: true }, // required — tickZombies + zombie damage early-return when false
+    pvp: { enabled: false, fullLoot: false }, // co-op: friendly fire off; husks empty
+    building: { enabled: false },
+    session: { respawnDelayS: 0, logoutLingerS: 0 },
+  },
+
   // The sun never rises — fixedHour 1 means warmth only from campfires.
   nightfall: {
     threats: { zombieDensity: 1.25, zombieDamage: 1.25, zombieSpeed: 1.05 },
@@ -462,6 +496,9 @@ const RANGES = {
   },
   physics: {
     bodyCap: [0, 256],
+  },
+  nav: {
+    tileCap: [16, 4096],
   },
 } as const;
 
@@ -635,6 +672,7 @@ function clampInto(
   const rsess = isObject(r.session) ? r.session : {};
   const rmap = isObject(r.map) ? r.map : {};
   const rphys = isObject(r.physics) ? r.physics : {};
+  const rnav = isObject(r.nav) ? r.nav : {};
 
   // --- fixedHour: null | number in [0,24] ---
   let fixedHour: number | null = base.time.fixedHour;
@@ -725,6 +763,12 @@ function clampInto(
     physics: {
       enabled: bool(rphys.enabled, base.physics.enabled, "physics.enabled", warnings),
       bodyCap: num(rphys.bodyCap, base.physics.bodyCap, RANGES.physics.bodyCap[0], RANGES.physics.bodyCap[1], "physics.bodyCap", warnings, true),
+    },
+    // LIVE-class (doc 14 M4): server-side navmesh is outside the client
+    // determinism contract — never sets worldCoerced.
+    nav: {
+      enabled: bool(rnav.enabled, base.nav.enabled, "nav.enabled", warnings),
+      tileCap: num(rnav.tileCap, base.nav.tileCap, RANGES.nav.tileCap[0], RANGES.nav.tileCap[1], "nav.tileCap", warnings, true),
     },
   };
 

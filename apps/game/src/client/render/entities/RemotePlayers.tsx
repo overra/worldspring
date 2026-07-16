@@ -199,11 +199,13 @@ export function RemotePlayers(): ReactElement {
       if (view.id === clientWorld.myId) continue; // belt and suspenders
       if (seated.has(view.id)) continue; // doc 13 M4 — riders render on the hull
       let idx = pool.byId.get(view.id);
+      let justAcquired = false;
       if (idx === undefined) {
         if (pool.free.length === 0) growPool(pool); // lazy grow up to MAX_PLAYERS
         idx = pool.free.pop();
         if (idx === undefined) continue; // at MAX_PLAYERS (shouldn't happen)
         pool.byId.set(view.id, idx);
+        justAcquired = true;
         const fresh = pool.slots[idx];
         fresh.rig.root.visible = true;
         // Re-attach (see createPool). Position/rotation are written right
@@ -244,9 +246,13 @@ export function RemotePlayers(): ReactElement {
         flashCandidates.push({ view, d2: distSq });
       }
 
-      // Mixer step — far rigs only every Nth frame, staggered by slot.
+      // Mixer step — far rigs only every Nth frame, staggered by slot. A
+      // just-acquired rig always steps: a freshly cloned skeleton renders in
+      // its bind pose (T-pose) until the mixer runs once, and the throttle
+      // could otherwise skip that first step for a rig acquired far away.
       slot.accumDt += dt;
-      if (distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0) continue;
+      if (!justAcquired && distSq > FAR_DIST_SQ && (pool.frame + idx) % FAR_UPDATE_INTERVAL !== 0)
+        continue;
       slot.rig.update(slot.accumDt);
       slot.accumDt = 0;
     }

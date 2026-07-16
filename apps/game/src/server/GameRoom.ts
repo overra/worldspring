@@ -1387,10 +1387,15 @@ export class GameRoom extends DurableObject<Env> {
     // doc 14 — engine-owned navmesh: keep tiles resident around live players,
     // then carve a bounded number of pending/dirty tiles. An ENGINE phase (like
     // physics), run BEFORE the mode's AI ticks so paths are current this tick.
-    for (const player of game.players.values()) {
-      if (player.alive) game.nav.ensureBuilt(player.core.x, player.core.z, NAV_ACTIVE_RADIUS);
+    // Gated by the LIVE-class config.nav.enabled dial (M4); skipped entirely when
+    // there is no AI consumer (zombies are the only one today — widen when a
+    // non-zombie pathing species lands) so a no-zombie server pays nothing.
+    if (game.config.nav.enabled && game.zombies.size > 0) {
+      for (const player of game.players.values()) {
+        if (player.alive) game.nav.ensureBuilt(player.core.x, player.core.z, NAV_ACTIVE_RADIUS);
+      }
+      game.nav.stepBuild(NAV_TILES_PER_TICK);
     }
-    game.nav.stepBuild(NAV_TILES_PER_TICK);
     phase("nav");
     // Gameplay after the physics step — the mode's post-step ticks (trees,
     // zombies, survival + weather + airdrops, wildlife, fires/loot/corpses).

@@ -6,6 +6,7 @@
 // — a pure reorg, values byte-identical.
 export * from "./constants/survival.ts";
 export * from "./constants/arena.ts";
+export * from "./constants/horde.ts";
 
 export const WORLD_SEED = 1337;
 
@@ -131,6 +132,11 @@ export const MAP_REVEAL_DEFAULT = "full" as const;
  *  ceiling. Over the cap, oldest-settled bodies evict first. LIVE-class dial
  *  (config.physics.bodyCap); M0 measured <0.3% of tick at this value. */
 export const PHYSICS_BODY_CAP = 64;
+
+/** doc 14 M4 — resident navmesh tile ceiling (~125 KB/tile → ~64 MB at 512).
+ *  LIVE-class dial (config.nav.tileCap). Standard tier stays near-fully resident;
+ *  large/huge activity-scope and evict cold tiles. */
+export const NAV_TILE_CAP = 512;
 
 // --- Server info & directory ---
 /** Per-isolate Worker micro-cache TTL for GET /api/server-info (doc 03 §5). */

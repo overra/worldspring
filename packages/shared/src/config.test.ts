@@ -33,6 +33,7 @@ import {
   MAP_ACQUIRE_DEFAULT,
   MAP_MINIMAP_DEFAULT,
   PHYSICS_BODY_CAP,
+  NAV_TILE_CAP,
   MAP_REVEAL_DEFAULT,
   MAX_PLAYERS,
   RESPAWN_DELAY_S,
@@ -296,9 +297,9 @@ describe("resolveServerConfig", () => {
 // =============================================================================
 
 describe("PRESETS", () => {
-  it("ships exactly the seven documented presets", () => {
+  it("ships exactly the eight documented presets", () => {
     expect(Object.keys(PRESETS).sort()).toEqual(
-      ["arena", "deadcoast", "driftwood", "homestead", "ironcoast", "nightfall", "warpath"].sort(),
+      ["arena", "deadcoast", "driftwood", "homestead", "horde", "ironcoast", "nightfall", "warpath"].sort(),
     );
   });
 
@@ -610,6 +611,32 @@ describe("physics config", () => {
   it("is LIVE-class: physics overrides never taint the world fingerprint", () => {
     const a = resolveServerConfig({ preset: "deadcoast" }).config;
     const b = resolveServerConfig({ preset: "deadcoast", overrides: { physics: { enabled: false, bodyCap: 8 } } }).config;
+    expect(worldFingerprintOf(a.world)).toBe(worldFingerprintOf(b.world));
+  });
+});
+
+// doc 14 M4 — nav group (LIVE-class: outside worldFingerprintOf, never wipes)
+describe("nav config", () => {
+  it("defaults: enabled, tileCap from the constant", () => {
+    expect(DEFAULT_CONFIG.nav.enabled).toBe(true);
+    expect(DEFAULT_CONFIG.nav.tileCap).toBe(NAV_TILE_CAP);
+  });
+
+  it("clamps tileCap into [16, 4096] and truncates to an integer", () => {
+    expect(clampConfig({ nav: { tileCap: 99999 } }).nav.tileCap).toBe(4096);
+    expect(clampConfig({ nav: { tileCap: 4 } }).nav.tileCap).toBe(16);
+    expect(clampConfig({ nav: { tileCap: 200.9 } }).nav.tileCap).toBe(200);
+  });
+
+  it("garbage values fall back to defaults", () => {
+    const cfg = clampConfig({ nav: { enabled: "sure", tileCap: "lots" } });
+    expect(cfg.nav.enabled).toBe(true);
+    expect(cfg.nav.tileCap).toBe(NAV_TILE_CAP);
+  });
+
+  it("is LIVE-class: nav overrides never taint the world fingerprint", () => {
+    const a = resolveServerConfig({ preset: "deadcoast" }).config;
+    const b = resolveServerConfig({ preset: "deadcoast", overrides: { nav: { enabled: false, tileCap: 64 } } }).config;
     expect(worldFingerprintOf(a.world)).toBe(worldFingerprintOf(b.world));
   });
 });

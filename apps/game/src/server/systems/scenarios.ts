@@ -8,6 +8,7 @@
 
 import { BUILTIN_SCENARIO, parseScenario, type Scenario } from "@worldspring/shared/scenario";
 import buildingJson from "../../../scenarios/building.json";
+import channelJson from "../../../scenarios/channel.json";
 import combatJson from "../../../scenarios/combat.json";
 import craftingJson from "../../../scenarios/crafting.json";
 import physicsJson from "../../../scenarios/physics.json";
@@ -20,8 +21,13 @@ import wearJson from "../../../scenarios/wear.json";
 /** The set used when no name is supplied (or an unknown one is). */
 export const DEFAULT_SCENARIO_NAME = "survival";
 
+// One entry per apps/game/scenarios/*.json. This list is hand-maintained (Workers
+// bundlers need static imports, so it can't glob like the M4 panel does) — every
+// committed set MUST appear here, or the panel offers a name the server can't
+// resolve and silently falls back to survival. Keep it in sync with that folder.
 const SCENARIOS: Readonly<Record<string, Scenario>> = Object.freeze({
   survival: parseScenario(survivalJson),
+  channel: parseScenario(channelJson),
   combat: parseScenario(combatJson),
   crafting: parseScenario(craftingJson),
   physics: parseScenario(physicsJson),

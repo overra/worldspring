@@ -7,11 +7,14 @@ import type { ServerConfig } from "@worldspring/shared/config";
 import type { GameMode } from "./GameMode";
 import { survivalMode } from "./survivalMode";
 import { createArenaMode } from "./arenaMode";
+import { createHordeMode } from "./hordeMode";
 
 export function makeMode(config: ServerConfig): GameMode {
   switch (config.mode) {
     case "arena":
       return createArenaMode();
+    case "horde":
+      return createHordeMode();
     case "survival":
     default:
       return survivalMode;
