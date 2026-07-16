@@ -31,9 +31,10 @@ const SLOPE_SAMPLE = 0.5; // heightAt sampled +/- this around the blade
 const MAX_SLOPE_DELTA = 0.8; // height delta over 2*SLOPE_SAMPLE that kills grass
 const BUILDING_MARGIN = 0.5; // extra clearance around building footprints
 
-const BLADE_BASE_HALF_WIDTH = 0.045; // ~0.09m wide at the base
-const BLADE_TOP_HALF_WIDTH = 0.016; // tapered, not a needle
-const BLADE_HEIGHT = 0.7; // base height; per-instance scale 0.7-1.3
+const BLADE_BASE_HALF_WIDTH = 0.06; // ~0.12m wide at the base — a leaf, not a wire
+const BLADE_TOP_HALF_WIDTH = 0.03; // gently tapered, keeps width up top (no needle)
+const BLADE_HEIGHT = 0.6; // base height; per-instance scale 0.7-1.3 — a touch shorter
+// so blades read as clumps rather than tall lonely spikes
 const HEIGHT_SCALE_MIN = 0.7;
 const HEIGHT_SCALE_MAX = 1.3;
 
@@ -106,31 +107,47 @@ function chunkKey(cx: number, cz: number): string {
   return `${cx},${cz}`;
 }
 
-/** Single tapered quad (2 triangles), origin at the base, facing +Z. */
+/**
+ * A CROSS of two tapered quads (one facing +Z, one facing +X), sharing the
+ * base line — 4 triangles. A single quad reads as a flat sliver that vanishes
+ * edge-on; the perpendicular pair gives each blade volume from any camera angle
+ * so the field reads as a tuft, not a field of paper cutouts. Normals are tilted
+ * UP a touch (not flat outward) so blades catch overhead light softly instead of
+ * going dark when side-on to the sun.
+ */
 function createBladeGeometry(): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
+  const bw = BLADE_BASE_HALF_WIDTH;
+  const tw = BLADE_TOP_HALF_WIDTH;
+  const h = BLADE_HEIGHT;
+  // Quad A in the XY plane (faces ±Z), quad B in the ZY plane (faces ±X).
   const positions = new Float32Array([
-    -BLADE_BASE_HALF_WIDTH, 0, 0,
-    BLADE_BASE_HALF_WIDTH, 0, 0,
-    BLADE_TOP_HALF_WIDTH, BLADE_HEIGHT, 0,
-    -BLADE_TOP_HALF_WIDTH, BLADE_HEIGHT, 0,
+    -bw, 0, 0, bw, 0, 0, tw, h, 0, -tw, h, 0, // A
+    0, 0, -bw, 0, 0, bw, 0, h, tw, 0, h, -tw, // B
   ]);
-  const normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
-  const uvs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-  // Bend weight (== uv.y): 0 at the base verts, 1 at the tip verts. Kept as
-  // its own attribute so the shader patch never depends on USE_UV defines.
-  const bend = new Float32Array([0, 0, 1, 1]);
-  // Base->tip shading gradient (vertex colors). Multiplies with instanceColor
-  // in the standard color chunks, so each blade darkens toward its root.
+  // Up-biased face normals soften side-lighting; DoubleSide keeps both faces lit.
+  const na = 0.55; // up component
+  const nz = 0.83; // face component (normalized-ish with na)
+  const normals = new Float32Array([
+    0, na, nz, 0, na, nz, 0, na, nz, 0, na, nz, // A → +Z-ish, up
+    nz, na, 0, nz, na, 0, nz, na, 0, nz, na, 0, // B → +X-ish, up
+  ]);
+  const uvs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1]);
+  // Bend weight (== uv.y): 0 at base verts, 1 at tip verts, both quads.
+  const bend = new Float32Array([0, 0, 1, 1, 0, 0, 1, 1]);
+  // Base->tip shading gradient (vertex colors), multiplied with instanceColor.
   const b = BLADE_BASE_SHADE;
   const t = BLADE_TIP_SHADE;
-  const colors = new Float32Array([b, b, b, b, b, b, t, t, t, t, t, t]);
+  const colors = new Float32Array([
+    b, b, b, b, b, b, t, t, t, t, t, t, // A
+    b, b, b, b, b, b, t, t, t, t, t, t, // B
+  ]);
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
   geometry.setAttribute("aBend", new THREE.BufferAttribute(bend, 1));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
   return geometry;
 }
 

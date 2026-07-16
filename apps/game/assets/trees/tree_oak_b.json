@@ -2,27 +2,52 @@
   "name": "tree_oak_b",
   "kind": "oak",
   "basePreset": "Oak Small",
-  "maxTriangles": 500,
+  "maxTriangles": 1600,
   "materials": {
     "branches": "#715036",
     "leaves": "#587d43"
   },
   "options": {
     "seed": 51203,
-    "bark": { "flatShading": true, "textured": false },
+    "bark": {
+      "flatShading": true,
+      "textured": false
+    },
     "branch": {
       "levels": 2,
-      "children": { "0": 4, "1": 2 },
-      "length": { "0": 14, "1": 6, "2": 4.5 },
-      "radius": { "0": 0.9, "1": 0.42, "2": 0.22 },
-      "sections": { "0": 4, "1": 3, "2": 2 },
-      "segments": { "0": 5, "1": 3, "2": 3 },
-      "start": { "1": 0.3, "2": 0.3 }
+      "children": {
+        "0": 4,
+        "1": 2
+      },
+      "length": {
+        "0": 14,
+        "1": 6,
+        "2": 4.5
+      },
+      "radius": {
+        "0": 0.9,
+        "1": 0.42,
+        "2": 0.22
+      },
+      "sections": {
+        "0": 4,
+        "1": 2,
+        "2": 2
+      },
+      "segments": {
+        "0": 4,
+        "1": 3,
+        "2": 2
+      },
+      "start": {
+        "1": 0.3,
+        "2": 0.3
+      }
     },
     "leaves": {
-      "billboard": "single",
-      "count": 2,
-      "size": 2.6,
+      "billboard": "double",
+      "count": 3,
+      "size": 1.52,
       "sizeVariance": 0.4
     }
   }

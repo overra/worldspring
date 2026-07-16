@@ -2,28 +2,49 @@
   "name": "tree_conifer_d",
   "kind": "conifer",
   "basePreset": "Pine Small",
-  "maxTriangles": 200,
+  "maxTriangles": 1000,
   "materials": {
     "branches": "#6e4d2e",
     "leaves": "#41684a"
   },
   "options": {
     "seed": 53791,
-    "bark": { "flatShading": true, "textured": false },
+    "bark": {
+      "flatShading": true,
+      "textured": false
+    },
     "branch": {
       "levels": 1,
-      "children": { "0": 4 },
-      "angle": { "1": 118 },
-      "length": { "0": 14.5, "1": 8.5 },
-      "radius": { "0": 0.82, "1": 0.36 },
-      "sections": { "0": 5, "1": 3 },
-      "segments": { "0": 5, "1": 3 },
-      "start": { "1": 0.26 }
+      "children": {
+        "0": 4
+      },
+      "angle": {
+        "1": 118
+      },
+      "length": {
+        "0": 14.5,
+        "1": 8.5
+      },
+      "radius": {
+        "0": 0.82,
+        "1": 0.36
+      },
+      "sections": {
+        "0": 3,
+        "1": 2
+      },
+      "segments": {
+        "0": 4,
+        "1": 3
+      },
+      "start": {
+        "1": 0.26
+      }
     },
     "leaves": {
-      "billboard": "single",
-      "count": 2,
-      "size": 2.0,
+      "billboard": "double",
+      "count": 4,
+      "size": 1.38,
       "sizeVariance": 0.35
     }
   }
