@@ -157,6 +157,13 @@ export function reprovision(scenario: string): void {
   connect(lastName ?? "Survivor", scenario);
 }
 
+/** The scenario this session last (re)joined with (doc 10). Module-level, so it
+ *  survives the QaPanel remount that a reprovision rejoin triggers — the panel
+ *  seeds its selection/checklist from this instead of resetting to the default. */
+export function currentScenario(): string | undefined {
+  return lastScenario;
+}
+
 export function disconnect(): void {
   // Intentional close: stop any pending reconnect and forget the session, so a
   // stray close event can never trigger an auto-reconnect after a real leave.

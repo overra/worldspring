@@ -7,7 +7,7 @@
 // build-time glob of the on-disk sets — no server round-trip, no welcome field.
 
 import { Fragment, useState } from "react";
-import { reprovision } from "@/client/net/connection";
+import { currentScenario, reprovision } from "@/client/net/connection";
 
 interface SetInfo {
   name: string;
@@ -86,7 +86,11 @@ const CONTROLS: [string, string][] = [
 ];
 
 export function QaPanel(): React.ReactElement | null {
-  const [active, setActive] = useState(DEFAULT_SET);
+  // Seed from the session's ACTUAL last-joined scenario, not a fixed default —
+  // a reprovision does a fresh-token rejoin that remounts this panel, so a plain
+  // useState(DEFAULT_SET) would snap the dropdown + checklist back to "survival"
+  // even though the chosen scenario is what actually spawned (doc 10).
+  const [active, setActive] = useState(() => currentScenario() ?? DEFAULT_SET);
   const [open, setOpen] = useState(true);
   // Gate AFTER the hooks so hook order is stable (the origin never changes mid-
   // session). Off-preview / ?qa=0 / no sets → never renders.
