@@ -55,7 +55,7 @@ export type WipeSchedule = "never" | "weekly" | "biweekly" | "monthly";
  * (server/mode/registry.ts); the client receives it in `welcome.config` and can
  * skin the HUD per-mode.
  */
-export const GAME_MODES = ["survival", "arena"] as const;
+export const GAME_MODES = ["survival", "arena", "horde"] as const;
 export type GameModeId = (typeof GAME_MODES)[number];
 
 export interface WorldConfig {
@@ -395,6 +395,21 @@ export const PRESETS: Record<string, DeepPartial<ServerConfig>> = {
     pvp: { enabled: true, fullLoot: false },
     building: { enabled: false },
     session: { respawnDelayS: ARENA_RESPAWN_DELAY_S, logoutLingerS: 0 },
+  },
+
+  // Cooperative wave defense — the third GameMode (docs/plans/00). `mode:"horde"`
+  // routes to the horde GameMode; the rest is what co-op-vs-zombies needs: zombies
+  // ON (the mode owns spawning via waves, not ambient density), PvP OFF (no
+  // friendly fire — teammates share fate, not bullets), building OFF, no logout
+  // linger. zombieDensity stays 1 so effectiveZombieMax = 60 keeps the client pool
+  // sized above HORDE_MAX_CONCURRENT (56) — do NOT lower it. session.respawnDelayS
+  // is carried but IGNORED: the mode gates revival on the wave clock.
+  horde: {
+    mode: "horde",
+    threats: { zombies: true }, // required — tickZombies + zombie damage early-return when false
+    pvp: { enabled: false, fullLoot: false }, // co-op: friendly fire off; husks empty
+    building: { enabled: false },
+    session: { respawnDelayS: 0, logoutLingerS: 0 },
   },
 
   // The sun never rises — fixedHour 1 means warmth only from campfires.

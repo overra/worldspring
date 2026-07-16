@@ -66,9 +66,12 @@ const NAV_CHASE_RADIUS = 40;
  * radius of the compound center — inside the walls (half-extent 40). */
 const MILITARY_SPAWN_RADIUS = 30;
 
-function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void {
+// Exported for the horde GameMode (docs/plans/00), which spawns waves and then
+// post-scales the returned zombie's hp. Survival's callers below invoke it as a
+// statement and ignore the return, so their behaviour is byte-identical.
+export function spawnZombie(state: GameState, x: number, z: number, mil: boolean): Zombie {
   const id = state.nextEntityId++;
-  state.zombies.set(id, {
+  const zombie: Zombie = {
     id,
     x,
     y: state.world.groundHeight(x, z),
@@ -89,7 +92,9 @@ function spawnZombie(state: GameState, x: number, z: number, mil: boolean): void
     repathT: 0,
     pathGoalX: 0,
     pathGoalZ: 0,
-  });
+  };
+  state.zombies.set(id, zombie);
+  return zombie;
 }
 
 /** Random dry-land point within `radius` of (cx, cz), or null after attempts. */

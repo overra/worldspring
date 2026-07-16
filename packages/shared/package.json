@@ -10,6 +10,7 @@
     "./constants": "./src/constants.ts",
     "./constants/survival": "./src/constants/survival.ts",
     "./constants/arena": "./src/constants/arena.ts",
+    "./constants/horde": "./src/constants/horde.ts",
     "./directory": "./src/directory.ts",
     "./fog": "./src/fog.ts",
     "./items": "./src/items.ts",
