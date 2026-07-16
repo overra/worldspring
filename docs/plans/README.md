@@ -91,6 +91,14 @@ fixed: the night-join blackout (#117) and GLB-transform/trim scaling (#116).
   doc-06 cheese fix) · M4 LIVE config dial; **M3 wildlife routing deferred to doc 07's wolves**),
   wildlife expansion (doc 07 back half), scavenging tails & balance (doc 05).
 
+**Amendment 2026-07-15 — official mode servers + server types ([doc 15](15-official-servers-and-server-types.md)).**
+survival/arena/horde run as **separate official server DEPLOYS on subdomains** (`arena.`/`horde.worldspring.games`),
+one binary/`GAME_CONFIG` each, via a committed `official-servers.json` driving a **CI matrix** across per-PR
+preview + prod. Adds a self-declared **`mode` server-TYPE** to the doc-03 contract (additive on `RulesSummary`,
+no schema bump) + a directory Type filter; differentiation is self-declared + verified-on-join + source-transparent,
+never directory-verified. **Amends [doc 00](00-agent-moddable-platform.md)** (subdomains-per-mode; previews-per-mode).
+**horde must be built first** (net-new GameMode). Planned, not yet built.
+
 ## Status re-baseline — 2026-07-07
 
 > **Superseded by the 2026-07-14 section above.** Kept for provenance.
@@ -165,6 +173,7 @@ are now made physics-aware.
 | [12-map-and-cartography.md](12-map-and-cartography.md) | In-game map + minimap + offline `pnpm map:render`, all from a shared three.js-free raster core over the deterministic `createWorld(seed)` (zero new wire for a full map); a `MapConfig` server dial (minimap on/off, map item `spawn`/`loot`/`none`, reveal `full`/`explored`) + a `map` `ItemType`; and server-authoritative, persisted **fog-of-war** (per-character `ExploredGrid`, additive `CharacterState` JSON + additive `welcome`/`snap` wire) for the `explored` mode — honest that fog can't hide terrain (public seed). |
 | [13-shared-dynamic-physics.md](13-shared-dynamic-physics.md) | Shared rigid-body dynamics on a deterministic WASM engine (Rapier now, Box3D tracked): server-auth stepping in the DO tick + client interpolation (players stay kinematic, `movement.ts` untouched), `WireBody` snapshot sync, bodies in the world snapshot, CI replay harness; features in tracer order — falling trees → props → vehicles (after doc 07 tiers). M0 is a determinism+cost GO/NO-GO spike. |
 | [14-navmesh-pathfinding.md](14-navmesh-pathfinding.md) | Server-side navmesh pathfinding (navcat, pure-JS) so zombies/wildlife route around obstacles instead of straight-line aggro: an engine-owned `NavSystem` behind a swappable `Pathfinder` seam, built from the same worldgen heightfield + static AABBs the sim collides with, tiled + activity-scoped + never persisted/fingerprinted/client-shared (zero wire change — clients still interpolate positions). Fixes doc 06's three-wall base-immunity cheese. M0 is a workerd-execution GO/NO-GO gate on the existing GO-with-conditions spike (`spike/navcat`). |
+| [15-official-servers-and-server-types.md](15-official-servers-and-server-types.md) | Three first-party games — survival/arena/horde — as separate official server **DEPLOYS on subdomains** (`arena.`/`horde.worldspring.games`), one binary/`GAME_CONFIG` each; a committed `official-servers.json` drives a CI matrix that deploys every mode for both per-PR preview and prod (with a validator that blocks a flagship-rename wipe + a horde-before-preset taint); a self-declared **`mode` server-TYPE** field (additive `RulesSummary`, no schema bump) + a directory Type filter; differentiation is self-declared + verified-on-join + source-transparent, never directory-verified; the `official` flag is a directory-DB `source='official'` flip. Amends doc 00 (subdomains-per-mode; previews-per-mode). horde is a build-the-mode-first milestone. |
 | `research/` | Ground truth the docs cite: `cf-costs.md` (billing math — read this one regardless), `cf-deploy.md`, `cf-oauth.md`, `codebase-server.md`, `codebase-sim.md`, `directory-prior-art.md`. |
 
 ### Canonical vocabulary (who owns what)
@@ -184,6 +193,7 @@ Parallel-written docs share these names; the owner's definition is binding:
 | `ActiveAction` (the channeled-action primitive), the server-driven cast + cancel rules, the `you.action` snapshot/`welcome` field, `*_CHANNEL_S` durations | doc 11 | docs 05 (use/craft), combat (reload/magazine), 07 (fishing cast) delegate their completion to it but keep their own data + balance. |
 | `MapConfig` group, the `map` `ItemType`, the `ExploredGrid` fog primitive (+ `FOG_CELL_M`), the shared `packages/shared/src/map/` raster core | doc 12 | Extends doc 04's `ServerConfig` (LIVE-class, never in `worldFingerprintOf`), doc 05's items + `LOOT_TABLES` + `startingInventory` grant, doc 03's `RulesSummary` badge; the `explored` wire fields are additive-optional; the bump-vs-additive call for the `map` item is doc 03's (doc 12 Open Q1). |
 | The `Pathfinder` seam + engine-owned `NavSystem`, the server-side navmesh, `dirtyTile`/`stepBuild`, `navTileCap`/`NAV_BUILD_BUDGET_MS`, the three walkability reconciliations (water/slope/vertical) | doc 14 | Server-private derived data — never persisted, fingerprinted, or client-shared (AI is outside the determinism contract); consumes doc 06's `StructureIndex` + doc 05's planted trees as dirty-tile triggers and PhysicsSystem's `PhysicsStaticsSource`; consumed by zombie/wildlife AI via the `stepZombie` target only (no wire change); LIVE-class on/off dial. |
+| The `official-servers.json` manifest + the per-mode deploy/CI matrix, the `--var GAME_CONFIG:<preset>` official-deploy convention, the `horde` GameMode+preset, the directory `mode`/Type filter (`BROWSE_MODES`) | doc 15 | The `RulesSummary.mode` **field** stays doc 03's owned surface (added at doc 15's request, additive-optional, no schema bump); `GAME_MODES` growth for `horde` is doc 03/04's wire-enum bump surface; the Type filter extends doc 02's `BrowsePreset`/`applyBrowse`; amends doc 00's subdomain + preview stance. |
 
 ## Dependency graph
 
