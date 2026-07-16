@@ -145,6 +145,16 @@ export function tickWildlife(state: GameState, dt: number): void {
         dt,
         state.world,
       );
+      // Re-anchor the grazing territory to WHERE it flees. Otherwise `home` stays
+      // at the spawn point — usually right where the player walked up — so the
+      // moment the deer clears the flee radius it wanders back toward home (toward
+      // the player) and re-triggers flee: the "run off, turn around, walk back,
+      // turn away" oscillation. Following home out, and re-rolling a fresh nearby
+      // graze target as soon as it's calm, makes a spooked deer settle where it
+      // fled instead of ping-ponging.
+      deer.homeX = deer.x;
+      deer.homeZ = deer.z;
+      deer.wanderWait = 0;
       continue;
     }
 
