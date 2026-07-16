@@ -112,20 +112,28 @@ function chunkKey(cx: number, cz: number): string {
  * base line — 4 triangles. A single quad reads as a flat sliver that vanishes
  * edge-on; the perpendicular pair gives each blade volume from any camera angle
  * so the field reads as a tuft, not a field of paper cutouts. Normals are tilted
- * UP a touch (not flat outward) so blades catch overhead light softly instead of
- * going dark when side-on to the sun.
+ * UP a touch (not flat outward) so the face turned toward the camera catches
+ * overhead light softly instead of going dark when side-on to the sun.
  */
 function createBladeGeometry(): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   const bw = BLADE_BASE_HALF_WIDTH;
   const tw = BLADE_TOP_HALF_WIDTH;
   const h = BLADE_HEIGHT;
-  // Quad A in the XY plane (faces ±Z), quad B in the ZY plane (faces ±X).
+  // Quad A in the XY plane (CCW front face = +Z), quad B in the ZY plane (CCW
+  // front face = +X). B's Z order mirrors A's X order so that each quad's
+  // winding AGREES with its normal below — get this backwards and the quad's
+  // lit hemisphere ends up the mirror of the one its normal claims.
   const positions = new Float32Array([
     -bw, 0, 0, bw, 0, 0, tw, h, 0, -tw, h, 0, // A
-    0, 0, -bw, 0, 0, bw, 0, h, tw, 0, h, -tw, // B
+    0, 0, bw, 0, 0, -bw, 0, h, -tw, 0, h, tw, // B
   ]);
-  // Up-biased face normals soften side-lighting; DoubleSide keeps both faces lit.
+  // Up-biased face normals soften side-lighting. DoubleSide draws both faces,
+  // but three negates the WHOLE normal on a back face (`normal *= faceDirection`),
+  // so the up-bias only applies to the face turned toward the camera and the far
+  // face gets an equal DOWN-bias. That per-quad light/dark split is what reads as
+  // tuft volume. Carrying the bias onto back faces needs a fragment patch and is
+  // a look change, not a correctness one (see PR 132).
   const na = 0.55; // up component
   const nz = 0.83; // face component (normalized-ish with na)
   const normals = new Float32Array([

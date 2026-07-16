@@ -2,7 +2,7 @@
   "name": "tree_conifer_a",
   "kind": "conifer",
   "basePreset": "Pine Small",
-  "maxTriangles": 1000,
+  "maxTriangles": 250,
   "materials": {
     "branches": "#5d4228",
     "leaves": "#315b36"

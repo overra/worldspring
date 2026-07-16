@@ -2,7 +2,7 @@
   "name": "tree_oak_a",
   "kind": "oak",
   "basePreset": "Oak Small",
-  "maxTriangles": 1600,
+  "maxTriangles": 620,
   "materials": {
     "branches": "#66492e",
     "leaves": "#4d713b"
