@@ -120,6 +120,14 @@ function circleOverlapsAabb(a: Aabb, x: number, z: number, r: number): boolean {
 
 /** Wood on the ground at (x, z) — the dropAtFeet shape (spawnId null = never
  * respawns, TTL'd like any player-dropped stack). */
+/** doc 14 — re-carve the navmesh tile(s) a planted tree touches after it is
+ *  planted, grows (wall-clock stage flip), or is felled to a stump. `r` is the
+ *  current collider radius (+1 m margin). Null-safe for harness GameStates. */
+function navDirtyTree(state: GameState, x: number, z: number, r: number): void {
+  const m = r + 1;
+  state.nav?.dirtyTile(x - m, z - m, x + m, z + m);
+}
+
 function dropWoodAt(state: GameState, x: number, z: number, count: number): void {
   const id = state.nextEntityId++;
   state.loot.set(id, {
@@ -240,6 +248,7 @@ export function tryChopTree(state: GameState, player: ServerPlayer): boolean {
     state.plantedTreeDelta.push({ op: "remove", id: best.key });
     state.treesDirty = true;
     state.physics.removePlantedTree(best.key);
+    navDirtyTree(state, hitTree.x, hitTree.z, hitTree.r);
     dropWoodAt(state, hitTree.x, hitTree.z, STUMP_WOOD);
     return true;
   }
@@ -338,6 +347,7 @@ function fellPlantedTree(state: GameState, player: ServerPlayer, tree: PlantedTr
   state.plantedTreeDelta.push({ op: "upsert", tree: record });
   state.treesDirty = true;
   state.physics.addPlantedTree(stump.id, stump.x, stump.groundY, stump.z, stump.r, stump.height);
+  navDirtyTree(state, stump.x, stump.z, stump.r);
   // Clear the just-added stump collider (stump.height tall) so the trunk does
   // not materialize interpenetrating it — the cut line is the stump top anyway.
   spawnFallingTrunk(state, player, tree, stump.height + TRUNK_SPAWN_LIFT);
@@ -512,6 +522,7 @@ export function tickTreeGrowth(state: GameState): void {
     // costs one small rewrite per (rare) transition scan.
     state.treesDirty = true;
     state.physics.addPlantedTree(grown.id, grown.x, grown.groundY, grown.z, grown.r, grown.height);
+    navDirtyTree(state, grown.x, grown.z, grown.r);
     state.plantedTreeDelta.push({ op: "upsert", tree: record });
     state.treesDirty = true;
   }
